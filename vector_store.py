@@ -224,14 +224,14 @@ class FaceVectorStore:
     
     def _calculate_enhanced_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> Dict[str, float]:
         """
-        Calculate comprehensive similarity metrics between two embeddings
+        Calculate comprehensive similarity metrics using ensemble approach
         
         Args:
             embedding1: First embedding (query, should be normalized)
             embedding2: Second embedding (from database)
             
         Returns:
-            Dictionary containing various similarity metrics
+            Dictionary containing various similarity metrics with ensemble scoring
         """
         try:
             # Normalize both embeddings to ensure consistent comparison
@@ -263,20 +263,14 @@ class FaceVectorStore:
             dot_product = float(np.dot(embedding1_normalized, embedding2_normalized))
             metrics['dot_product'] = dot_product
             
-            # 4. Calculate primary similarity using proven face recognition approach
-            # For face embeddings, cosine similarity above 0.4 typically indicates same person
-            # Convert to 0-1 scale where higher values indicate higher similarity
-            if cosine_similarity >= 0.4:
-                # High confidence range - scale from [0.4, 1.0] to [0.6, 1.0]
-                primary_similarity = 0.6 + (cosine_similarity - 0.4) * 0.67  # 0.4 gap scaled to 0.67
-            elif cosine_similarity >= 0.0:
-                # Medium confidence range - scale from [0.0, 0.4] to [0.2, 0.6]
-                primary_similarity = 0.2 + cosine_similarity * 1.0
-            else:
-                # Low confidence range - scale from [-1.0, 0.0] to [0.0, 0.2]
-                primary_similarity = max(0.0, 0.2 + cosine_similarity * 0.2)
-            
-            metrics['primary_similarity'] = float(primary_similarity)
+            # 4. Correlation similarity
+            try:
+                correlation = float(np.corrcoef(embedding1_normalized, embedding2_normalized)[0, 1])
+                if np.isnan(correlation):
+                    correlation = 0.0
+                metrics['correlation_similarity'] = correlation
+            except:
+                metrics['correlation_similarity'] = 0.0
             
             # 5. Angular distance (converted from cosine similarity)
             try:
@@ -285,6 +279,48 @@ class FaceVectorStore:
                 metrics['angular_similarity'] = float(angular_similarity)
             except:
                 metrics['angular_similarity'] = 0.0
+            
+            # 6. Manhattan (L1) similarity
+            try:
+                manhattan_distance = float(np.sum(np.abs(embedding1_normalized - embedding2_normalized)))
+                manhattan_similarity = max(0.0, 1.0 - (manhattan_distance / (2.0 * len(embedding1_normalized))))
+                metrics['manhattan_similarity'] = manhattan_similarity
+            except:
+                metrics['manhattan_similarity'] = 0.0
+            
+            # 7. ENSEMBLE PRIMARY SIMILARITY - Weighted combination of best metrics
+            # Based on research: cosine similarity is most reliable for face embeddings
+            weights = {
+                'cosine': 0.5,        # Primary weight on cosine similarity
+                'euclidean': 0.25,    # Secondary weight on euclidean 
+                'correlation': 0.15,  # Tertiary weight on correlation
+                'angular': 0.1        # Minor weight on angular
+            }
+            
+            # Normalize similarities to 0-1 range for combination
+            cosine_norm = (cosine_similarity + 1.0) / 2.0  # From [-1,1] to [0,1]
+            euclidean_norm = euclidean_similarity  # Already [0,1]
+            correlation_norm = (metrics['correlation_similarity'] + 1.0) / 2.0  # From [-1,1] to [0,1]
+            angular_norm = metrics['angular_similarity']  # Already [0,1]
+            
+            # Calculate ensemble score
+            ensemble_score = (
+                weights['cosine'] * cosine_norm +
+                weights['euclidean'] * euclidean_norm +
+                weights['correlation'] * correlation_norm +
+                weights['angular'] * angular_norm
+            )
+            
+            # Apply face-specific threshold mapping
+            if ensemble_score >= 0.65:  # High confidence threshold
+                primary_similarity = 0.7 + (ensemble_score - 0.65) * 0.857  # Scale to [0.7, 1.0]
+            elif ensemble_score >= 0.45:  # Medium confidence threshold  
+                primary_similarity = 0.4 + (ensemble_score - 0.45) * 1.5  # Scale to [0.4, 0.7]
+            else:  # Low confidence
+                primary_similarity = ensemble_score * 0.889  # Scale to [0, 0.4]
+            
+            metrics['primary_similarity'] = float(np.clip(primary_similarity, 0.0, 1.0))
+            metrics['ensemble_score'] = float(ensemble_score)
             
             return metrics
             
@@ -299,37 +335,50 @@ class FaceVectorStore:
             'euclidean_distance': 2.0,
             'euclidean_similarity': 0.0,
             'dot_product': 0.0,
+            'correlation_similarity': 0.0,
+            'angular_similarity': 0.0,
+            'manhattan_similarity': 0.0,
             'primary_similarity': 0.0,
-            'angular_similarity': 0.0
+            'ensemble_score': 0.0
         }
     
     def _calculate_confidence_score(self, similarity_metrics: Dict[str, float]) -> float:
         """
-        Calculate confidence score based on multiple similarity metrics
+        Calculate enhanced confidence score using ensemble metrics
         
         Args:
             similarity_metrics: Dictionary of similarity metrics
             
         Returns:
-            Confidence score (0-1)
+            Confidence score (0-1) with ensemble weighting
         """
         try:
             primary_sim = similarity_metrics.get('primary_similarity', 0.0)
+            ensemble_score = similarity_metrics.get('ensemble_score', 0.0)
             cosine_sim = similarity_metrics.get('cosine_similarity', 0.0)
-            euclidean_sim = similarity_metrics.get('euclidean_similarity', 0.0)
+            correlation_sim = similarity_metrics.get('correlation_similarity', 0.0)
             
-            # Weight the metrics based on their reliability for face recognition
-            confidence = (
-                primary_sim * 0.5 +      # Primary similarity (50%)
-                cosine_sim * 0.3 +       # Cosine similarity (30%)
-                euclidean_sim * 0.2      # Euclidean similarity (20%)
+            # Enhanced confidence calculation using multiple metrics
+            base_confidence = (
+                primary_sim * 0.4 +          # Primary similarity (40%)
+                ensemble_score * 0.3 +       # Ensemble score (30%)
+                ((cosine_sim + 1.0) / 2.0) * 0.2 +  # Normalized cosine (20%)
+                ((correlation_sim + 1.0) / 2.0) * 0.1   # Normalized correlation (10%)
             )
             
-            # Apply confidence boost for very high cosine similarity
-            if cosine_sim > 0.7:
-                confidence = min(1.0, confidence * 1.1)
+            # Apply confidence boost for very high similarities
+            if cosine_sim > 0.7 and primary_sim > 0.6:
+                base_confidence = min(1.0, base_confidence * 1.15)  # 15% boost
+            elif cosine_sim > 0.5 and primary_sim > 0.5:
+                base_confidence = min(1.0, base_confidence * 1.05)  # 5% boost
             
-            return float(max(0.0, min(1.0, confidence)))
+            # Apply penalty for inconsistent metrics (reliability check)
+            metric_values = [primary_sim, ensemble_score, (cosine_sim + 1.0) / 2.0]
+            metric_std = float(np.std(metric_values))
+            if metric_std > 0.2:  # High variance indicates inconsistent metrics
+                base_confidence *= 0.9  # 10% penalty
+            
+            return float(max(0.0, min(1.0, base_confidence)))
             
         except Exception as e:
             logger.error(f"Error calculating confidence score: {e}")
