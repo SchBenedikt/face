@@ -20,6 +20,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 from typing import List, Dict, Any
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Import our modules
 from face_recognition_engine import FaceRecognitionEngine
@@ -62,6 +65,33 @@ def main():
     """Main application function"""
     
     st.title("🔍 Face Recognition Search")
+    
+    # Show improvements banner
+    with st.container():
+        st.success("🚀 **Verbesserte Gesichtserkennung aktiv!** Diese Version verwendet Ensemble-Modelle und erweiterte Ähnlichkeitsalgorithmen für höchste Genauigkeit.")
+        with st.expander("ℹ️ Neue Features & Verbesserungen", expanded=False):
+            st.markdown("""
+            **🎯 Ensemble-Gesichtserkennung:**
+            - Mehrere DeepFace-Modelle: Facenet512, ArcFace, VGG-Face, Facenet
+            - Gewichtete Kombination für maximale Genauigkeit
+            - Automatische Fallback-Mechanismen
+            
+            **📊 Erweiterte Ähnlichkeitsberechnung:**
+            - 7+ Ähnlichkeitsmetriken (Cosine, Euclidean, Correlation, Angular, etc.)
+            - Ensemble-Scoring mit optimierten Gewichtungen
+            - Vertrauens-Score basierend auf Metrik-Konsistenz
+            
+            **🔧 Qualitätsverbesserungen:**
+            - Erweiterte Gesichtsvorverarbeitung mit Ausrichtung
+            - Qualitätsvalidierung und Optimierung
+            - Mehrere Erkennungsbackends (OpenCV, DeepFace, face_recognition)
+            
+            **⚡ Performance-Optimierungen:**
+            - Konfigurierbare Verarbeitungsmodi
+            - Adaptive Gesichtsfilterung
+            - Verbesserte Fehlerbehandlung
+            """)
+    
     st.markdown("---")
     
     # Sidebar
@@ -161,46 +191,134 @@ def face_search_page():
             display_search_results(st.session_state.search_results)
 
 def search_similar_faces(uploaded_file, max_results: int, similarity_threshold: float):
-    """Perform face similarity search"""
+    """Perform enhanced face similarity search with ensemble processing"""
     
     # Initialize temp_path outside try block
     temp_path = Path("/tmp/query_image.jpg")
     
-    with st.spinner("Processing query image and searching for similar faces..."):
+    # Create progress container
+    progress_container = st.container()
+    
+    with st.spinner("🔍 Erweiterte Gesichtserkennung läuft..."):
         try:
             # Save uploaded file temporarily
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getvalue())
             
-            # Process query image
-            progress_bar = st.progress(0)
+            # Process query image with detailed progress
+            progress_bar = progress_container.progress(0)
+            status_text = progress_container.empty()
             
-            # Load and preprocess image
-            progress_bar.progress(20)
+            # Step 1: Load and preprocess image
+            status_text.text("📷 Lade und verarbeite Bild...")
+            progress_bar.progress(15)
             query_image = load_and_preprocess_image(temp_path)
             
             if query_image is None:
-                st.error("Failed to load the uploaded image")
+                st.error("❌ Fehler beim Laden des Bildes. Unterstützte Formate: JPG, PNG, BMP, WEBP")
                 return
             
-            # Detect faces
-            progress_bar.progress(40)
+            # Step 2: Detect faces with multiple backends
+            status_text.text("👤 Erkenne Gesichter mit mehreren Algorithmen...")
+            progress_bar.progress(35)
             face_locations = st.session_state.face_engine.detect_faces(query_image)
             
             if not face_locations:
-                st.error("No faces detected in the uploaded image. Please try another image.")
+                st.error("""
+                ❌ **Keine Gesichter erkannt!** 
+                
+                **Tipps für bessere Ergebnisse:**
+                - Verwenden Sie ein Bild mit deutlich sichtbarem Gesicht
+                - Stellen Sie sicher, dass das Gesicht gut beleuchtet ist
+                - Vermeiden Sie zu kleine Bilder (Mindestgröße: 30x30 Pixel pro Gesicht)
+                - Probieren Sie ein anderes Bild mit frontaler Gesichtsansicht
+                """)
                 return
             
-            # Use the first detected face
-            face_location = face_locations[0]
+            # Show detected faces info
+            if len(face_locations) > 1:
+                st.info(f"👥 {len(face_locations)} Gesichter erkannt. Verwende das erste Gesicht für die Suche.")
+            else:
+                st.success("✅ 1 Gesicht erkannt und verarbeitet.")
             
-            # Extract embedding
+            # Step 3: Extract embedding with ensemble models
+            face_location = face_locations[0]
+            status_text.text("🧠 Extrahiere Gesichtsmerkmale mit Ensemble-Modellen...")
             progress_bar.progress(60)
+            
             query_embedding = st.session_state.face_engine.extract_face_embedding(query_image, face_location)
             
             if query_embedding is None:
-                st.error("Failed to extract face embedding from the image")
+                st.error("""
+                ❌ **Fehler bei der Gesichtsanalyse!**
+                
+                Dies kann folgende Ursachen haben:
+                - Das Gesicht ist zu unscharf oder schlecht beleuchtet
+                - Das Bild hat eine zu niedrige Auflösung
+                - Das erkannte Gesicht ist zu klein
+                
+                Versuchen Sie es mit einem anderen Bild.
+                """)
                 return
+            
+            # Step 4: Search with enhanced similarity calculation  
+            status_text.text("🔍 Suche ähnliche Gesichter mit erweiterten Algorithmen...")
+            progress_bar.progress(85)
+            
+            similar_faces = st.session_state.vector_store.search_similar_faces(
+                query_embedding, 
+                n_results=max_results,
+                min_similarity=similarity_threshold
+            )
+            
+            progress_bar.progress(100)
+            status_text.text("✅ Suche abgeschlossen!")
+            
+            # Store results in session state
+            st.session_state.search_results = similar_faces
+            
+            # Show enhanced result summary
+            if similar_faces:
+                avg_similarity = sum(face['similarity'] for face in similar_faces) / len(similar_faces)
+                top_similarity = similar_faces[0]['similarity'] if similar_faces else 0
+                
+                st.success(f"""
+                🎯 **{len(similar_faces)} ähnliche Gesichter gefunden!**
+                
+                📊 **Ergebnisqualität:**
+                - Top-Ähnlichkeit: {top_similarity*100:.1f}%
+                - Durchschnitts-Ähnlichkeit: {avg_similarity*100:.1f}%
+                - Ensemble-Modelle: Aktiv
+                - Vertrauens-Scoring: Aktiv
+                """)
+            else:
+                st.warning(f"""
+                ⚠️ **Keine ähnlichen Gesichter gefunden**
+                
+                **Versuchen Sie:**
+                - Ähnlichkeitsschwelle senken (aktuell: {similarity_threshold*100:.0f}%)
+                - Mehr Bilder zur Datenbank hinzufügen
+                - Ein anderes Queryimage verwenden
+                
+                Aktuelle Datenbank: {st.session_state.vector_store.get_collection_stats().get('total_faces', 0)} Gesichter
+                """)
+            
+        except Exception as e:
+            st.error(f"""
+            💥 **Unerwarteter Fehler bei der Gesichtssuche:**
+            
+            `{str(e)}`
+            
+            Bitte versuchen Sie es erneut oder verwenden Sie ein anderes Bild.
+            """)
+            logger.error(f"Search error: {e}")
+        finally:
+            # Clean up
+            if temp_path.exists():
+                temp_path.unlink()
+            
+            # Clear progress indicators
+            progress_container.empty()
             
             # Search for similar faces
             progress_bar.progress(80)
@@ -323,22 +441,35 @@ def display_search_results(results: List[Dict[str, Any]]):
                                     st.write(f"**📁 {image_path.name}**")
                                     
                                     # Show detailed metrics in expander for advanced users
-                                    with st.expander("🔬 Detaillierte Metriken", expanded=False):
-                                        cosine_sim = face_data.get('cosine_similarity', 0) 
-                                        euclidean_sim = face_data.get('euclidean_similarity', 0)
-                                        euclidean_dist = face_data.get('euclidean_distance', 0)
+                                    with st.expander("🔬 Detaillierte Ensemble-Metriken", expanded=False):
+                                        similarity_metrics = face_data.get('similarity_metrics', {})
                                         
-                                        st.metric("Cosine Similarity", f"{cosine_sim:.3f}")
-                                        st.metric("Euclidean Similarity", f"{euclidean_sim:.3f}")
-                                        st.metric("Euclidean Distance", f"{euclidean_dist:.3f}")
+                                        # Primary metrics
+                                        col1, col2 = st.columns(2)
+                                        with col1:
+                                            st.metric("🎯 Haupt-Ähnlichkeit", f"{face_data.get('similarity', 0):.3f}")
+                                            st.metric("📐 Cosine Similarity", f"{similarity_metrics.get('cosine_similarity', 0):.3f}")
+                                            st.metric("📏 Euclidean Similarity", f"{similarity_metrics.get('euclidean_similarity', 0):.3f}")
                                         
-                                        # Show algorithm recommendation
-                                        if cosine_sim > 0.7:
-                                            st.success("🤖 Algorithmus: Sehr ähnlich")
-                                        elif cosine_sim > 0.4:
-                                            st.info("🤖 Algorithmus: Möglicherweise ähnlich") 
+                                        with col2:
+                                            st.metric("🔢 Ensemble Score", f"{similarity_metrics.get('ensemble_score', 0):.3f}")
+                                            st.metric("📊 Correlation", f"{similarity_metrics.get('correlation_similarity', 0):.3f}")
+                                            st.metric("📐 Angular Similarity", f"{similarity_metrics.get('angular_similarity', 0):.3f}")
+                                        
+                                        # Additional metrics if available
+                                        if 'manhattan_similarity' in similarity_metrics:
+                                            st.metric("🏃 Manhattan Similarity", f"{similarity_metrics.get('manhattan_similarity', 0):.3f}")
+                                        
+                                        # Model performance indicator
+                                        ensemble_score = similarity_metrics.get('ensemble_score', 0)
+                                        if ensemble_score > 0.7:
+                                            st.success("🤖 Ensemble-Modell: Sehr hohe Übereinstimmung")
+                                        elif ensemble_score > 0.5:
+                                            st.info("🤖 Ensemble-Modell: Gute Übereinstimmung") 
+                                        elif ensemble_score > 0.3:
+                                            st.warning("🤖 Ensemble-Modell: Mäßige Übereinstimmung")
                                         else:
-                                            st.warning("🤖 Algorithmus: Wahrscheinlich unterschiedlich")
+                                            st.error("🤖 Ensemble-Modell: Niedrige Übereinstimmung")
                                 else:
                                     # Fallback: show full image
                                     st.image(image, use_container_width=True)

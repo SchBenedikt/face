@@ -198,6 +198,137 @@ class FaceSimilarityCalculator:
         metrics['cosine_similarity'] = np.clip(cosine_sim, -1.0, 1.0)
         
         # Euclidean distance and similarity
+        euclidean_dist = float(np.linalg.norm(emb1 - emb2))
+        euclidean_sim = max(0.0, 1.0 - (euclidean_dist / 2.0))
+        metrics['euclidean_distance'] = euclidean_dist
+        metrics['euclidean_similarity'] = euclidean_sim
+        
+        return metrics
+    
+    def _calculate_enhanced_metrics(self, emb1: np.ndarray, emb2: np.ndarray) -> Dict[str, float]:
+        """Calculate enhanced similarity metrics"""
+        metrics = {}
+        
+        # Correlation coefficient
+        try:
+            correlation = float(np.corrcoef(emb1, emb2)[0, 1])
+            if np.isnan(correlation):
+                correlation = 0.0
+            metrics['correlation_similarity'] = correlation
+        except:
+            metrics['correlation_similarity'] = 0.0
+        
+        # Angular similarity
+        try:
+            cosine_sim = np.dot(emb1, emb2)
+            angular_distance = np.arccos(np.clip(cosine_sim, -1.0, 1.0)) / np.pi
+            metrics['angular_similarity'] = 1.0 - angular_distance
+        except:
+            metrics['angular_similarity'] = 0.0
+        
+        # Manhattan (L1) similarity
+        manhattan_dist = float(np.sum(np.abs(emb1 - emb2)))
+        manhattan_sim = max(0.0, 1.0 - (manhattan_dist / (2.0 * len(emb1))))
+        metrics['manhattan_similarity'] = manhattan_sim
+        
+        # Chebyshev (L-infinity) similarity
+        chebyshev_dist = float(np.max(np.abs(emb1 - emb2)))
+        chebyshev_sim = max(0.0, 1.0 - chebyshev_dist)
+        metrics['chebyshev_similarity'] = chebyshev_sim
+        
+        return metrics
+    
+    def _calculate_premium_metrics(self, emb1: np.ndarray, emb2: np.ndarray) -> Dict[str, float]:
+        """Calculate premium similarity metrics (computationally expensive)"""
+        metrics = {}
+        
+        # Bray-Curtis similarity
+        try:
+            bray_curtis_dist = np.sum(np.abs(emb1 - emb2)) / np.sum(np.abs(emb1) + np.abs(emb2))
+            metrics['bray_curtis_similarity'] = max(0.0, 1.0 - bray_curtis_dist)
+        except:
+            metrics['bray_curtis_similarity'] = 0.0
+        
+        # Canberra similarity
+        try:
+            numerator = np.abs(emb1 - emb2)
+            denominator = np.abs(emb1) + np.abs(emb2)
+            # Avoid division by zero
+            denominator = np.where(denominator == 0, 1e-10, denominator)
+            canberra_dist = np.sum(numerator / denominator) / len(emb1)
+            metrics['canberra_similarity'] = max(0.0, 1.0 - canberra_dist)
+        except:
+            metrics['canberra_similarity'] = 0.0
+        
+        # Minkowski similarity (p=3)
+        try:
+            minkowski_dist = float(np.power(np.sum(np.power(np.abs(emb1 - emb2), 3)), 1/3))
+            minkowski_sim = max(0.0, 1.0 - (minkowski_dist / (2.0 ** (1/3))))
+            metrics['minkowski_similarity'] = minkowski_sim
+        except:
+            metrics['minkowski_similarity'] = 0.0
+        
+        return metrics
+    
+    def _calculate_weighted_similarity(self, metrics: Dict[str, float], algorithm: str) -> float:
+        """Calculate final weighted similarity score"""
+        try:
+            cosine = metrics.get('cosine_similarity', 0.0)
+            euclidean = metrics.get('euclidean_similarity', 0.0)
+            
+            if algorithm == "basic":
+                # Simple average of cosine and euclidean
+                return (cosine + euclidean) / 2.0
+            
+            elif algorithm == "enhanced":
+                # Include enhanced metrics
+                correlation = metrics.get('correlation_similarity', 0.0)
+                angular = metrics.get('angular_similarity', 0.0)
+                manhattan = metrics.get('manhattan_similarity', 0.0)
+                
+                # Weighted combination optimized for face recognition
+                weights = [0.4, 0.25, 0.15, 0.1, 0.1]  # cosine, euclidean, correlation, angular, manhattan
+                values = [
+                    (cosine + 1.0) / 2.0,  # Normalize cosine from [-1,1] to [0,1]
+                    euclidean,
+                    (correlation + 1.0) / 2.0,  # Normalize correlation
+                    angular,
+                    manhattan
+                ]
+                
+                return sum(w * v for w, v in zip(weights, values))
+            
+            elif algorithm == "premium":
+                # Include all metrics
+                correlation = metrics.get('correlation_similarity', 0.0)
+                angular = metrics.get('angular_similarity', 0.0)
+                manhattan = metrics.get('manhattan_similarity', 0.0)
+                chebyshev = metrics.get('chebyshev_similarity', 0.0)
+                bray_curtis = metrics.get('bray_curtis_similarity', 0.0)
+                canberra = metrics.get('canberra_similarity', 0.0)
+                minkowski = metrics.get('minkowski_similarity', 0.0)
+                
+                # Premium weighted combination
+                weights = [0.3, 0.2, 0.12, 0.1, 0.08, 0.08, 0.07, 0.05]
+                values = [
+                    (cosine + 1.0) / 2.0,  # Normalize cosine
+                    euclidean,
+                    (correlation + 1.0) / 2.0,  # Normalize correlation
+                    angular,
+                    manhattan,
+                    chebyshev,
+                    bray_curtis,
+                    canberra
+                ]
+                
+                return sum(w * v for w, v in zip(weights, values))
+            
+            else:
+                return (cosine + euclidean) / 2.0
+                
+        except Exception as e:
+            logger.error(f"Error calculating weighted similarity: {e}")
+            return 0.0
         euclidean_distance = float(np.linalg.norm(emb1 - emb2))
         euclidean_similarity = max(0.0, 1.0 - euclidean_distance / 2.0)
         metrics['euclidean_distance'] = euclidean_distance
