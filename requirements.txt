@@ -1,0 +1,36 @@
+# Core dependencies
+streamlit>=1.28.0
+opencv-python>=4.8.0
+pillow>=10.0.0
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Setuptools pinned to avoid pkg_resources deprecation warnings
+setuptools==69.5.1
+
+# Face recognition
+face-recognition>=1.3.0
+deepface>=0.0.79
+insightface>=0.7.3
+scikit-learn>=1.3.0
+
+# Vector database
+chromadb>=0.4.15
+faiss-cpu>=1.7.4
+
+# Web scraping
+playwright>=1.40.0
+beautifulsoup4>=4.12.0
+requests>=2.31.0
+
+# Async and utilities
+asyncio
+aiofiles>=23.0.0
+python-dotenv>=1.0.0
+tqdm>=4.65.0
+
+# Image processing and ML
+torch>=2.0.0
+torchvision>=0.15.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
