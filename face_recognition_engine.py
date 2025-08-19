@@ -53,7 +53,7 @@ class FaceRecognitionEngine:
         
     def detect_faces(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:
         """
-        Detect faces using multiple detection backends for better accuracy
+        Detect faces using optimized single method for speed
         
         Args:
             image: Input image as numpy array
@@ -62,11 +62,11 @@ class FaceRecognitionEngine:
             List of face bounding boxes (top, right, bottom, left)
         """
         try:
-            # Method 1: Try face_recognition library first (most accurate)
+            # Method 1: Primary - face_recognition library (good balance of speed and accuracy)
             try:
                 face_locations = face_recognition.face_locations(
                     image, 
-                    number_of_times_to_upsample=1,
+                    number_of_times_to_upsample=0,  # Reduced for speed (was 1)
                     model=FACE_RECOGNITION_MODEL
                 )
                 if face_locations:
@@ -75,13 +75,13 @@ class FaceRecognitionEngine:
             except Exception as e:
                 logger.debug(f"face_recognition detection failed: {e}")
             
-            # Method 2: Try OpenCV Haar cascades (faster fallback)
+            # Method 2: Fallback - OpenCV Haar cascades (fastest)
             try:
                 gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
                 faces = self.face_cascade.detectMultiScale(
                     gray,
-                    scaleFactor=1.1,
-                    minNeighbors=5,
+                    scaleFactor=1.2,  # Slightly larger steps for speed (was 1.1)
+                    minNeighbors=4,   # Reduced for speed (was 5)
                     minSize=MIN_FACE_SIZE,
                     flags=cv2.CASCADE_SCALE_IMAGE
                 )
@@ -97,26 +97,8 @@ class FaceRecognitionEngine:
             except Exception as e:
                 logger.debug(f"OpenCV detection failed: {e}")
             
-            # Method 3: Try DeepFace detection as last resort
-            try:
-                detected_faces = DeepFace.extract_faces(
-                    image, 
-                    detector_backend='opencv',
-                    enforce_detection=False,
-                    align=False
-                )
-                
-                if detected_faces and len(detected_faces) > 0:
-                    # This is a simplified conversion - in practice you'd need the actual coordinates
-                    # For now, just return a reasonable estimate based on image size
-                    h, w = image.shape[:2]
-                    estimated_faces = [(h//4, 3*w//4, 3*h//4, w//4)]  # Rough center face
-                    logger.debug(f"DeepFace fallback detection used")
-                    return estimated_faces
-            except Exception as e:
-                logger.debug(f"DeepFace detection failed: {e}")
-            
-            logger.debug("No faces detected by any method")
+            # Skip DeepFace detection completely for speed
+            logger.debug("No faces detected by fast methods")
             return []
             
         except Exception as e:
@@ -160,26 +142,26 @@ class FaceRecognitionEngine:
     
     def extract_face_embedding(self, image: np.ndarray, face_location: Tuple[int, int, int, int]) -> Optional[np.ndarray]:
         """
-        Extract face embedding using ensemble of multiple DeepFace models for enhanced accuracy
+        Extract face embedding using optimized single model approach for speed
         
         Args:
             image: Input image
             face_location: Face bounding box (top, right, bottom, left)
             
         Returns:
-            Optimized face embedding vector or None if extraction fails
+            Face embedding vector or None if extraction fails
         """
         try:
             top, right, bottom, left = face_location
             
-            # Extract face region with adaptive padding
-            padding = min(20, min(right-left, bottom-top) // 4)  # Adaptive padding
+            # Extract face region with minimal padding for speed
+            padding = 10  # Fixed small padding for speed
             height, width = image.shape[:2]
             
             # Apply padding while staying within image bounds
             face_top = max(0, top - padding)
             face_bottom = min(height, bottom + padding)
-            face_left = max(0, left - padding)
+            face_left = max(0, left - padding)  
             face_right = min(width, right + padding)
             
             face_image = image[face_top:face_bottom, face_left:face_right]
@@ -189,41 +171,23 @@ class FaceRecognitionEngine:
                 logger.debug(f"Face too small: {face_image.shape}")
                 return None
             
-            # Enhanced face preprocessing with alignment
-            face_image = self._preprocess_face_advanced(face_image)
+            # Fast preprocessing - skip advanced processing for speed
+            face_image = self._preprocess_face(face_image)
             
-            # Ensemble approach: Try multiple models and combine results
-            embeddings = []
-            successful_models = []
+            # Speed optimization: Use only primary model (Facenet512)
+            try:
+                embedding = self._extract_single_model_embedding(face_image, self.primary_model)
+                if embedding is not None:
+                    logger.debug(f"Fast embedding extraction with {self.primary_model}")
+                    return self._finalize_embedding(embedding, [self.primary_model])
+            except Exception as model_e:
+                logger.debug(f"Primary model {self.primary_model} failed: {model_e}")
             
-            for model_name in self.models:
-                try:
-                    embedding = self._extract_single_model_embedding(face_image, model_name)
-                    if embedding is not None and self._validate_embedding_quality(embedding):
-                        embeddings.append(embedding)
-                        successful_models.append(model_name)
-                        logger.debug(f"Successfully extracted embedding with {model_name}")
-                        
-                        # For speed, use primary model if it works well
-                        if model_name == self.primary_model and len(embeddings) == 1:
-                            return self._finalize_embedding(embedding, successful_models)
-                            
-                except Exception as model_e:
-                    logger.debug(f"Model {model_name} failed: {model_e}")
-                    continue
-            
-            # Combine multiple embeddings if available
-            if len(embeddings) > 1:
-                combined_embedding = self._combine_embeddings(embeddings, successful_models)
-                return self._finalize_embedding(combined_embedding, successful_models)
-            elif len(embeddings) == 1:
-                return self._finalize_embedding(embeddings[0], successful_models)
-            
-            # Fallback to face_recognition library
+            # Fallback to face_recognition library (faster than DeepFace ensemble)
             return self._extract_fallback_embedding(face_image)
                 
         except Exception as e:
-            logger.error(f"Critical error extracting face embedding: {e}")
+            logger.error(f"Error extracting face embedding: {e}")
             return None
     
     def _preprocess_face_advanced(self, face_image: np.ndarray) -> np.ndarray:
@@ -641,11 +605,11 @@ class FaceRecognitionEngine:
     
     def process_images_batch(self, image_paths: List[Path], max_workers: int = 1) -> List[Dict[str, Any]]:
         """
-        Process multiple images in batch with limited concurrency to avoid mutex issues
+        Process multiple images in batch with optimized speed and timeout handling
         
         Args:
             image_paths: List of image file paths
-            max_workers: Maximum concurrent workers (set to 1 to avoid mutex issues)
+            max_workers: Maximum concurrent workers (optimized for speed)
             
         Returns:
             List of processing results
@@ -664,7 +628,7 @@ class FaceRecognitionEngine:
                     results.append(result)
                     
                     # More frequent progress updates
-                    if (i + 1) % 10 == 0 or (i + 1) == total_images:
+                    if (i + 1) % 5 == 0 or (i + 1) == total_images:
                         logger.info(f"Processed {i+1}/{total_images} images")
                         
                 except Exception as e:
@@ -676,20 +640,20 @@ class FaceRecognitionEngine:
                 # Submit all tasks
                 futures = [executor.submit(self.process_image, path) for path in image_paths]
                 
-                # Collect results with better error handling
+                # Collect results with much shorter timeout for speed
                 for i, future in enumerate(futures):
                     try:
                         logger.debug(f"Waiting for result {i+1}/{total_images}: {image_paths[i].name}")
-                        result = future.result(timeout=120)  # Increased timeout to 2 minutes
+                        result = future.result(timeout=30)  # Reduced timeout to 30 seconds for speed
                         results.append(result)
                         
                         # More frequent progress updates
-                        if (i + 1) % 10 == 0 or (i + 1) == total_images:
+                        if (i + 1) % 5 == 0 or (i + 1) == total_images:
                             logger.info(f"Processed {i+1}/{total_images} images")
                             
                     except TimeoutError:
                         logger.error(f"Timeout processing image {image_paths[i]}")
-                        results.append({"error": "Processing timeout", "image_path": str(image_paths[i])})
+                        results.append({"error": "Processing timeout (30s)", "image_path": str(image_paths[i])})
                     except Exception as e:
                         logger.error(f"Error processing image {image_paths[i]}: {e}")
                         results.append({"error": str(e), "image_path": str(image_paths[i])})

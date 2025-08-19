@@ -570,3 +570,74 @@ class FaceVectorStore:
         except Exception as e:
             logger.error(f"Error clearing collection: {e}")
             return False
+    
+    def get_faces_paginated(self, offset: int = 0, limit: int = 50) -> Dict[str, Any]:
+        """
+        Robust paginated retrieval of faces with error handling
+        
+        Args:
+            offset: Number of faces to skip
+            limit: Maximum number of faces to return
+            
+        Returns:
+            Dictionary with faces data or empty result on error
+        """
+        try:
+            # First try normal pagination
+            try:
+                results = self.collection.get(
+                    limit=limit,
+                    offset=offset,
+                    include=['metadatas', 'embeddings', 'documents']
+                )
+                
+                if results and results.get('metadatas'):
+                    return results
+                    
+            except Exception as direct_error:
+                logger.warning(f"Direct pagination failed: {direct_error}")
+                
+                # Fallback approach: get a larger chunk and slice
+                try:
+                    chunk_size = min(offset + limit + 100, 2000)  # Get reasonable chunk
+                    all_results = self.collection.get(
+                        limit=chunk_size,
+                        include=['metadatas', 'embeddings', 'documents']
+                    )
+                    
+                    if all_results and all_results.get('metadatas'):
+                        # Manually slice the results
+                        metadatas = all_results.get('metadatas', [])
+                        embeddings = all_results.get('embeddings', [])
+                        documents = all_results.get('documents', [])
+                        ids = all_results.get('ids', [])
+                        
+                        if len(metadatas) > offset:
+                            end_idx = min(offset + limit, len(metadatas))
+                            
+                            return {
+                                'ids': [ids[offset:end_idx]] if ids else [[]],
+                                'metadatas': metadatas[offset:end_idx],
+                                'embeddings': embeddings[offset:end_idx] if embeddings else [],
+                                'documents': documents[offset:end_idx] if documents else []
+                            }
+                            
+                except Exception as fallback_error:
+                    logger.error(f"Fallback pagination failed: {fallback_error}")
+            
+            # Return empty result if all methods fail
+            return {
+                'ids': [[]],
+                'metadatas': [],
+                'embeddings': [],
+                'documents': []
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in get_faces_paginated: {e}")
+            return {
+                'ids': [[]],
+                'metadatas': [],
+                'embeddings': [],
+                'documents': []
+            }

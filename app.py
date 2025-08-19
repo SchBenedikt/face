@@ -21,6 +21,7 @@ import plotly.graph_objects as go
 from typing import List, Dict, Any
 import time
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -66,33 +67,6 @@ def main():
     
     st.title("🔍 Face Recognition Search")
     
-    # Show improvements banner
-    with st.container():
-        st.success("🚀 **Verbesserte Gesichtserkennung aktiv!** Diese Version verwendet Ensemble-Modelle und erweiterte Ähnlichkeitsalgorithmen für höchste Genauigkeit.")
-        with st.expander("ℹ️ Neue Features & Verbesserungen", expanded=False):
-            st.markdown("""
-            **🎯 Ensemble-Gesichtserkennung:**
-            - Mehrere DeepFace-Modelle: Facenet512, ArcFace, VGG-Face, Facenet
-            - Gewichtete Kombination für maximale Genauigkeit
-            - Automatische Fallback-Mechanismen
-            
-            **📊 Erweiterte Ähnlichkeitsberechnung:**
-            - 7+ Ähnlichkeitsmetriken (Cosine, Euclidean, Correlation, Angular, etc.)
-            - Ensemble-Scoring mit optimierten Gewichtungen
-            - Vertrauens-Score basierend auf Metrik-Konsistenz
-            
-            **🔧 Qualitätsverbesserungen:**
-            - Erweiterte Gesichtsvorverarbeitung mit Ausrichtung
-            - Qualitätsvalidierung und Optimierung
-            - Mehrere Erkennungsbackends (OpenCV, DeepFace, face_recognition)
-            
-            **⚡ Performance-Optimierungen:**
-            - Konfigurierbare Verarbeitungsmodi
-            - Adaptive Gesichtsfilterung
-            - Verbesserte Fehlerbehandlung
-            """)
-    
-    st.markdown("---")
     
     # Sidebar
     with st.sidebar:
@@ -168,8 +142,8 @@ def face_search_page():
             max_results = st.slider(
                 "Maximum Results", 
                 min_value=5, 
-                max_value=50, 
-                value=20,
+                max_value=200, 
+                value=50,
                 help="Maximum number of similar faces to return"
             )
             
@@ -181,6 +155,38 @@ def face_search_page():
                 step=0.05,
                 help="Mindestähnlichkeit für Suchergebnisse (0.4 = 40% Ähnlichkeit). Höhere Werte = genauere Ergebnisse aber weniger Treffer."
             )
+            
+            # Facial Attribute Analysis Info
+            with st.expander("🧬 Facial Attribute Analysis", expanded=False):
+                st.markdown("""
+                **🎯 Neue Funktion: Detaillierte Gesichtsanalyse**
+                
+                Zusätzlich zur Ähnlichkeitssuche können Sie jetzt für jedes gefundene Gesicht eine detaillierte Analyse durchführen:
+                
+                **📊 Analysierte Attribute:**
+                - **👤 Alter**: Geschätztes Alter (±4,65 Jahre Genauigkeit)  
+                - **⚧️ Geschlecht**: Männlich/Weiblich (97,44% Genauigkeit)
+                - **😊 Emotionen**: Glücklich, Neutral, Traurig, Wütend, Überrascht, Ängstlich, Angeekelt
+                - **🌍 Ethnische Herkunft**: Asiatisch, Kaukasisch, Nahöstlich, Indisch, Lateinamerikanisch, Afrikanisch
+                
+                **🔬 Technische Details:**
+                - Basiert auf DeepFace-Bibliothek mit neuronalen Netzen
+                - Hochpräzise Modelle für jeden Attributtyp
+                - Konfidenzwerte für jede Vorhersage
+                
+                **🚀 Verwendung:**
+                Klicken Sie auf den **🧬 Analyse**-Button bei jedem Suchergebnis für detaillierte Informationen.
+                """)
+                
+                # Check if DeepFace is available
+                try:
+                    import deepface
+                    st.success("✅ DeepFace ist installiert und bereit für Gesichtsanalyse!")
+                except ImportError:
+                    st.warning("⚠️ DeepFace nicht installiert. Installieren Sie mit: `pip install deepface`")
+                    if st.button("📥 DeepFace Installation anzeigen"):
+                        st.code("pip install deepface", language="bash")
+                        st.info("Nach der Installation starten Sie die Anwendung neu.")
             
             if st.button("🔍 Search Similar Faces", type="primary"):
                 search_similar_faces(uploaded_file, max_results, similarity_threshold)
@@ -235,14 +241,41 @@ def search_similar_faces(uploaded_file, max_results: int, similarity_threshold: 
                 """)
                 return
             
-            # Show detected faces info
+            # Show detected faces info with selection option
             if len(face_locations) > 1:
-                st.info(f"👥 {len(face_locations)} Gesichter erkannt. Verwende das erste Gesicht für die Suche.")
+                st.warning(f"👥 {len(face_locations)} Gesichter erkannt!")
+                
+                # Show all detected faces for user to choose from
+                st.write("**Wählen Sie das Gesicht für die Suche aus:**")
+                
+                cols = st.columns(min(len(face_locations), 4))
+                face_choice = None
+                
+                for idx, face_loc in enumerate(face_locations):
+                    with cols[idx % 4]:
+                        # Extract face region
+                        if isinstance(face_loc, dict):
+                            top, right, bottom, left = face_loc['top'], face_loc['right'], face_loc['bottom'], face_loc['left']
+                        else:
+                            top, right, bottom, left = face_loc
+                        
+                        face_image = query_image[top:bottom, left:right]
+                        face_thumbnail = create_thumbnail(face_image, (100, 100))
+                        
+                        st.image(face_thumbnail, caption=f"Gesicht {idx+1}")
+                        if st.button(f"Wählen", key=f"face_{idx}"):
+                            face_choice = idx
+                
+                if face_choice is not None:
+                    face_location = face_locations[face_choice]
+                    st.success(f"✅ Gesicht {face_choice+1} ausgewählt für die Suche.")
+                else:
+                    st.info("👆 Bitte wählen Sie ein Gesicht aus, um fortzufahren.")
+                    return
             else:
                 st.success("✅ 1 Gesicht erkannt und verarbeitet.")
-            
+                face_location = face_locations[0]
             # Step 3: Extract embedding with ensemble models
-            face_location = face_locations[0]
             status_text.text("🧠 Extrahiere Gesichtsmerkmale mit Ensemble-Modellen...")
             progress_bar.progress(60)
             
@@ -319,31 +352,232 @@ def search_similar_faces(uploaded_file, max_results: int, similarity_threshold: 
             
             # Clear progress indicators
             progress_container.empty()
-            
-            # Search for similar faces
-            progress_bar.progress(80)
-            similar_faces = st.session_state.vector_store.search_similar_faces(
-                query_embedding, 
-                n_results=max_results,
-                min_similarity=similarity_threshold
-            )
-            
-            progress_bar.progress(100)
-            
-            # Store results in session state
-            st.session_state.search_results = similar_faces
-            
-            if similar_faces:
-                st.success(f"Found {len(similar_faces)} similar faces!")
+
+def show_full_image_with_face_box(image_path, face_location):
+    """Display full image with face bounding box"""
+    try:
+        # Load the full image
+        full_image = load_and_preprocess_image(image_path)
+        if full_image is None:
+            st.error("❌ Fehler beim Laden des Bildes")
+            return
+        
+        # Parse face location
+        if isinstance(face_location, str):
+            coords = face_location.split(',')
+            if len(coords) == 4:
+                top, right, bottom, left = map(int, coords)
             else:
-                st.warning("No similar faces found. Try lowering the similarity threshold or adding more images to the database.")
+                st.error("❌ Ungültige Gesichtskoordinaten")
+                return
+        else:
+            top, right, bottom, left = face_location
+        
+        # Draw bounding box on the image
+        image_with_box = full_image.copy()
+        # The image from load_and_preprocess_image is already in RGB format
+        # OpenCV rectangle expects (B,G,R) for color, so for RGB we need (R,G,B)
+        cv2.rectangle(image_with_box, (left, top), (right, bottom), (0, 255, 0), 3)
+        
+        # No color conversion needed - image is already in RGB format
+        
+        # Create a modal-like display
+        with st.expander(f"🖼️ Vollbild: {image_path.name}", expanded=True):
+            st.image(image_with_box, caption=f"Vollbild mit markiertem Gesicht - {image_path.name}", use_container_width=True)
+            st.success(f"✅ Gesicht markiert bei Koordinaten: Top={top}, Right={right}, Bottom={bottom}, Left={left}")
+    
+    except Exception as e:
+        st.error(f"❌ Fehler beim Anzeigen des Vollbildes: {str(e)}")
+
+def analyze_facial_attributes(image_path, face_location):
+    """Analyze facial attributes using DeepFace"""
+    try:
+        import tempfile
+        from deepface import DeepFace
+        
+        # Load the full image
+        full_image = load_and_preprocess_image(image_path)
+        if full_image is None:
+            return None
+        
+        # Parse face location
+        if isinstance(face_location, str):
+            coords = face_location.split(',')
+            if len(coords) == 4:
+                top, right, bottom, left = map(int, coords)
+            else:
+                return None
+        else:
+            top, right, bottom, left = face_location
+        
+        # Extract face region with some padding
+        face_width = right - left
+        face_height = bottom - top
+        padding = max(10, min(30, min(face_width, face_height) // 8))
+        
+        height, width = full_image.shape[:2]
+        top = max(0, top - padding)
+        left = max(0, left - padding)
+        bottom = min(height, bottom + padding)
+        right = min(width, right + padding)
+        
+        face_image = full_image[top:bottom, left:right]
+        
+        # Validate face size
+        if face_image.shape[0] < 50 or face_image.shape[1] < 50:
+            return {"error": "Gesicht zu klein für Attribut-Analyse"}
+        
+        # Save face to temporary file for DeepFace
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+            # Convert RGB to BGR for cv2.imwrite
+            face_bgr = cv2.cvtColor(face_image, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(tmp_file.name, face_bgr)
             
-        except Exception as e:
-            st.error(f"Error during search: {str(e)}")
-        finally:
-            # Clean up
-            if temp_path.exists():
-                temp_path.unlink()
+            # Analyze with DeepFace
+            try:
+                analysis_result = DeepFace.analyze(
+                    img_path=tmp_file.name,
+                    actions=['age', 'gender', 'race', 'emotion'],
+                    enforce_detection=False,
+                    silent=True
+                )
+                
+                # Clean up temp file
+                Path(tmp_file.name).unlink(missing_ok=True)
+                
+                # Handle different return formats from DeepFace
+                if isinstance(analysis_result, list):
+                    result = analysis_result[0] if analysis_result else {}
+                else:
+                    result = analysis_result
+                
+                return result
+                
+            except Exception as df_error:
+                # Clean up temp file
+                Path(tmp_file.name).unlink(missing_ok=True)
+                logger.error(f"DeepFace analysis error: {df_error}")
+                return {"error": f"Analyse-Fehler: {str(df_error)[:100]}..."}
+                
+    except ImportError:
+        return {"error": "DeepFace nicht installiert. Bitte installieren Sie: pip install deepface"}
+    except Exception as e:
+        logger.error(f"Facial attribute analysis error: {e}")
+        return {"error": f"Allgemeiner Fehler: {str(e)[:100]}..."}
+
+def show_facial_attributes_popup(image_path, face_location, face_id="unknown"):
+    """Display facial attributes analysis in a popup-style expander"""
+    
+    with st.spinner("🧠 Analysiere Gesichtsattribute..."):
+        analysis = analyze_facial_attributes(image_path, face_location)
+    
+    if analysis is None:
+        st.error("❌ Keine Analyse möglich")
+        return
+    
+    if "error" in analysis:
+        st.error(f"❌ {analysis['error']}")
+        return
+    
+    # Create detailed popup display
+    with st.expander(f"🧬 Detaillierte Gesichtsanalyse - {face_id[:8]}...", expanded=True):
+        # Header with face preview (stacked vertically)
+        try:
+            full_image = load_and_preprocess_image(image_path)
+            if full_image is not None:
+                if isinstance(face_location, str):
+                    coords = face_location.split(',')
+                    if len(coords) == 4:
+                        top, right, bottom, left = map(int, coords)
+                        face_crop = full_image[top:bottom, left:right]
+                        if face_crop.shape[0] > 0 and face_crop.shape[1] > 0:
+                            st.image(face_crop, caption="Analysiertes Gesicht", width=150)
+        except:
+            pass
+        st.markdown("### 📊 Analyseergebnisse")
+        st.write(f"**Datei:** {Path(image_path).name}")
+        st.write(f"**Face ID:** {face_id}")
+        st.markdown("---")
+        # Age Analysis
+        if 'age' in analysis:
+            st.markdown("### 🎂 **Alter**")
+            age = analysis['age']
+            st.metric("Geschätztes Alter", f"{age} Jahre")
+            if age < 18:
+                st.info("👶 Jugendlich")
+            elif age < 30:
+                st.info("👤 Junge(r) Erwachsene(r)")
+            elif age < 50:
+                st.info("👨 Erwachsene(r)")
+            elif age < 70:
+                st.info("👴 Ältere(r) Erwachsene(r)")
+            else:
+                st.info("👵 Senior(in)")
+        st.markdown("---")
+        # Gender Analysis
+        if 'gender' in analysis:
+            st.markdown("### ⚧️ **Geschlecht**")
+            gender_data = analysis['gender']
+            if isinstance(gender_data, dict):
+                male_prob = gender_data.get('Man', 0)
+                female_prob = gender_data.get('Woman', 0)
+                st.metric("👨 Männlich", f"{male_prob:.1f}%")
+                st.metric("👩 Weiblich", f"{female_prob:.1f}%")
+                dominant = "👨 Männlich" if male_prob > female_prob else "👩 Weiblich"
+                confidence = max(male_prob, female_prob)
+                st.success(f"**Vorhersage:** {dominant} (Konfidenz: {confidence:.1f}%)")
+            else:
+                st.write(f"**Geschlecht:** {gender_data}")
+        st.markdown("---")
+        # Emotion Analysis
+        if 'emotion' in analysis:
+            st.markdown("### 😊 **Emotionen**")
+            emotions = analysis['emotion']
+            if isinstance(emotions, dict):
+                sorted_emotions = sorted(emotions.items(), key=lambda x: x[1], reverse=True)
+                emotion_map = {
+                    'happy': ('😊 Glücklich', '🟢'),
+                    'neutral': ('😐 Neutral', '🔵'),
+                    'sad': ('😢 Traurig', '🔵'),
+                    'angry': ('😠 Wütend', '🔴'),
+                    'surprise': ('😲 Überrascht', '🟡'),
+                    'fear': ('😨 Ängstlich', '🟠'),
+                    'disgust': ('🤢 Angeekelt', '🟤')
+                }
+                # Show top 3 emotions
+                for i, (emotion, confidence) in enumerate(sorted_emotions[:3]):
+                    german_emotion, color = emotion_map.get(emotion, (emotion.title(), '⚪'))
+                    st.write(f"{color} **{german_emotion}**: {confidence:.1f}%")
+                    st.progress(confidence / 100.0)
+                # Dominant emotion highlight
+                top_emotion, top_confidence = sorted_emotions[0]
+                german_top, _ = emotion_map.get(top_emotion, (top_emotion.title(), '⚪'))
+                st.success(f"**Dominante Emotion:** {german_top} ({top_confidence:.1f}%)")
+        st.markdown("---")
+        # Race/Ethnicity Analysis
+        if 'race' in analysis:
+            st.markdown("### 🌍 **Ethnische Herkunft**")
+            race_data = analysis['race']
+            if isinstance(race_data, dict):
+                sorted_races = sorted(race_data.items(), key=lambda x: x[1], reverse=True)
+                race_map = {
+                    'asian': '🌏 Asiatisch',
+                    'white': '🌍 Kaukasisch',
+                    'middle eastern': '🌍 Nahöstlich',
+                    'indian': '🌏 Indisch',
+                    'latino hispanic': '🌎 Lateinamerikanisch',
+                    'black': '🌍 Afrikanisch'
+                }
+                # Show top 3 predictions
+                for i, (race, confidence) in enumerate(sorted_races[:3]):
+                    german_race = race_map.get(race.lower(), race.title())
+                    st.metric(german_race, f"{confidence:.1f}%")
+                # Dominant prediction
+                top_race, top_confidence = sorted_races[0]
+                german_top_race = race_map.get(top_race.lower(), top_race.title())
+                st.info(f"**Hauptvorhersage:** {german_top_race} ({top_confidence:.1f}%)")
+        st.markdown("---")
+        st.caption("⚠️ **Hinweis:** Diese Analyse basiert auf KI-Modellen und dient nur zu Demonstrationszwecken. Die Ergebnisse sind Schätzungen und sollten nicht für Identifikation oder Diskriminierung verwendet werden.")
 
 def display_search_results(results: List[Dict[str, Any]]):
     """Display search results"""
@@ -426,50 +660,27 @@ def display_search_results(results: List[Dict[str, Any]]):
                                     
                                     # Color-coded similarity display based on face recognition standards
                                     if similarity_percentage >= 70:
-                                        st.success(f"**🎯 {similarity_percentage:.1f}%** (Sehr hohe Ähnlichkeit)")
+                                        st.success(f"**🎯 {similarity_percentage:.1f}%**")
                                         st.caption(f"🔒 Vertrauen: {confidence_score:.1f}%")
                                     elif similarity_percentage >= 50:
-                                        st.info(f"**✅ {similarity_percentage:.1f}%** (Hohe Ähnlichkeit)")
+                                        st.info(f"**✅ {similarity_percentage:.1f}%**")
                                         st.caption(f"📊 Vertrauen: {confidence_score:.1f}%")
                                     elif similarity_percentage >= 30:
-                                        st.warning(f"**⚠️ {similarity_percentage:.1f}%** (Mittlere Ähnlichkeit)")
+                                        st.warning(f"**⚠️ {similarity_percentage:.1f}%**")
                                         st.caption(f"📈 Vertrauen: {confidence_score:.1f}%")
                                     else:
-                                        st.error(f"**❓ {similarity_percentage:.1f}%** (Niedrige Ähnlichkeit)")
+                                        st.error(f"**❓ {similarity_percentage:.1f}%**")
                                         st.caption(f"🔍 Vertrauen: {confidence_score:.1f}%")
                                     
                                     st.write(f"**📁 {image_path.name}**")
                                     
-                                    # Show detailed metrics in expander for advanced users
-                                    with st.expander("🔬 Detaillierte Ensemble-Metriken", expanded=False):
-                                        similarity_metrics = face_data.get('similarity_metrics', {})
-                                        
-                                        # Primary metrics
-                                        col1, col2 = st.columns(2)
-                                        with col1:
-                                            st.metric("🎯 Haupt-Ähnlichkeit", f"{face_data.get('similarity', 0):.3f}")
-                                            st.metric("📐 Cosine Similarity", f"{similarity_metrics.get('cosine_similarity', 0):.3f}")
-                                            st.metric("📏 Euclidean Similarity", f"{similarity_metrics.get('euclidean_similarity', 0):.3f}")
-                                        
-                                        with col2:
-                                            st.metric("🔢 Ensemble Score", f"{similarity_metrics.get('ensemble_score', 0):.3f}")
-                                            st.metric("📊 Correlation", f"{similarity_metrics.get('correlation_similarity', 0):.3f}")
-                                            st.metric("📐 Angular Similarity", f"{similarity_metrics.get('angular_similarity', 0):.3f}")
-                                        
-                                        # Additional metrics if available
-                                        if 'manhattan_similarity' in similarity_metrics:
-                                            st.metric("🏃 Manhattan Similarity", f"{similarity_metrics.get('manhattan_similarity', 0):.3f}")
-                                        
-                                        # Model performance indicator
-                                        ensemble_score = similarity_metrics.get('ensemble_score', 0)
-                                        if ensemble_score > 0.7:
-                                            st.success("🤖 Ensemble-Modell: Sehr hohe Übereinstimmung")
-                                        elif ensemble_score > 0.5:
-                                            st.info("🤖 Ensemble-Modell: Gute Übereinstimmung") 
-                                        elif ensemble_score > 0.3:
-                                            st.warning("🤖 Ensemble-Modell: Mäßige Übereinstimmung")
-                                        else:
-                                            st.error("🤖 Ensemble-Modell: Niedrige Übereinstimmung")
+                                    # Action buttons in columns
+                                    # Action buttons (stacked vertically to avoid nested columns)
+                                    if st.button("🖼️ Ganzes Bild", key=f"full_img_{i}", help="Ganzes Bild mit markiertem Gesicht anzeigen"):
+                                        show_full_image_with_face_box(image_path, location)
+                                    if st.button("🧬 Analyse", key=f"analyze_face_{i}", help="Detaillierte Gesichtsanalyse: Alter, Geschlecht, Emotionen, Ethnie"):
+                                        face_id = face_data.get('id', f"face_{i}")
+                                        show_facial_attributes_popup(image_path, location, face_id)
                                 else:
                                     # Fallback: show full image
                                     st.image(image, use_container_width=True)
@@ -483,9 +694,7 @@ def display_search_results(results: List[Dict[str, Any]]):
                                     # Create thumbnail
                                     thumbnail = create_thumbnail(face_image, THUMBNAIL_SIZE)
                                     
-                                    # Display
-                                    st.image(thumbnail, use_container_width=True)
-                                    # Display with enhanced similarity information
+                                    # Display face thumbnail
                                     st.image(thumbnail, use_container_width=True)
                                     
                                     # Enhanced similarity display
@@ -493,34 +702,40 @@ def display_search_results(results: List[Dict[str, Any]]):
                                     confidence_score = face_data.get('confidence_score', similarity_percentage / 100) * 100
                                     
                                     if similarity_percentage >= 70:
-                                        st.success(f"**🎯 {similarity_percentage:.1f}%** (Sehr hohe Ähnlichkeit)")
+                                        st.success(f"**🎯 {similarity_percentage:.1f}%**")
                                     elif similarity_percentage >= 50:
-                                        st.info(f"**✅ {similarity_percentage:.1f}%** (Hohe Ähnlichkeit)")
+                                        st.info(f"**✅ {similarity_percentage:.1f}%**")
                                     elif similarity_percentage >= 30:
-                                        st.warning(f"**⚠️ {similarity_percentage:.1f}%** (Mittlere Ähnlichkeit)")
+                                        st.warning(f"**⚠️ {similarity_percentage:.1f}%**")
                                     else:
-                                        st.error(f"**❓ {similarity_percentage:.1f}%** (Niedrige Ähnlichkeit)")
+                                        st.error(f"**❓ {similarity_percentage:.1f}%**")
                                     
                                     st.write(f"**📁 {image_path.name}**")
                                     st.caption(f"🔒 Vertrauen: {confidence_score:.1f}%")
+                                    
+                                    # Action buttons in columns
+                                    btn_col1, btn_col2 = st.columns(2)
+                                    
+                                    with btn_col1:
+                                        # Add full image view button
+                                        if st.button("🖼️ Ganzes Bild", key=f"full_img_tuple_{i}", help="Ganzes Bild mit markiertem Gesicht anzeigen"):
+                                            show_full_image_with_face_box(image_path, (top, right, bottom, left))
+                                    
+                                    with btn_col2:
+                                        # Add facial attribute analysis button
+                                        if st.button("🧬 Analyse", key=f"analyze_tuple_{i}", help="Detaillierte Gesichtsanalyse: Alter, Geschlecht, Emotionen, Ethnie"):
+                                            face_id = face_data.get('id', f"face_{i}")
+                                            show_facial_attributes_popup(image_path, (top, right, bottom, left), face_id)
+                                        
                                 except:
-                                    # Fallback: show full image with enhanced similarity display
+                                    # Fallback: show full image
                                     st.image(image, use_container_width=True)
+                                    st.write(f"**Similarity:** {face_data['similarity']:.3f}")
                                     
-                                    similarity_percentage = face_data['similarity'] * 100
-                                    confidence_score = face_data.get('confidence_score', similarity_percentage / 100) * 100
-                                    
-                                    if similarity_percentage >= 70:
-                                        st.success(f"**🎯 {similarity_percentage:.1f}%** (Sehr hohe Ähnlichkeit)")
-                                    elif similarity_percentage >= 50:
-                                        st.info(f"**✅ {similarity_percentage:.1f}%** (Hohe Ähnlichkeit)")
-                                    elif similarity_percentage >= 30:
-                                        st.warning(f"**⚠️ {similarity_percentage:.1f}%** (Mittlere Ähnlichkeit)")
-                                    else:
-                                        st.error(f"**❓ {similarity_percentage:.1f}%** (Niedrige Ähnlichkeit)")
-                                    
-                                    st.write(f"**📁 {image_path.name}**")
-                                    st.caption(f"🔒 Vertrauen: {confidence_score:.1f}%")
+                                    # Add full image view button  
+                                    if st.button("🖼️ Ganzes Bild", key=f"full_img_fallback_{i}", help="Ganzes Bild anzeigen"):
+                                        with st.expander(f"�️ Vollbild: {image_path.name}", expanded=True):
+                                            st.image(image, caption=f"Vollbild - {image_path.name}", use_container_width=True)
                         else:
                             st.image(image, use_container_width=True)
                             
@@ -528,16 +743,21 @@ def display_search_results(results: List[Dict[str, Any]]):
                             confidence_score = face_data.get('confidence_score', similarity_percentage / 100) * 100
                             
                             if similarity_percentage >= 70:
-                                st.success(f"**🎯 {similarity_percentage:.1f}%** (Sehr hohe Ähnlichkeit)")
+                                st.success(f"**🎯 {similarity_percentage:.1f}%**")
                             elif similarity_percentage >= 50:
-                                st.info(f"**✅ {similarity_percentage:.1f}%** (Hohe Ähnlichkeit)")
+                                st.info(f"**✅ {similarity_percentage:.1f}%**")
                             elif similarity_percentage >= 30:
-                                st.warning(f"**⚠️ {similarity_percentage:.1f}%** (Mittlere Ähnlichkeit)")
+                                st.warning(f"**⚠️ {similarity_percentage:.1f}%**")
                             else:
-                                st.error(f"**❓ {similarity_percentage:.1f}%** (Niedrige Ähnlichkeit)")
+                                st.error(f"**❓ {similarity_percentage:.1f}%**")
                             
                             st.write(f"**📁 {image_path.name}**")
                             st.caption(f"🔒 Vertrauen: {confidence_score:.1f}%")
+                            
+                            # Add full image view button
+                            if st.button("🖼️ Ganzes Bild", key=f"full_img_no_loc_{i}", help="Ganzes Bild anzeigen"):
+                                with st.expander(f"🖼️ Vollbild: {image_path.name}", expanded=True):
+                                    st.image(image, caption=f"Vollbild - {image_path.name}", use_container_width=True)
                 else:
                     st.error("Image not found")
                     
@@ -545,250 +765,328 @@ def display_search_results(results: List[Dict[str, Any]]):
                 st.error(f"Error displaying result: {e}")
 
 def batch_face_processing_page():
-    """Dedicated batch face processing page with comprehensive options"""
+    """Enhanced batch processing page using fast_process.py for optimal performance."""
     
-    st.header("🧠 Batch Face Processing")
-    st.markdown("**Comprehensive face detection and processing tools for large image collections**")
+    st.header("🚀 Fast Batch Face Processing")
+    st.markdown("**High-performance face detection and processing using optimized algorithms**")
     
-    tab1, tab2, tab3, tab4 = st.tabs(["📁 Process Directories", "⚡ Quick Process", "🔄 Re-process Images", "📊 Processing Stats"])
+    tab1, tab2 = st.tabs(["⚡ Fast Processing", "📊 Processing Stats"])
     
     with tab1:
-        st.subheader("Process Image Directories")
+        # Processing mode selection
+        col1, col2 = st.columns([2, 1])
         
-        # Show available directories
-        directories = []
-        if IMAGES_DIR.exists():
-            image_count = len(get_image_files(IMAGES_DIR))
-            if image_count > 0:
-                directories.append(("Images", IMAGES_DIR, image_count))
+        with col1:
+            st.subheader("🎯 Processing Mode")
+            processing_mode = st.radio(
+                "Select Processing Mode:",
+                ["🆕 Process New Images Only", "🔄 Update All Images (Replace Existing)"],
+                help="New: Skip already processed images for faster processing\nUpdate: Replace all existing face data with fresh analysis"
+            )
+            update_existing = processing_mode.startswith("🔄")
         
-        if SCRAPED_DIR.exists():
-            scraped_count = len(get_image_files(SCRAPED_DIR))
+        with col2:
+            # Current database statistics
+            st.subheader("📊 Database Status")
+            try:
+                from vector_store import FaceVectorStore
+                vector_store = FaceVectorStore()
+                existing_data = vector_store.collection.get()
+                total_faces = len(existing_data.get('ids', []))
+                
+                # Count unique images
+                unique_images = set()
+                if existing_data and existing_data.get('metadatas'):
+                    for metadata in existing_data['metadatas']:
+                        if 'image_path' in metadata:
+                            unique_images.add(Path(metadata['image_path']).name)
+                
+                st.metric("Total Faces", f"{total_faces:,}")
+                st.metric("Unique Images", f"{len(unique_images):,}")
+                
+                if total_faces > 0:
+                    avg_faces = total_faces / len(unique_images) if unique_images else 0
+                    st.metric("Avg Faces/Image", f"{avg_faces:.1f}")
+            
+            except Exception as e:
+                st.error(f"Could not load database stats: {e}")
+        
+        st.divider()
+        
+        # Directory selection
+        st.subheader("📁 Directory Selection")
+        
+        # Auto-detect available directories with image counts
+        available_dirs = []
+        
+        # Check for downloaded images directories
+        images_base = Path("data/images")
+        if images_base.exists():
+            downloaded_dirs = [d for d in images_base.iterdir() 
+                             if d.is_dir() and d.name.startswith("downloaded_images")]
+            
+            for d in sorted(downloaded_dirs, key=lambda x: x.stat().st_mtime, reverse=True):
+                image_count = len(list(d.glob("*.jpg")) + list(d.glob("*.png")) + list(d.glob("*.jpeg")))
+                if image_count > 0:
+                    time_str = datetime.fromtimestamp(d.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+                    available_dirs.append((f"📥 {d.name} ({image_count} images, {time_str})", str(d)))
+        
+        # Check scraped directory
+        scraped_dir = Path("data/scraped")
+        if scraped_dir.exists():
+            scraped_count = len(list(scraped_dir.glob("*.jpg")) + list(scraped_dir.glob("*.png")) + list(scraped_dir.glob("*.jpeg")))
             if scraped_count > 0:
-                directories.append(("Scraped", SCRAPED_DIR, scraped_count))
+                available_dirs.append((f"🕷️ Scraped Images ({scraped_count} images)", str(scraped_dir)))
         
-        if not directories:
-            st.info("No image directories found with images. Upload images or scrape websites first.")
+        if not available_dirs:
+            st.warning("📂 No image directories found. Please download or scrape images first.")
             return
         
-        # Directory selection and processing
-        for name, path, count in directories:
-            with st.expander(f"📁 {name} Directory - {count} images"):
-                col1, col2, col3 = st.columns([2, 1, 1])
-                
-                with col1:
-                    st.write(f"**Path:** `{path}`")
-                    st.write(f"**Images:** {count}")
-                
-                with col2:
-                    batch_size = st.slider(
-                        f"Batch size for {name}:", 
-                        min_value=5, 
-                        max_value=50, 
-                        value=25, 
-                        key=f"batch_{name}"
-                    )
-                
-                with col3:
-                    max_workers = st.slider(
-                        f"Workers for {name}:", 
-                        min_value=1, 
-                        max_value=4, 
-                        value=1, 
-                        key=f"workers_{name}",
-                        help="More workers = faster but uses more CPU"
-                    )
-                
-                # Advanced options
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    skip_existing = st.checkbox(
-                        f"Skip existing faces", 
-                        value=True, 
-                        key=f"skip_{name}",
-                        help="Don't reprocess images that already have faces in database"
-                    )
-                
-                with col2:
-                    detailed_progress = st.checkbox(
-                        f"Detailed progress", 
-                        value=True, 
-                        key=f"progress_{name}"
-                    )
-                
-                with col3:
-                    save_face_images = st.checkbox(
-                        f"Save face crops", 
-                        value=False, 
-                        key=f"save_{name}",
-                        help="Save cropped face images to disk"
-                    )
-                
-                if st.button(f"🚀 Process {name} Directory", type="primary", key=f"process_{name}"):
-                    process_directory_batch(
-                        path, 
-                        batch_size=batch_size,
-                        max_workers=max_workers,
-                        skip_existing=skip_existing,
-                        detailed_progress=detailed_progress,
-                        save_crops=save_face_images
-                    )
+        # Directory selection
+        selected_option = st.selectbox(
+            "Choose directory to process:",
+            options=[option[0] for option in available_dirs],
+            index=0,
+            help="Most recent downloaded directories are shown first"
+        )
+        
+        # Get actual directory path
+        selected_dir = None
+        for option, path in available_dirs:
+            if option == selected_option:
+                selected_dir = path
+                break
+        
+        if selected_dir:
+            st.success(f"📁 Selected: `{selected_dir}`")
+            
+            # Processing button
+            st.divider()
+            
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                if st.button(
+                    f"🚀 {'Update' if update_existing else 'Process'} Images", 
+                    type="primary",
+                    use_container_width=True,
+                    help=f"{'Replace existing face data' if update_existing else 'Add new faces only'}"
+                ):
+                    process_with_fast_engine(selected_dir, update_existing)
     
     with tab2:
-        st.subheader("⚡ Quick Processing")
-        st.markdown("**One-click processing of all available images**")
-        
-        # Summary of available images
-        total_images = 0
-        summary_data = []
-        
-        for name, path, count in directories:
-            total_images += count
-            summary_data.append({
-                "Directory": name,
-                "Path": str(path),
-                "Images": count
-            })
-        
-        if summary_data:
-            st.table(summary_data)
-            
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                st.info(f"**Total Images Available:** {total_images}")
-            
-            with col2:
-                processing_speed = st.select_slider(
-                    "Processing Speed:",
-                    options=["Careful", "Balanced", "Fast"],
-                    value="Balanced",
-                    help="Careful: 1 worker, Fast: 4 workers"
-                )
-            
-            # Quick processing options
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                quick_batch_size = st.selectbox("Batch Size:", [10, 25, 50], index=1)
-            
-            with col2:
-                workers_map = {"Careful": 1, "Balanced": 2, "Fast": 4}
-                workers = workers_map[processing_speed]
-                st.write(f"**Workers:** {workers}")
-            
-            with col3:
-                est_time = (total_images / quick_batch_size) * 2  # rough estimate
-                st.write(f"**Est. Time:** ~{est_time:.0f} min")
-            
-            # Big process button
-            if st.button("🚀 PROCESS ALL IMAGES", type="primary", use_container_width=True):
-                quick_process_all_directories(
-                    directories,
-                    batch_size=quick_batch_size,
-                    max_workers=workers
-                )
+        show_processing_statistics()
+
+
+def process_with_fast_engine(directory_path, update_existing=False):
+    """Process images using fast_process.py engine with Streamlit integration."""
+    import sys
+    import os
     
-    with tab3:
-        st.subheader("🔄 Re-process Images")
-        st.markdown("**Re-analyze images that might have been missed or need better face detection**")
+    # Temporarily update the processing directory in fast_process
+    original_dir = None
+    try:
+        # Import the processing function
+        sys.path.append(os.path.dirname(__file__))
+        from fast_process import process_images_streamlit, IMAGES_DIR
         
-        # Database analysis
-        stats = st.session_state.vector_store.get_collection_stats()
-        total_faces = stats.get("total_faces", 0)
+        # Temporarily change the images directory
+        import fast_process
+        original_dir = fast_process.IMAGES_DIR
+        fast_process.IMAGES_DIR = Path(directory_path)
         
-        if total_faces > 0:
-            st.info(f"Current database contains {total_faces} faces")
+        # Create progress containers
+        progress_container = st.container()
+        status_container = st.container()
+        results_container = st.container()
+        
+        with progress_container:
+            progress_bar = st.progress(0)
+            progress_text = st.empty()
+        
+        with status_container:
+            status_text = st.empty()
+        
+        # Callback functions for progress updates
+        def update_progress(percent):
+            progress_bar.progress(percent)
+            progress_text.text(f"Processing: {percent}%")
+        
+        def update_status(message):
+            status_text.info(message)
+        
+        # Start processing
+        start_time = time.time()
+        
+        with st.spinner("🧠 Initializing fast face processing engine..."):
+            result = process_images_streamlit(
+                update_existing=update_existing,
+                progress_callback=update_progress,
+                status_callback=update_status
+            )
+        
+        # Show results
+        with results_container:
+            processing_time = time.time() - start_time
             
-            # Re-processing options
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                reprocess_mode = st.selectbox(
-                    "Re-processing Mode:",
-                    [
-                        "Failed images only",
-                        "Images with no faces found", 
-                        "All images (full re-scan)",
-                        "Images processed before today"
-                    ]
-                )
-            
-            with col2:
-                clear_existing = st.checkbox(
-                    "Clear existing faces first",
-                    value=False,
-                    help="WARNING: This will remove all current face data!"
-                )
-            
-            if clear_existing:
-                st.warning("⚠️ This will delete ALL existing face data from the database!")
-            
-            if st.button("🔄 Start Re-processing", type="secondary"):
-                if clear_existing:
-                    if st.button("⚠️ CONFIRM: Clear database and re-process", type="primary"):
-                        st.session_state.vector_store.clear_collection()
-                        st.success("Database cleared! Now re-processing...")
-                        quick_process_all_directories(directories, batch_size=25, max_workers=1)
+            if result["success"]:
+                st.success("🎉 Processing completed successfully!")
+                
+                # Results metrics
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("📁 Images", f"{result.get('total_images', 0):,}")
+                
+                with col2:
+                    st.metric("✅ Processed", f"{result.get('processed', 0):,}")
+                
+                with col3:
+                    st.metric("👤 Faces Added", f"{result.get('faces_added', 0):,}")
+                
+                with col4:
+                    if result.get('processed', 0) > 0:
+                        avg_faces = result.get('faces_added', 0) / result.get('processed', 1)
+                        st.metric("📊 Faces/Image", f"{avg_faces:.1f}")
+                
+                # Performance statistics
+                st.subheader("⚡ Performance Statistics")
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("🕒 Total Time", f"{processing_time:.1f}s")
+                
+                with col2:
+                    if result.get('total_images', 0) > 0:
+                        img_per_sec = result.get('total_images', 0) / processing_time
+                        st.metric("📈 Images/sec", f"{img_per_sec:.2f}")
+                
+                with col3:
+                    if result.get('errors', 0) > 0:
+                        error_rate = (result.get('errors', 0) / result.get('total_images', 1)) * 100
+                        st.metric("⚠️ Error Rate", f"{error_rate:.1f}%")
+                    else:
+                        st.metric("✅ Success Rate", "100%")
+                
+                # Additional info
+                if result.get('update_mode'):
+                    st.info("🔄 **Update Mode**: All existing face data was replaced with fresh analysis")
                 else:
-                    st.info(f"Re-processing in mode: {reprocess_mode}")
-                    # Implementation would go here
-        else:
-            st.warning("No faces in database yet. Use the other tabs to process images first.")
-    
-    with tab4:
-        st.subheader("📊 Processing Statistics & Insights")
-        
-        # Current stats
-        stats = st.session_state.vector_store.get_collection_stats()
-        
-        if stats and "error" not in stats:
-            col1, col2, col3, col4 = st.columns(4)
+                    st.info("🆕 **New Mode**: Only new images were processed, existing faces were preserved")
+                
+                # Suggest next steps
+                st.subheader("🎯 Next Steps")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if st.button("🔍 View Face Gallery", use_container_width=True):
+                        st.session_state.page = "Face Gallery"
+                        st.rerun()
+                
+                with col2:
+                    if st.button("📊 Analyze Results", use_container_width=True):
+                        st.session_state.page = "Face Search"
+                        st.rerun()
             
-            with col1:
-                st.metric("Total Faces", stats.get("total_faces", 0))
-            
-            with col2:
-                st.metric("Unique Images", stats.get("unique_images", 0))
-            
-            with col3:
-                if stats.get("total_faces", 0) > 0 and stats.get("unique_images", 0) > 0:
-                    avg_faces = stats["total_faces"] / stats["unique_images"]
-                    st.metric("Avg Faces/Image", f"{avg_faces:.1f}")
-                else:
-                    st.metric("Avg Faces/Image", "0")
-            
-            with col4:
-                # Processing efficiency (mock calculation)
-                total_available = sum(count for _, _, count in directories) if directories else 0
-                if total_available > 0 and stats.get("unique_images", 0) > 0:
-                    efficiency = (stats["unique_images"] / total_available) * 100
-                    st.metric("Processing Rate", f"{efficiency:.0f}%")
-                else:
-                    st.metric("Processing Rate", "0%")
-            
-            # Processing recommendations
-            st.subheader("💡 Processing Recommendations")
-            
-            if stats.get("total_faces", 0) == 0:
-                st.info("🚀 **Start Here:** Use 'Quick Process' to process all your images at once")
-            elif stats.get("total_faces", 0) < 10:
-                st.info("📈 **Build Database:** Process more images to improve face search quality")
             else:
-                st.success("✅ **Good Coverage:** Your database has a good number of faces for searching")
+                st.error(f"❌ Processing failed: {result.get('message', 'Unknown error')}")
+                
+                if "No images found" in result.get('message', ''):
+                    st.info("💡 Make sure the selected directory contains JPG, PNG, or JPEG images")
+                elif "All images already processed" in result.get('message', ''):
+                    st.success("✅ All images in this directory have already been processed!")
+                    st.info("💡 Use 'Update All Images' mode if you want to reprocess everything")
+    
+    except Exception as e:
+        st.error(f"❌ Error during processing: {str(e)}")
+        st.exception(e)
+    
+    finally:
+        # Restore original directory
+        if original_dir:
+            fast_process.IMAGES_DIR = original_dir
+
+
+def show_processing_statistics():
+    """Display comprehensive processing statistics."""
+    st.subheader("📊 Database Statistics")
+    
+    try:
+        from vector_store import FaceVectorStore
+        vector_store = FaceVectorStore()
+        existing_data = vector_store.collection.get()
+        
+        if not existing_data or not existing_data.get('ids'):
+            st.info("📭 No faces in database yet. Process some images first!")
+            return
+        
+        total_faces = len(existing_data['ids'])
+        metadatas = existing_data.get('metadatas', [])
+        
+        # Collect statistics
+        image_stats = {}
+        for metadata in metadatas:
+            if 'image_path' in metadata:
+                img_path = metadata['image_path']
+                img_name = Path(img_path).name
+                
+                if img_name not in image_stats:
+                    image_stats[img_name] = {
+                        'faces': 0,
+                        'path': img_path
+                    }
+                image_stats[img_name]['faces'] += 1
+        
+        # Display overview statistics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("👤 Total Faces", f"{total_faces:,}")
+        
+        with col2:
+            st.metric("🖼️ Unique Images", f"{len(image_stats):,}")
+        
+        with col3:
+            if image_stats:
+                avg_faces = total_faces / len(image_stats)
+                st.metric("📊 Avg Faces/Image", f"{avg_faces:.1f}")
+        
+        with col4:
+            if image_stats:
+                max_faces = max(img['faces'] for img in image_stats.values())
+                st.metric("🎯 Max Faces/Image", max_faces)
+        
+        # Face distribution chart
+        st.subheader("📈 Face Distribution")
+        
+        if len(image_stats) > 0:
+            # Create histogram of faces per image
+            face_counts = [img['faces'] for img in image_stats.values()]
             
-            # Performance tips
-            st.subheader("⚡ Performance Tips")
-            st.markdown("""
-            - **Batch Size:** Larger batches = more memory usage but better performance
-            - **Workers:** More workers = faster processing but higher CPU usage  
-            - **Skip Existing:** Enable to avoid reprocessing already analyzed images
-            - **Image Quality:** Higher quality images = better face detection accuracy
-            """)
+            import pandas as pd
+            df = pd.DataFrame({
+                'Faces per Image': face_counts
+            })
             
-        else:
-            st.error("Could not load database statistics")
+            st.bar_chart(df)
+            
+            # Top images with most faces
+            st.subheader("🏆 Top Images by Face Count")
+            
+            sorted_images = sorted(image_stats.items(), key=lambda x: x[1]['faces'], reverse=True)[:10]
+            
+            for i, (img_name, stats) in enumerate(sorted_images, 1):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"{i}. `{img_name}`")
+                with col2:
+                    st.write(f"👤 {stats['faces']} faces")
+    
+    except Exception as e:
+        st.error(f"Could not load statistics: {e}")
+
+
+## (removed duplicate/empty process_directory_batch function)
+                
 
 def process_directory_batch(directory_path, batch_size=25, max_workers=1, 
                            skip_existing=True, detailed_progress=True, save_crops=False):
@@ -844,11 +1142,28 @@ def process_directory_batch(directory_path, batch_size=25, max_workers=1,
                 metadatas = []
                 batch_faces = 0
                 batch_errors = 0
+                batch_no_faces = 0
                 
-                for result in results:
+                # Enhanced per-image logging
+                if detailed_progress and detailed_container:
+                    with detailed_container:
+                        st.markdown(f"**🔍 Batch {batch_num + 1} - Processing {len(batch_files)} images:**")
+                
+                for i, result in enumerate(results):
+                    image_name = Path(result.get('image_path', 'unknown')).name
+                    
                     if "error" not in result and result.get("face_count", 0) > 0:
                         total_processed += 1
                         batch_faces += result["face_count"]
+                        face_count = result["face_count"]
+                        
+                        # Log success with face details
+                        if detailed_progress and detailed_container:
+                            with detailed_container:
+                                if face_count == 1:
+                                    st.success(f"✅ {image_name} → {face_count} Gesicht erkannt")
+                                else:
+                                    st.success(f"✅ {image_name} → {face_count} Gesichter erkannt")
                         
                         for face_data in result["faces"]:
                             face_ids.append(face_data["face_id"])
@@ -865,12 +1180,25 @@ def process_directory_batch(directory_path, batch_size=25, max_workers=1,
                             })
                     elif "error" in result:
                         batch_errors += 1
+                        error_msg = result['error']
+                        
+                        # Enhanced error logging
                         if detailed_progress and detailed_container:
                             with detailed_container:
-                                st.error(f"❌ Error processing {Path(result.get('image_path', 'unknown')).name}: {result['error']}")
+                                st.error(f"❌ {image_name} → FEHLER: {error_msg}")
+                        
+                        # Also log to console for debugging
+                        logger.error(f"Image processing error - {image_name}: {error_msg}")
+                        
                     else:
                         # Image processed successfully but no faces found
                         total_processed += 1
+                        batch_no_faces += 1
+                        
+                        # Log no faces found
+                        if detailed_progress and detailed_container:
+                            with detailed_container:
+                                st.warning(f"⚠️ {image_name} → Keine Gesichter erkannt")
                 
                 # Add to vector store
                 if face_ids:
@@ -881,19 +1209,22 @@ def process_directory_batch(directory_path, batch_size=25, max_workers=1,
                     
                     if detailed_progress and detailed_container:
                         with detailed_container:
-                            st.success(f"✅ Batch {batch_num + 1}: Found {batch_faces} faces, added {added_count} to database")
+                            st.info(f"💾 Batch {batch_num + 1}: {added_count} Gesichter zur Datenbank hinzugefügt")
+                            st.markdown("---")  # Separator between batches
                 else:
                     if detailed_progress and detailed_container:
                         with detailed_container:
-                            st.warning(f"⚠️ Batch {batch_num + 1}: No faces detected")
+                            st.warning(f"⚪ Batch {batch_num + 1}: Keine Gesichter für Datenbank gefunden")
+                            st.markdown("---")  # Separator between batches
                 
-                # Update batch info with comprehensive status
+                # Enhanced batch summary with detailed statistics
+                batch_success_count = len(batch_files) - batch_errors
                 if batch_faces > 0:
-                    batch_info.success(f"✅ Batch {batch_num + 1}: {batch_faces} faces found")
+                    batch_info.success(f"✅ Batch {batch_num + 1}: {batch_faces} Gesichter gefunden ({batch_success_count}/{len(batch_files)} Bilder verarbeitet)")
                 elif batch_errors > 0:
-                    batch_info.error(f"❌ Batch {batch_num + 1}: {batch_errors} errors, no faces found")
+                    batch_info.error(f"❌ Batch {batch_num + 1}: {batch_errors} Fehler, {batch_no_faces} Bilder ohne Gesichter")
                 else:
-                    batch_info.info(f"⚪ Batch {batch_num + 1}: No faces detected")
+                    batch_info.info(f"⚪ Batch {batch_num + 1}: {batch_no_faces} Bilder ohne Gesichter erkannt")
             
             # Final update
             overall_progress.progress(1.0)
@@ -902,22 +1233,43 @@ def process_directory_batch(directory_path, batch_size=25, max_workers=1,
             # Final summary
             st.success(f"🎉 **Processing Complete!**")
             
-            summary_col1, summary_col2, summary_col3 = st.columns(3)
+            # Enhanced final statistics with error tracking
+            total_errors = sum(1 for batch_num in range(total_batches) 
+                             for result in st.session_state.get('last_batch_results', []) 
+                             if "error" in result)
+            
+            summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
             with summary_col1:
                 st.metric("Images Processed", total_processed)
             with summary_col2:
                 st.metric("Total Faces Found", total_faces_found)
             with summary_col3:
-                if total_processed > 0:
-                    avg_faces = total_faces_found / total_processed
-                    st.metric("Avg Faces/Image", f"{avg_faces:.1f}")
+                success_rate = (total_processed / len(image_files)) * 100 if len(image_files) > 0 else 0
+                st.metric("Success Rate", f"{success_rate:.1f}%")
+            with summary_col4:
+                avg_faces = total_faces_found / total_processed if total_processed > 0 else 0
+                st.metric("Avg Faces/Image", f"{avg_faces:.1f}")
+            
+            # Enhanced detailed summary in log
+            if detailed_progress and detailed_container:
+                with detailed_container:
+                    st.markdown("---")
+                    st.markdown("### 📊 **PROCESSING SUMMARY**")
+                    st.markdown(f"""
+                    - **Directory:** `{directory_path}`
+                    - **Total Images:** {len(image_files)}
+                    - **Successfully Processed:** {total_processed}
+                    - **Total Faces Found:** {total_faces_found}
+                    - **Average Faces per Image:** {avg_faces:.2f}
+                    - **Processing Success Rate:** {success_rate:.1f}%
+                    """)
             
         except Exception as e:
             st.error(f"❌ Error during batch processing: {e}")
             current_status.text("❌ Processing failed!")
 
 def quick_process_all_directories(directories, batch_size=25, max_workers=2):
-    """Quick process all directories with unified progress tracking"""
+    """Quick process all directories with unified progress tracking and detailed per-image logging"""
     
     st.info("🚀 **QUICK PROCESS MODE ACTIVATED**")
     
@@ -934,9 +1286,15 @@ def quick_process_all_directories(directories, batch_size=25, max_workers=2):
     current_status = st.empty()
     results_container = st.container()
     
+    # Enhanced logging container
+    st.subheader("📋 Detailed Processing Log")
+    detailed_log_container = st.container()
+    
     global_batch_count = 0
     total_faces_found = 0
     total_images_processed = 0
+    total_errors = 0
+    total_no_faces = 0
     
     try:
         for dir_name, dir_path, image_count in directories:
@@ -964,16 +1322,32 @@ def quick_process_all_directories(directories, batch_size=25, max_workers=2):
                     max_workers=max_workers
                 )
                 
-                # Process results
+                # Process results with detailed per-image logging
                 face_ids = []
                 embeddings = []
                 metadatas = []
                 batch_faces = 0
+                batch_errors = 0
+                batch_no_faces = 0
+                
+                # Log batch header
+                with detailed_log_container:
+                    st.markdown(f"**🔍 {dir_name} - Batch {batch_num + 1}/{dir_batches} - Processing {len(batch_files)} images:**")
                 
                 for result in results:
-                    if "error" not in result and result["face_count"] > 0:
+                    image_name = Path(result.get('image_path', 'unknown')).name
+                    
+                    if "error" not in result and result.get("face_count", 0) > 0:
                         total_images_processed += 1
-                        batch_faces += result["face_count"]
+                        face_count = result["face_count"]
+                        batch_faces += face_count
+                        
+                        # Enhanced success logging with face count
+                        with detailed_log_container:
+                            if face_count == 1:
+                                st.success(f"✅ {image_name} → {face_count} Gesicht erkannt")
+                            else:
+                                st.success(f"✅ {image_name} → {face_count} Gesichter erkannt")
                         
                         for face_data in result["faces"]:
                             face_ids.append(face_data["face_id"])
@@ -987,6 +1361,26 @@ def quick_process_all_directories(directories, batch_size=25, max_workers=2):
                                 "location": location_str,
                                 "face_id": face_data["face_id"]
                             })
+                    elif "error" in result:
+                        batch_errors += 1
+                        total_errors += 1
+                        error_msg = result.get('error', 'Unknown error')
+                        
+                        # Enhanced error logging
+                        with detailed_log_container:
+                            st.error(f"❌ {image_name} → FEHLER: {error_msg}")
+                        
+                        # Log to console for debugging
+                        logger.error(f"Quick process error - {image_name}: {error_msg}")
+                        
+                    else:
+                        # No faces found but processing successful
+                        total_images_processed += 1
+                        batch_no_faces += 1
+                        total_no_faces += 1
+                        
+                        with detailed_log_container:
+                            st.warning(f"⚠️ {image_name} → Keine Gesichter erkannt")
                 
                 # Add to database
                 if face_ids:
@@ -994,16 +1388,27 @@ def quick_process_all_directories(directories, batch_size=25, max_workers=2):
                         face_ids, embeddings, metadatas
                     )
                     total_faces_found += added_count
+                    
+                    # Log database addition
+                    with detailed_log_container:
+                        st.info(f"💾 {dir_name} Batch {batch_num + 1}: {added_count} Gesichter zur Datenbank hinzugefügt")
+                        st.markdown("---")  # Separator between batches
+                else:
+                    with detailed_log_container:
+                        st.warning(f"⚪ {dir_name} Batch {batch_num + 1}: Keine Gesichter für Datenbank gefunden")
+                        st.markdown("---")  # Separator between batches
                 
                 global_batch_count += 1
                 
-                # Show progress in results container
+                # Enhanced batch summary in results container
                 with results_container:
-                    progress_text = f"✅ {dir_name} Batch {batch_num + 1}: {batch_faces} faces"
+                    batch_success_count = len(batch_files) - batch_errors
                     if batch_faces > 0:
-                        st.success(progress_text)
+                        st.success(f"✅ {dir_name} Batch {batch_num + 1}: {batch_faces} Gesichter gefunden ({batch_success_count}/{len(batch_files)} Bilder)")
+                    elif batch_errors > 0:
+                        st.error(f"❌ {dir_name} Batch {batch_num + 1}: {batch_errors} Fehler, {batch_no_faces} ohne Gesichter")
                     else:
-                        st.info(f"⚪ {dir_name} Batch {batch_num + 1}: No faces detected")
+                        st.info(f"⚪ {dir_name} Batch {batch_num + 1}: {batch_no_faces} Bilder ohne Gesichter")
         
         # Final completion
         overall_progress.progress(1.0)
@@ -1014,15 +1419,42 @@ def quick_process_all_directories(directories, batch_size=25, max_workers=2):
         
         st.success("🎉 **QUICK PROCESSING COMPLETE!**")
         
-        col1, col2, col3 = st.columns(3)
+        # Enhanced final statistics
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Images Processed", total_images_processed)
         with col2:
             st.metric("Faces Found", total_faces_found)  
         with col3:
-            if total_images_processed > 0:
-                avg_faces = total_faces_found / total_images_processed
+            st.metric("Errors", total_errors)
+        with col4:
+            st.metric("No Faces Found", total_no_faces)
+        
+        # Additional summary statistics
+        success_rate = 0
+        avg_faces = 0
+        if total_images_processed > 0:
+            success_rate = ((total_images_processed - total_errors) / total_images_processed) * 100
+            avg_faces = total_faces_found / total_images_processed
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Success Rate", f"{success_rate:.1f}%")
+            with col2:
                 st.metric("Avg Faces/Image", f"{avg_faces:.1f}")
+        
+        # Final detailed summary log
+        with detailed_log_container:
+            st.markdown("---")
+            st.markdown("### 📊 **FINAL SUMMARY**")
+            st.markdown(f"""
+            - **Total Images Processed:** {total_images_processed}
+            - **Total Faces Found:** {total_faces_found}
+            - **Total Errors:** {total_errors}
+            - **Images without Faces:** {total_no_faces}
+            - **Success Rate:** {success_rate:.1f}% ({(total_images_processed - total_errors)} successful)
+            - **Average Faces per Image:** {avg_faces:.2f}
+            """)
         
         st.info(f"🗃️ **Database now contains {total_faces_found} new face embeddings ready for searching!**")
         
@@ -1587,93 +2019,369 @@ def settings_page():
     """)
 
 def face_gallery_page():
-    """Face gallery to display all faces in the database"""
+    """Enhanced Face gallery to display all faces in the database"""
     
     st.header("👥 Face Gallery")
-    st.markdown("Browse all faces stored in the database")
+    st.markdown("Durchsuchen Sie alle Gesichter in der Datenbank")
     
     # Get all faces from database
     try:
         stats = st.session_state.vector_store.get_collection_stats()
         total_faces = stats.get("total_faces", 0)
+        unique_images = stats.get("unique_images", 0)
         
         if total_faces == 0:
-            st.info("No faces in database yet. Upload images or scrape websites to add faces.")
+            st.info("Noch keine Gesichter in der Datenbank. Laden Sie Bilder hoch oder scrapen Sie Websites, um Gesichter hinzuzufügen.")
             return
             
-        st.success(f"Found {total_faces} faces in database")
+        # Enhanced stats display
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("👥 Total Faces", total_faces)
+        with col2:
+            st.metric("📷 Unique Images", unique_images)
+        with col3:
+            avg_faces = total_faces / unique_images if unique_images > 0 else 0
+            st.metric("📊 Avg Faces/Image", f"{avg_faces:.1f}")
+        
+        st.markdown("---")
         
         # Gallery options
-        col1, col2, col3 = st.columns([1, 1, 1])
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
         
         with col1:
-            faces_per_page = st.selectbox("Faces per page:", [20, 50, 100, 200], index=1)
+            faces_per_page = st.selectbox("Gesichter pro Seite:", [20, 50, 100, 200, 500], index=2)
         
         with col2:
-            show_metadata = st.checkbox("Show metadata", value=True)
+            show_metadata = st.checkbox("Metadaten anzeigen", value=True)
         
         with col3:
-            group_by_image = st.checkbox("Group by source image", value=False)
-        
-        # Get faces data
-        offset = 0
-        limit = min(faces_per_page, total_faces)
-        
-        with st.spinner("Loading faces..."):
-            # Get face data from database
-            results = st.session_state.vector_store.collection.get(
-                limit=limit,
-                offset=offset,
-                include=['metadatas', 'embeddings']
-            )
+            group_by_image = st.checkbox("Nach Bild gruppieren", value=False)
             
-            if results['metadatas']:
-                st.subheader(f"Displaying {len(results['metadatas'])} faces")
+        with col4:
+            sort_by = st.selectbox("Sortieren nach:", ["Neueste", "Bild-Name", "Face-ID"])
+        
+        # Search and filter options
+        st.markdown("---")
+        
+        # Show deletion statistics if available
+        if 'deleted_faces_session' in st.session_state and st.session_state.deleted_faces_session > 0:
+            st.info(f"📊 In dieser Sitzung wurden {st.session_state.deleted_faces_session} falsch erkannte Gesichter entfernt.")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            search_term = st.text_input("🔍 Suche nach Dateiname oder Face-ID:", 
+                                      placeholder="z.B. 'image_001' oder 'abc123'")
+        
+        with col2:
+            st.markdown("**Filter-Optionen:**")
+            min_face_size = st.slider("Min. Gesichtsgröße (px):", 30, 200, 50)
+        
+        # Apply filters to results if search term is provided
+        filtered_total = total_faces
+        search_active = bool(search_term.strip())
+        
+        if search_active:
+            with st.spinner("Durchsuche Gesichter..."):
+                # This would need to be implemented in vector_store
+                st.info(f"🔍 Suche nach: '{search_term}' - Erweiterte Suchfunktion wird implementiert...")
+        
+        # Pagination controls
+        st.markdown("---")
+        
+        if 'gallery_page' not in st.session_state:
+            st.session_state.gallery_page = 0
+        
+        current_page = st.session_state.gallery_page
+        total_pages = max(1, (filtered_total - 1) // faces_per_page + 1)
+        
+        # Page info and navigation in one row
+        nav_col1, nav_col2, nav_col3, nav_col4, nav_col5 = st.columns([1, 1, 2, 1, 1])
+        
+        with nav_col1:
+            if st.button("⬅️ Vorherige", disabled=(current_page == 0)):
+                st.session_state.gallery_page = max(0, current_page - 1)
+                st.rerun()
+        
+        with nav_col2:
+            page_input = st.number_input(
+                "Gehe zu Seite:", 
+                min_value=1, 
+                max_value=total_pages, 
+                value=current_page + 1,
+                key="page_jump",
+                label_visibility="collapsed"
+            )
+            if page_input - 1 != current_page:
+                st.session_state.gallery_page = page_input - 1
+                st.rerun()
+        
+        with nav_col3:
+            st.write(f"**Seite {current_page + 1} von {total_pages}**")
+            remaining_faces = filtered_total - (current_page * faces_per_page)
+            faces_on_page = min(faces_per_page, remaining_faces)
+            st.write(f"Zeige {faces_on_page} von {filtered_total} Gesichtern")
+        
+        with nav_col4:
+            if st.button("Nächste ➡️", disabled=(current_page >= total_pages - 1)):
+                st.session_state.gallery_page = min(total_pages - 1, current_page + 1)
+                st.rerun()
+        
+        with nav_col5:
+            if st.button("🔄 Aktualisieren"):
+                st.cache_data.clear()
+                st.rerun()
+        
+        st.markdown("---")
+        
+        # Calculate offset for pagination
+        offset = current_page * faces_per_page
+        remaining_faces = filtered_total - offset
+        limit = min(faces_per_page, remaining_faces)
+        
+        if limit <= 0:
+            st.warning("Keine Gesichter auf dieser Seite. Gehen Sie zu einer früheren Seite.")
+            return
+        
+        with st.spinner(f"Lade {limit} Gesichter..."):
+            # Get face data from database with improved robust pagination
+            try:
+                results = st.session_state.vector_store.get_faces_paginated(offset=offset, limit=limit)
                 
-                # Group faces if requested
-                if group_by_image:
-                    faces_by_image = {}
-                    for i, metadata in enumerate(results['metadatas']):
-                        image_path = metadata.get('image_path', 'unknown')
-                        if image_path not in faces_by_image:
-                            faces_by_image[image_path] = []
-                        faces_by_image[image_path].append((i, metadata))
+                if results['metadatas'] and len(results['metadatas']) > 0:
+                    st.subheader(f"📋 Zeige {len(results['metadatas'])} Gesichter (Seite {current_page + 1})")
                     
-                    # Display grouped faces
-                    for image_path, face_list in faces_by_image.items():
-                        image_name = Path(image_path).name
-                        st.subheader(f"📸 {image_name} ({len(face_list)} faces)")
+                    # Debug information for troubleshooting
+                    if st.checkbox("🔧 Debug-Info anzeigen", value=False):
+                        st.info(f"""
+                        **Debug-Informationen:**
+                        - Aktuelle Seite: {current_page + 1}
+                        - Offset: {offset}
+                        - Limit: {limit} 
+                        - Gefundene Gesichter: {len(results['metadatas'])}
+                        - Total Gesichter in DB: {filtered_total}
+                        - Hat Embeddings: {len(results.get('embeddings', [])) > 0}
+                        - Hat IDs: {len(results.get('ids', [[]])[0]) > 0 if results.get('ids') else False}
+                        """)
+                    
+                    # Group faces if requested
+                    if group_by_image:
+                        display_faces_grouped_by_image(results['metadatas'], show_metadata)
+                    else:
+                        display_faces_in_grid(results['metadatas'], show_metadata)
                         
-                        cols = st.columns(min(4, len(face_list)))
-                        for idx, (face_idx, metadata) in enumerate(face_list):
-                            with cols[idx % 4]:
-                                display_face_from_metadata(metadata, show_metadata)
-                        
-                        st.markdown("---")
+                    # Add export/download options
+                    st.markdown("---")
+                    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+                    
+                    with col1:
+                        if st.button("📤 Alle Gesichter exportieren"):
+                            export_all_faces()
+                    
+                    with col2:
+                        # Batch delete current page faces
+                        if st.button("🗑️ Alle auf Seite löschen", help="Alle Gesichter auf der aktuellen Seite löschen"):
+                            if st.session_state.get('confirm_batch_delete', False):
+                                # Perform batch deletion
+                                deleted_count = 0
+                                face_ids = [metadata.get('face_id', '') for metadata in results['metadatas'] if metadata.get('face_id')]
+                                
+                                with st.spinner(f"Lösche {len(face_ids)} Gesichter..."):
+                                    for face_id in face_ids:
+                                        if delete_face_from_gallery(face_id):
+                                            deleted_count += 1
+                                
+                                st.success(f"✅ {deleted_count} von {len(face_ids)} Gesichtern gelöscht!")
+                                st.session_state.confirm_batch_delete = False
+                                
+                                # Go back to page 1 to avoid pagination errors
+                                st.session_state.gallery_page = 0
+                                st.rerun()
+                            else:
+                                st.session_state.confirm_batch_delete = True
+                                st.warning("⚠️ Nochmals klicken zum Bestätigen der Löschung ALLER Gesichter auf dieser Seite!")
+                                st.rerun()
+                    
+                    with col3:
+                        # Delete by similarity threshold
+                        if st.button("🧹 Niedrige Qualität löschen", help="Gesichter mit niedriger erkannter Qualität löschen"):
+                            # Analyze current page faces for quality issues
+                            low_quality_faces = identify_low_quality_faces(results['metadatas'])
+                            
+                            if low_quality_faces:
+                                st.warning(f"⚠️ {len(low_quality_faces)} potentiell falsch erkannte Gesichter gefunden:")
+                                
+                                # Show preview of faces to be deleted
+                                with st.expander("� Gesichter mit niedriger Qualität anzeigen", expanded=False):
+                                    for i, face_info in enumerate(low_quality_faces[:5]):  # Show first 5
+                                        st.write(f"• **{face_info['face_id'][:12]}...**: {face_info['reason']}")
+                                    
+                                    if len(low_quality_faces) > 5:
+                                        st.write(f"... und {len(low_quality_faces) - 5} weitere")
+                                
+                                if st.button("🗑️ Niedrigqualitative Gesichter löschen", key="confirm_quality_delete"):
+                                    deleted_count = 0
+                                    
+                                    with st.spinner(f"Lösche {len(low_quality_faces)} niedrigqualitative Gesichter..."):
+                                        for face_info in low_quality_faces:
+                                            if delete_face_from_gallery(face_info['face_id']):
+                                                deleted_count += 1
+                                    
+                                    st.success(f"✅ {deleted_count} niedrigqualitative Gesichter erfolgreich gelöscht!")
+                                    st.rerun()
+                            else:
+                                st.info("✨ Keine niedrigqualitativen Gesichter auf dieser Seite gefunden!")
+                            
+                    with col4:
+                        if st.button("🔄 Gallery aktualisieren"):
+                            st.cache_data.clear()
+                            # Reset to first page to avoid pagination errors
+                            st.session_state.gallery_page = 0
+                            st.rerun()
                 else:
-                    # Display all faces in grid
-                    cols_per_row = 4
-                    for i in range(0, len(results['metadatas']), cols_per_row):
-                        cols = st.columns(cols_per_row)
-                        
-                        for j, col in enumerate(cols):
-                            idx = i + j
-                            if idx < len(results['metadatas']):
-                                with col:
-                                    metadata = results['metadatas'][idx]
-                                    display_face_from_metadata(metadata, show_metadata)
-                
-                # Pagination controls (for future enhancement)
-                if total_faces > faces_per_page:
-                    st.info(f"Showing first {faces_per_page} faces. Pagination coming soon!")
-            else:
-                st.warning("No face data found in database")
+                    st.warning("Keine Gesichtsdaten auf dieser Seite gefunden")
+                    
+                    # Helpful suggestions for user
+                    st.info("""
+                    **Mögliche Lösungen:**
+                    - Gehen Sie zu einer früheren Seite zurück
+                    - Reduzieren Sie die Anzahl Gesichter pro Seite
+                    - Klicken Sie auf 'Gallery aktualisieren'
+                    - Starten Sie bei Seite 1 neu
+                    """)
+                    
+                    if st.button("🏠 Zur ersten Seite"):
+                        st.session_state.gallery_page = 0
+                        st.rerun()
+                    
+            except Exception as db_e:
+                st.error(f"Datenbankfehler beim Laden der Gesichter: {db_e}")
+                st.info("Versuchen Sie, die Gallery zu aktualisieren oder eine andere Seitenzahl.")
                 
     except Exception as e:
-        st.error(f"Error loading faces: {e}")
+        st.error(f"Fehler beim Laden der Face Gallery: {e}")
+        logger.error(f"Face gallery error: {e}")
 
-def display_face_from_metadata(metadata, show_metadata=True):
-    """Display a face from metadata information"""
+def display_faces_grouped_by_image(metadatas, show_metadata=True):
+    """Display faces grouped by source image"""
+    faces_by_image = {}
+    
+    # Group faces by image
+    for i, metadata in enumerate(metadatas):
+        image_path = metadata.get('image_path', 'unknown')
+        if image_path not in faces_by_image:
+            faces_by_image[image_path] = []
+        faces_by_image[image_path].append((i, metadata))
+    
+    # Display grouped faces
+    for image_path, face_list in faces_by_image.items():
+        image_name = Path(image_path).name
+        
+        with st.expander(f"📸 {image_name} ({len(face_list)} Gesichter)", expanded=True):
+            # Show original image thumbnail
+            if Path(image_path).exists():
+                try:
+                    original_image = load_and_preprocess_image(Path(image_path))
+                    if original_image is not None:
+                        original_thumbnail = create_thumbnail(original_image, (200, 200))
+                        
+                        col1, col2 = st.columns([1, 3])
+                        with col1:
+                            st.image(original_thumbnail, caption="Original Image", use_container_width=True)
+                        with col2:
+                            st.write(f"**📁 Dateiname:** {image_name}")
+                            st.write(f"**👥 Anzahl Gesichter:** {len(face_list)}")
+                            if Path(image_path).exists():
+                                file_size = Path(image_path).stat().st_size / 1024
+                                st.write(f"**💾 Dateigröße:** {file_size:.1f} KB")
+                except Exception as e:
+                    st.warning(f"Konnte Original-Bild nicht laden: {e}")
+            
+            # Display faces in this image
+            cols_per_row = 6
+            for i in range(0, len(face_list), cols_per_row):
+                cols = st.columns(cols_per_row)
+                
+                for j, col in enumerate(cols):
+                    idx = i + j
+                    if idx < len(face_list):
+                        face_idx, metadata = face_list[idx]
+                        with col:
+                            display_face_from_metadata(metadata, show_metadata, compact=True)
+
+def display_faces_in_grid(metadatas, show_metadata=True):
+    """Display faces in a grid layout"""
+    cols_per_row = 5  # More faces per row for better overview
+    
+    for i in range(0, len(metadatas), cols_per_row):
+        cols = st.columns(cols_per_row)
+        
+        for j, col in enumerate(cols):
+            idx = i + j
+            if idx < len(metadatas):
+                with col:
+                    metadata = metadatas[idx]
+                    display_face_from_metadata(metadata, show_metadata)
+
+def export_all_faces():
+    """Export all faces to a zip file"""
+    st.info("Export-Funktion wird implementiert...")
+    # TODO: Implement face export functionality
+
+def delete_face_from_gallery(face_id: str) -> bool:
+    """Delete a face from the gallery and vector store"""
+    try:
+        # Delete from vector store
+        if st.session_state.vector_store.delete_face(face_id):
+            # Update deletion statistics
+            if 'deleted_faces_session' not in st.session_state:
+                st.session_state.deleted_faces_session = 0
+            st.session_state.deleted_faces_session += 1
+            
+            logger.info(f"Successfully deleted face {face_id} from gallery")
+            return True
+        else:
+            logger.error(f"Failed to delete face {face_id} from vector store")
+            return False
+    except Exception as e:
+        logger.error(f"Error deleting face {face_id}: {e}")
+        return False
+
+def identify_low_quality_faces(metadatas, min_face_size=30):
+    """Identify potentially low-quality or false-positive faces"""
+    low_quality_faces = []
+    
+    for metadata in metadatas:
+        try:
+            location_str = metadata.get('location', '0,0,0,0')
+            top, right, bottom, left = map(int, location_str.split(','))
+            
+            face_width = right - left
+            face_height = bottom - top
+            face_area = face_width * face_height
+            
+            # Criteria for low quality faces
+            is_too_small = face_width < min_face_size or face_height < min_face_size
+            is_too_narrow = face_width < face_height * 0.6  # Very narrow faces are suspicious
+            is_too_wide = face_width > face_height * 2.0    # Very wide faces are suspicious
+            is_tiny_area = face_area < 900  # Less than 30x30 pixels
+            
+            if is_too_small or is_too_narrow or is_too_wide or is_tiny_area:
+                low_quality_faces.append({
+                    'face_id': metadata.get('face_id'),
+                    'reason': f"Size: {face_width}×{face_height}px, Area: {face_area}px²",
+                    'metadata': metadata
+                })
+                
+        except Exception as e:
+            logger.error(f"Error analyzing face quality: {e}")
+            continue
+    
+    return low_quality_faces
+
+def display_face_from_metadata(metadata, show_metadata=True, compact=False):
+    """Enhanced face display from metadata information"""
     try:
         image_path = metadata.get('image_path', '')
         face_id = metadata.get('face_id', 'unknown')
@@ -1688,8 +2396,11 @@ def display_face_from_metadata(metadata, show_metadata=True):
                 try:
                     top, right, bottom, left = map(int, location_str.split(','))
                     
-                    # Extract face region with some padding
-                    padding = 20
+                    # Extract face region with adaptive padding
+                    face_width = right - left
+                    face_height = bottom - top
+                    padding = max(10, min(20, min(face_width, face_height) // 10))
+                    
                     height, width = original_image.shape[:2]
                     
                     top = max(0, top - padding)
@@ -1700,25 +2411,89 @@ def display_face_from_metadata(metadata, show_metadata=True):
                     # Extract face
                     face_image = original_image[top:bottom, left:right]
                     
-                    # Create thumbnail for display
-                    thumbnail = create_thumbnail(face_image, THUMBNAIL_SIZE)
-                    
-                    # Display face
-                    st.image(thumbnail, caption=f"Face: {face_id}", use_container_width=True)
-                    
-                    if show_metadata:
-                        st.caption(f"📁 {Path(image_path).name}")
-                        st.caption(f"📍 {location_str}")
+                    # Validate face extraction
+                    if face_image.shape[0] > 0 and face_image.shape[1] > 0:
+                        # Create thumbnail with different sizes based on display mode
+                        thumbnail_size = (100, 100) if compact else THUMBNAIL_SIZE
+                        thumbnail = create_thumbnail(face_image, thumbnail_size)
                         
+                        # Display face with enhanced styling
+                        st.image(thumbnail, use_container_width=True)
+                        
+                        # Action buttons in columns
+                        btn_col1, btn_col2, btn_col3 = st.columns(3)
+                        
+                        with btn_col1:
+                            # Add full image view button
+                            if st.button("🖼️ Ganzes Bild", key=f"gallery_full_{face_id}", help="Ganzes Bild mit markiertem Gesicht anzeigen"):
+                                show_full_image_with_face_box(Path(image_path), location_str)
+                        
+                        with btn_col2:
+                            # Add facial attribute analysis button
+                            if st.button("🧬 Analyse", key=f"gallery_analyze_{face_id}", help="Detaillierte Gesichtsanalyse: Alter, Geschlecht, Emotionen, Ethnie"):
+                                show_facial_attributes_popup(Path(image_path), location_str, face_id)
+                        
+                        with btn_col3:
+                            # Add delete button with enhanced confirmation
+                            if not compact:  # Only show delete in full view, not compact
+                                if st.button("🗑️ Löschen", key=f"gallery_delete_{face_id}", help="Dieses falsch erkannte Gesicht löschen", type="secondary"):
+                                    # Use a more robust confirmation system
+                                    confirm_key = f'confirm_delete_{face_id}'
+                                    
+                                    if st.session_state.get(confirm_key, False):
+                                        # Perform deletion
+                                        with st.spinner("Lösche Gesicht..."):
+                                            if delete_face_from_gallery(face_id):
+                                                st.success(f"✅ Gesicht erfolgreich gelöscht!")
+                                                # Clean up confirmation state
+                                                if confirm_key in st.session_state:
+                                                    del st.session_state[confirm_key]
+                                                # Clear cache and refresh
+                                                st.cache_data.clear()
+                                                st.rerun()
+                                            else:
+                                                st.error(f"❌ Fehler beim Löschen des Gesichts")
+                                                if confirm_key in st.session_state:
+                                                    del st.session_state[confirm_key]
+                                    else:
+                                        # Request confirmation
+                                        st.session_state[confirm_key] = True
+                                        st.warning(f"⚠️ **{face_id[:8]}...** wirklich löschen? Nochmals klicken zum Bestätigen.")
+                                        st.rerun()
+                        
+                        if show_metadata:
+                            if compact:
+                                st.caption(f"🆔 {face_id[:8]}...")
+                            else:
+                                st.caption(f"🆔 Face ID: {face_id}")
+                                st.caption(f"📁 {Path(image_path).name}")
+                                st.caption(f"📍 Position: {location_str}")
+                                
+                                # Additional metadata
+                                face_size = f"{face_width}×{face_height}px"
+                                st.caption(f"📐 Size: {face_size}")
+                                
+                                # Add hover info with image stats
+                                if Path(image_path).exists():
+                                    file_size = Path(image_path).stat().st_size / 1024
+                                    st.caption(f"💾 {file_size:.1f} KB")
+                    else:
+                        st.error("❌ Ungültiger Gesichtsbereich")
+                        
+                except ValueError as ve:
+                    st.error(f"❌ Ungültige Koordinaten: {location_str}")
                 except Exception as e:
-                    st.error(f"Error extracting face: {e}")
+                    st.error(f"❌ Fehler beim Extrahieren: {str(e)[:50]}...")
             else:
-                st.error("Could not load image")
+                st.error("❌ Bild konnte nicht geladen werden")
+                st.caption(f"📁 {Path(image_path).name}")
         else:
-            st.error(f"Image not found: {Path(image_path).name}")
+            st.error("❌ Bild nicht gefunden")
+            st.caption(f"📁 {Path(image_path).name if image_path else 'Unbekannter Pfad'}")
             
     except Exception as e:
-        st.error(f"Error displaying face: {e}")
+        st.error(f"❌ Anzeigefehler: {str(e)[:50]}...")
+        st.caption(f"🆔 {metadata.get('face_id', 'unknown')}")
 
 def improved_web_scraping_page():
     """Enhanced web scraping with better progress tracking"""
@@ -2008,6 +2783,165 @@ def display_scraped_images_enhanced():
                 
     with col3:
         st.write(f"**Total: {len(scraped_images)} images**")
+
+def fast_process_all_images():
+    """Ultra fast processing mode using optimized settings"""
+    
+    st.info("⚡ **ULTRA FAST MODE ACTIVATED**")
+    st.warning("Verwende optimierte Einstellungen für maximale Geschwindigkeit!")
+    
+    # Get all image directories
+    directories = []
+    if IMAGES_DIR.exists():
+        image_count = len(get_image_files(IMAGES_DIR))
+        if image_count > 0:
+            directories.append(("Images", IMAGES_DIR, image_count))
+    
+    if SCRAPED_DIR.exists():
+        scraped_count = len(get_image_files(SCRAPED_DIR))
+        if scraped_count > 0:
+            directories.append(("Scraped", SCRAPED_DIR, scraped_count))
+    
+    if not directories:
+        st.error("Keine Bilder zum Verarbeiten gefunden!")
+        return
+    
+    total_images = sum(count for _, _, count in directories)
+    
+    # Global progress tracking
+    overall_progress = st.progress(0)
+    current_status = st.empty()
+    
+    # Enhanced logging container
+    st.subheader("⚡ Fast Processing Log")
+    detailed_log_container = st.container()
+    
+    global_batch_count = 0
+    total_faces_found = 0
+    total_images_processed = 0
+    total_errors = 0
+    
+    # Fast processing settings
+    fast_batch_size = 10  # Smaller batches for faster feedback
+    max_workers = 1       # Single worker to avoid issues
+    
+    start_time = time.time()
+    
+    try:
+        for dir_name, dir_path, image_count in directories:
+            current_status.text(f"⚡ Fast processing {dir_name} directory ({image_count} images)...")
+            
+            image_files = get_image_files(dir_path)
+            dir_batches = (len(image_files) - 1) // fast_batch_size + 1
+            
+            for batch_num in range(dir_batches):
+                start_idx = batch_num * fast_batch_size
+                end_idx = min(start_idx + fast_batch_size, len(image_files))
+                batch_files = image_files[start_idx:end_idx]
+                
+                # Update global progress
+                total_batches = sum((count - 1) // fast_batch_size + 1 for _, _, count in directories)
+                global_progress = global_batch_count / total_batches
+                overall_progress.progress(global_progress)
+                
+                current_status.text(f"⚡ {dir_name} - Fast Batch {batch_num + 1}/{dir_batches}")
+                
+                # Process batch with shorter timeout
+                batch_start_time = time.time()
+                results = st.session_state.face_engine.process_images_batch(
+                    batch_files, 
+                    max_workers=max_workers
+                )
+                batch_time = time.time() - batch_start_time
+                
+                # Process results
+                face_ids = []
+                embeddings = []
+                metadatas = []
+                batch_faces = 0
+                batch_errors = 0
+                
+                # Enhanced per-image logging
+                with detailed_log_container:
+                    st.markdown(f"**⚡ {dir_name} - Fast Batch {batch_num + 1} ({batch_time:.1f}s):**")
+                
+                for result in results:
+                    image_name = Path(result.get('image_path', 'unknown')).name
+                    
+                    if "error" not in result and result.get("face_count", 0) > 0:
+                        total_images_processed += 1
+                        face_count = result["face_count"]
+                        batch_faces += face_count
+                        
+                        with detailed_log_container:
+                            st.success(f"⚡ {image_name} → {face_count} Gesicht(er) erkannt")
+                        
+                        for face_data in result["faces"]:
+                            face_ids.append(face_data["face_id"])
+                            embeddings.append(face_data["embedding"])
+                            
+                            location = face_data["location"]
+                            location_str = f"{location[0]},{location[1]},{location[2]},{location[3]}"
+                            
+                            metadatas.append({
+                                "image_path": result["image_path"],
+                                "location": location_str,
+                                "face_id": face_data["face_id"]
+                            })
+                    elif "error" in result:
+                        batch_errors += 1
+                        total_errors += 1
+                        error_msg = result.get('error', 'Unknown error')
+                        
+                        with detailed_log_container:
+                            st.error(f"❌ {image_name} → FEHLER: {error_msg}")
+                        
+                    else:
+                        total_images_processed += 1
+                        with detailed_log_container:
+                            st.warning(f"⚠️ {image_name} → Keine Gesichter erkannt")
+                
+                # Add to database
+                if face_ids:
+                    added_count = st.session_state.vector_store.add_face_embeddings_batch(
+                        face_ids, embeddings, metadatas
+                    )
+                    total_faces_found += added_count
+                    
+                    with detailed_log_container:
+                        st.info(f"💾 Fast Batch: {added_count} Gesichter zur Datenbank hinzugefügt")
+                        st.markdown("---")
+                
+                global_batch_count += 1
+        
+        # Final completion
+        overall_progress.progress(1.0)
+        total_time = time.time() - start_time
+        current_status.text("⚡ Fast processing complete!")
+        
+        # Enhanced final summary
+        st.balloons()
+        st.success("⚡ **FAST PROCESSING COMPLETE!**")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Images Processed", total_images_processed)
+        with col2:
+            st.metric("Faces Found", total_faces_found)  
+        with col3:
+            st.metric("Errors", total_errors)
+        with col4:
+            avg_time = total_time / total_images_processed if total_images_processed > 0 else 0
+            st.metric("Avg Time/Image", f"{avg_time:.1f}s")
+        
+        # Speed comparison
+        if total_images_processed > 0:
+            images_per_minute = (total_images_processed / total_time) * 60
+            st.success(f"🚀 **Verarbeitungsgeschwindigkeit: {images_per_minute:.1f} Bilder/Minute**")
+    
+    except Exception as e:
+        st.error(f"❌ Error during fast processing: {e}")
+        current_status.text("❌ Fast processing failed!")
 
 if __name__ == "__main__":
     main()
