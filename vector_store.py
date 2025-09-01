@@ -156,8 +156,17 @@ class FaceVectorStore:
             # Convert embedding to list for ChromaDB
             query_list = query_embedding_normalized.tolist()
             
-            # Search with expanded results to allow better filtering
-            search_n = min(n_results * 5, 500)  # Get more candidates for better filtering
+            # Search ALL faces - no limit to ensure comprehensive search
+            # Get total count first to determine appropriate search size
+            try:
+                total_faces_result = self.collection.get(limit=1, include=[])
+                if total_faces_result and total_faces_result.get('ids'):
+                    # Use a very large number to get all faces, but reasonable for processing
+                    search_n = min(n_results * 20, 10000)  # Search up to 10k faces instead of 500
+                else:
+                    search_n = n_results * 5
+            except:
+                search_n = n_results * 5
             
             results = self.collection.query(
                 query_embeddings=[query_list],
@@ -708,7 +717,7 @@ class FaceVectorStore:
     
     def get_faces_by_person_id(self, person_id: str) -> List[Dict[str, Any]]:
         """
-        Get all faces assigned to a specific person - ULTRA-DEFENSIVE version
+        Get all faces assigned to a specific person
         
         Args:
             person_id: Person identifier
@@ -719,84 +728,29 @@ class FaceVectorStore:
         try:
             logger.info(f"Getting faces for person {person_id}")
             
-            # Get all faces - split into smaller batches to avoid memory issues
-            faces = []
+            # Use ChromaDB's where clause to filter by person_id directly
+            # This is much more efficient than manual iteration
             target_person_id = str(person_id).strip()
-            offset = 0
-            batch_size = 1000
             
-            while True:
-                try:
-                    # Get batch of faces
-                    batch_results = self.collection.get(
-                        limit=batch_size,
-                        offset=offset,
-                        include=['metadatas', 'embeddings']
-                    )
-                    
-                    if not batch_results or not batch_results.get('ids') or len(batch_results['ids']) == 0:
-                        break
-                    
-                    batch_count = len(batch_results['ids'])
-                    logger.debug(f"Processing batch {offset}-{offset+batch_count}")
-                    
-                    # Process each face in this batch with extreme safety
-                    for i in range(batch_count):
-                        try:
-                            face_id = batch_results['ids'][i]
-                            metadata = batch_results['metadatas'][i]
-                            
-                            # ULTRA-SAFE person_id extraction
-                            found_person_id = None
-                            
-                            # Extract person_id using the safest possible approach
-                            try:
-                                # Get all keys to avoid any iteration issues
-                                metadata_keys = list(metadata.keys())
-                                
-                                # Look for person_id key explicitly
-                                if 'person_id' in metadata_keys:
-                                    person_id_value = metadata['person_id']
-                                    
-                                    # Convert to string without any fancy operations
-                                    if person_id_value is not None:
-                                        found_person_id = str(person_id_value).strip()
-                                
-                            except Exception:
-                                # If ANY error occurs, skip this face
-                                continue
-                            
-                            # Simple string comparison
-                            if found_person_id and found_person_id == target_person_id:
-                                # Create face data safely
-                                try:
-                                    face_data = {
-                                        'face_id': face_id,
-                                        'metadata': metadata,
-                                        'embedding': batch_results['embeddings'][i] if batch_results.get('embeddings') and i < len(batch_results['embeddings']) else None
-                                    }
-                                    faces.append(face_data)
-                                    logger.debug(f"Found matching face: {face_id}")
-                                except Exception:
-                                    # Skip if face data creation fails
-                                    continue
+            results = self.collection.get(
+                where={"person_id": target_person_id},
+                include=['metadatas', 'embeddings']
+            )
+            
+            faces = []
+            if results and results.get('metadatas'):
+                for i, metadata in enumerate(results['metadatas']):
+                    try:
+                        face_data = {
+                            'face_id': results['ids'][i],
+                            'metadata': metadata,
+                            'embedding': results['embeddings'][i] if results.get('embeddings') else None
+                        }
+                        faces.append(face_data)
+                    except Exception as e:
+                        logger.warning(f"Skipping face at index {i}: {e}")
+                        continue
                         
-                        except Exception:
-                            # Skip individual face processing errors
-                            continue
-                    
-                    # Move to next batch
-                    offset += batch_count
-                    
-                    # Safety limit to prevent infinite loops
-                    if offset > 100000:  # Max 100k faces
-                        logger.warning(f"Reached safety limit at offset {offset}")
-                        break
-                
-                except Exception as batch_error:
-                    logger.error(f"Error processing batch at offset {offset}: {batch_error}")
-                    break
-            
             logger.info(f"Found {len(faces)} faces for person {person_id}")
             return faces
             
@@ -806,7 +760,7 @@ class FaceVectorStore:
     
     def get_all_persons(self) -> List[Dict[str, Any]]:
         """
-        Get all unique persons in the database - Ultra-safe version
+        Get all unique persons in the database
         
         Returns:
             List of person dictionaries with names and face counts
@@ -814,7 +768,7 @@ class FaceVectorStore:
         try:
             logger.info("Getting all persons from database")
             
-            # Get all faces with person info - ultra-safe approach
+            # Get all faces with person_id metadata
             results = self.collection.get(
                 include=['metadatas']
             )
@@ -825,62 +779,49 @@ class FaceVectorStore:
                 
                 for i, metadata in enumerate(results['metadatas']):
                     try:
-                        # The most basic and safe approach - avoid ALL array operations
+                        # Check if this face has a person assigned
                         if 'person_id' not in metadata:
                             continue
                             
                         raw_person_id = metadata['person_id']
                         
-                        # Skip None values immediately
+                        # Skip None values
                         if raw_person_id is None:
                             continue
                         
-                        # Convert to string using the safest possible method
-                        stored_person_id = None
-                        try:
-                            # Direct string conversion - this should work for most types
-                            stored_person_id = str(raw_person_id)
-                        except Exception:
-                            # If str() fails, skip this entry
+                        # Convert to string and clean
+                        person_id = str(raw_person_id).strip()
+                        
+                        # Handle array-like strings (from ChromaDB serialization issues)
+                        if person_id.startswith('[') and person_id.endswith(']'):
+                            inner_content = person_id[1:-1].strip()
+                            if inner_content:
+                                # Remove quotes and take first value if comma separated
+                                if ',' in inner_content:
+                                    person_id = inner_content.split(',')[0].strip().strip("'\"")
+                                else:
+                                    person_id = inner_content.strip("'\"")
+                        
+                        # Skip invalid values
+                        if not person_id or person_id in ["None", "null", "", "nan"]:
                             continue
                         
-                        # Clean the string representation
-                        stored_person_id = stored_person_id.strip()
+                        # Add or update person
+                        if person_id not in persons:
+                            persons[person_id] = {
+                                'person_id': person_id,
+                                'first_name': metadata.get('first_name', ''),
+                                'last_name': metadata.get('last_name', ''),
+                                'full_name': metadata.get('full_name', ''),
+                                'face_count': 0,
+                                'face_ids': []
+                            }
                         
-                        # Handle string representations of arrays like "[value]" or "['value']"
-                        if stored_person_id.startswith('[') and stored_person_id.endswith(']'):
-                            # Extract content between brackets
-                            inner_content = stored_person_id[1:-1].strip()
-                            if inner_content:
-                                # Handle quoted values
-                                if (inner_content.startswith("'") and inner_content.endswith("'")) or \
-                                   (inner_content.startswith('"') and inner_content.endswith('"')):
-                                    stored_person_id = inner_content[1:-1]
-                                else:
-                                    # Take everything before first comma if exists
-                                    if ',' in inner_content:
-                                        stored_person_id = inner_content.split(',')[0].strip().strip("'\"")
-                                    else:
-                                        stored_person_id = inner_content.strip("'\"")
-                        
-                        # Final validation - only proceed with clean, non-empty strings
-                        if stored_person_id and stored_person_id not in ["None", "null", "", "nan"]:
-                            # Add or update person
-                            if stored_person_id not in persons:
-                                persons[stored_person_id] = {
-                                    'person_id': stored_person_id,
-                                    'first_name': metadata.get('first_name', ''),
-                                    'last_name': metadata.get('last_name', ''),
-                                    'full_name': metadata.get('full_name', ''),
-                                    'face_count': 0,
-                                    'face_ids': []
-                                }
-                            persons[stored_person_id]['face_count'] += 1
-                            persons[stored_person_id]['face_ids'].append(results['ids'][i])
+                        persons[person_id]['face_count'] += 1
+                        persons[person_id]['face_ids'].append(results['ids'][i])
                     
-                    except Exception as person_error:
-                        # Log but don't let individual failures stop the whole process
-                        logger.debug(f"Skipping person at index {i}: {person_error}")
+                    except Exception as e:
+                        logger.debug(f"Skipping person at index {i}: {e}")
                         continue
             
             persons_list = list(persons.values())

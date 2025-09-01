@@ -647,16 +647,31 @@ def show_facial_attributes_popup(image_path, face_location, face_id="unknown"):
 def show_name_assignment_modal():
     """Display the name assignment modal"""
     
-    if not all(key in st.session_state for key in ['name_assign_face_id', 'name_assign_image_path', 'name_assign_face_location']):
-        st.error("Fehlende Gesichtsdaten für Namenszuweisung")
+    # Required keys for name assignment
+    required_keys = ['name_assign_face_id', 'name_assign_image_path', 'name_assign_face_location']
+    missing_keys = [key for key in required_keys if key not in st.session_state]
+    
+    if missing_keys:
+        st.error(f"Fehlende Gesichtsdaten für Namenszuweisung: {', '.join(missing_keys)}")
+        st.info("Bitte versuchen Sie erneut, den Namen zuzuweisen.")
+        if st.button("❌ Schließen"):
+            # Clear any partial session state
+            for key in required_keys:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
         return
     
     face_id = st.session_state.name_assign_face_id
     image_path = st.session_state.name_assign_image_path
     face_location = st.session_state.name_assign_face_location
     
+    # Ensure image_path is a Path object
+    if isinstance(image_path, str):
+        image_path = Path(image_path)
+    
     st.markdown(f"**Face ID:** `{face_id}`")
-    st.markdown(f"**Datei:** `{Path(image_path).name}`")
+    st.markdown(f"**Datei:** `{image_path.name}`")
     
     # Show face preview
     try:
@@ -2865,7 +2880,7 @@ def display_face_from_metadata(metadata, show_metadata=True, compact=False):
                                 # Use session state to trigger name assignment modal
                                 st.session_state.show_name_assignment_modal = True
                                 st.session_state.name_assign_face_id = face_id
-                                st.session_state.name_assign_image_path = Path(image_path)
+                                st.session_state.name_assign_image_path = image_path  # Keep as string to avoid path issues
                                 st.session_state.name_assign_face_location = location_str
                                 st.rerun()
                         
