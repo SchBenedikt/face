@@ -708,7 +708,7 @@ class FaceVectorStore:
     
     def get_faces_by_person_id(self, person_id: str) -> List[Dict[str, Any]]:
         """
-        Get all faces assigned to a specific person
+        Get all faces assigned to a specific person - ULTRA-DEFENSIVE version
         
         Args:
             person_id: Person identifier
@@ -717,21 +717,87 @@ class FaceVectorStore:
             List of face dictionaries
         """
         try:
-            # Query faces with this person_id
-            results = self.collection.get(
-                include=['metadatas', 'embeddings'],
-                where={"person_id": person_id}
-            )
+            logger.info(f"Getting faces for person {person_id}")
             
+            # Get all faces - split into smaller batches to avoid memory issues
             faces = []
-            if results and results.get('metadatas'):
-                for i, metadata in enumerate(results['metadatas']):
-                    faces.append({
-                        'face_id': results['ids'][i],
-                        'metadata': metadata,
-                        'embedding': results['embeddings'][i] if results.get('embeddings') else None
-                    })
+            target_person_id = str(person_id).strip()
+            offset = 0
+            batch_size = 1000
+            
+            while True:
+                try:
+                    # Get batch of faces
+                    batch_results = self.collection.get(
+                        limit=batch_size,
+                        offset=offset,
+                        include=['metadatas', 'embeddings']
+                    )
                     
+                    if not batch_results or not batch_results.get('ids') or len(batch_results['ids']) == 0:
+                        break
+                    
+                    batch_count = len(batch_results['ids'])
+                    logger.debug(f"Processing batch {offset}-{offset+batch_count}")
+                    
+                    # Process each face in this batch with extreme safety
+                    for i in range(batch_count):
+                        try:
+                            face_id = batch_results['ids'][i]
+                            metadata = batch_results['metadatas'][i]
+                            
+                            # ULTRA-SAFE person_id extraction
+                            found_person_id = None
+                            
+                            # Extract person_id using the safest possible approach
+                            try:
+                                # Get all keys to avoid any iteration issues
+                                metadata_keys = list(metadata.keys())
+                                
+                                # Look for person_id key explicitly
+                                if 'person_id' in metadata_keys:
+                                    person_id_value = metadata['person_id']
+                                    
+                                    # Convert to string without any fancy operations
+                                    if person_id_value is not None:
+                                        found_person_id = str(person_id_value).strip()
+                                
+                            except Exception:
+                                # If ANY error occurs, skip this face
+                                continue
+                            
+                            # Simple string comparison
+                            if found_person_id and found_person_id == target_person_id:
+                                # Create face data safely
+                                try:
+                                    face_data = {
+                                        'face_id': face_id,
+                                        'metadata': metadata,
+                                        'embedding': batch_results['embeddings'][i] if batch_results.get('embeddings') and i < len(batch_results['embeddings']) else None
+                                    }
+                                    faces.append(face_data)
+                                    logger.debug(f"Found matching face: {face_id}")
+                                except Exception:
+                                    # Skip if face data creation fails
+                                    continue
+                        
+                        except Exception:
+                            # Skip individual face processing errors
+                            continue
+                    
+                    # Move to next batch
+                    offset += batch_count
+                    
+                    # Safety limit to prevent infinite loops
+                    if offset > 100000:  # Max 100k faces
+                        logger.warning(f"Reached safety limit at offset {offset}")
+                        break
+                
+                except Exception as batch_error:
+                    logger.error(f"Error processing batch at offset {offset}: {batch_error}")
+                    break
+            
+            logger.info(f"Found {len(faces)} faces for person {person_id}")
             return faces
             
         except Exception as e:
@@ -740,40 +806,109 @@ class FaceVectorStore:
     
     def get_all_persons(self) -> List[Dict[str, Any]]:
         """
-        Get all unique persons in the database
+        Get all unique persons in the database - Ultra-safe version
         
         Returns:
             List of person dictionaries with names and face counts
         """
         try:
-            # Get all faces with person info
+            logger.info("Getting all persons from database")
+            
+            # Get all faces with person info - ultra-safe approach
             results = self.collection.get(
-                include=['metadatas'],
-                where={"person_id": {"$ne": None}}
+                include=['metadatas']
             )
             
             persons = {}
-            if results and results.get('metadatas'):
+            if results and results.get('ids') and results.get('metadatas'):
+                logger.info(f"Processing {len(results['metadatas'])} faces for person extraction")
+                
                 for i, metadata in enumerate(results['metadatas']):
-                    person_id = metadata.get('person_id')
-                    if person_id:
-                        if person_id not in persons:
-                            persons[person_id] = {
-                                'person_id': person_id,
-                                'first_name': metadata.get('first_name', ''),
-                                'last_name': metadata.get('last_name', ''),
-                                'full_name': metadata.get('full_name', ''),
-                                'face_count': 0,
-                                'face_ids': []
-                            }
-                        persons[person_id]['face_count'] += 1
-                        persons[person_id]['face_ids'].append(results['ids'][i])
+                    try:
+                        # The most basic and safe approach - avoid ALL array operations
+                        if 'person_id' not in metadata:
+                            continue
+                            
+                        raw_person_id = metadata['person_id']
+                        
+                        # Skip None values immediately
+                        if raw_person_id is None:
+                            continue
+                        
+                        # Convert to string using the safest possible method
+                        stored_person_id = None
+                        try:
+                            # Direct string conversion - this should work for most types
+                            stored_person_id = str(raw_person_id)
+                        except Exception:
+                            # If str() fails, skip this entry
+                            continue
+                        
+                        # Clean the string representation
+                        stored_person_id = stored_person_id.strip()
+                        
+                        # Handle string representations of arrays like "[value]" or "['value']"
+                        if stored_person_id.startswith('[') and stored_person_id.endswith(']'):
+                            # Extract content between brackets
+                            inner_content = stored_person_id[1:-1].strip()
+                            if inner_content:
+                                # Handle quoted values
+                                if (inner_content.startswith("'") and inner_content.endswith("'")) or \
+                                   (inner_content.startswith('"') and inner_content.endswith('"')):
+                                    stored_person_id = inner_content[1:-1]
+                                else:
+                                    # Take everything before first comma if exists
+                                    if ',' in inner_content:
+                                        stored_person_id = inner_content.split(',')[0].strip().strip("'\"")
+                                    else:
+                                        stored_person_id = inner_content.strip("'\"")
+                        
+                        # Final validation - only proceed with clean, non-empty strings
+                        if stored_person_id and stored_person_id not in ["None", "null", "", "nan"]:
+                            # Add or update person
+                            if stored_person_id not in persons:
+                                persons[stored_person_id] = {
+                                    'person_id': stored_person_id,
+                                    'first_name': metadata.get('first_name', ''),
+                                    'last_name': metadata.get('last_name', ''),
+                                    'full_name': metadata.get('full_name', ''),
+                                    'face_count': 0,
+                                    'face_ids': []
+                                }
+                            persons[stored_person_id]['face_count'] += 1
+                            persons[stored_person_id]['face_ids'].append(results['ids'][i])
+                    
+                    except Exception as person_error:
+                        # Log but don't let individual failures stop the whole process
+                        logger.debug(f"Skipping person at index {i}: {person_error}")
+                        continue
             
-            return list(persons.values())
+            persons_list = list(persons.values())
+            logger.info(f"Found {len(persons_list)} unique persons")
+            return persons_list
             
         except Exception as e:
             logger.error(f"Error getting all persons: {e}")
             return []
+    
+    def find_similar_faces(
+        self, 
+        query_embedding: np.ndarray, 
+        n_results: int = 10,
+        min_similarity: float = SIMILARITY_THRESHOLD
+    ) -> List[Dict[str, Any]]:
+        """
+        Find similar faces (alias for search_similar_faces for compatibility)
+        
+        Args:
+            query_embedding: Query face embedding
+            n_results: Maximum number of results to return
+            min_similarity: Minimum similarity threshold
+            
+        Returns:
+            List of similar faces with metadata
+        """
+        return self.search_similar_faces(query_embedding, n_results, min_similarity)
     
     def auto_assign_similar_faces(self, face_id: str, similarity_threshold: float = 0.8) -> int:
         """
@@ -796,8 +931,8 @@ class FaceVectorStore:
             first_name = reference_face['metadata'].get('first_name', '')
             last_name = reference_face['metadata'].get('last_name', '')
             
-            # Find similar faces
-            similar_faces = self.find_similar_faces(
+            # Find similar faces using the correct method
+            similar_faces = self.search_similar_faces(
                 reference_face['embedding'],
                 n_results=1000,  # Check many faces
                 min_similarity=similarity_threshold
@@ -837,32 +972,72 @@ class FaceVectorStore:
         """
         try:
             search_term = search_term.lower().strip()
+            logger.info(f"Searching faces by name: '{search_term}'")
             
-            # Get all faces with person names
+            # Get all faces with person names - completely safe approach
             results = self.collection.get(
-                include=['metadatas', 'embeddings'],
-                where={"person_id": {"$ne": None}}
+                include=['metadatas', 'embeddings']
             )
             
             matching_faces = []
-            if results and results.get('metadatas'):
+            if results and results.get('ids') and results.get('metadatas'):
+                logger.info(f"Searching through {len(results['metadatas'])} faces")
+                
                 for i, metadata in enumerate(results['metadatas']):
-                    first_name = (metadata.get('first_name') or '').lower()
-                    last_name = (metadata.get('last_name') or '').lower()
-                    full_name = (metadata.get('full_name') or '').lower()
-                    
-                    if (search_term in first_name or 
-                        search_term in last_name or 
-                        search_term in full_name):
+                    try:
+                        # Extract person_id with extreme safety measures
+                        stored_person_id = None
                         
-                        matching_faces.append({
-                            'face_id': results['ids'][i],
-                            'metadata': metadata,
-                            'embedding': results['embeddings'][i] if results.get('embeddings') else None
-                        })
+                        if 'person_id' in metadata and metadata['person_id'] is not None:
+                            raw_person_id = metadata['person_id']
+                            
+                            # Multiple safe extraction attempts
+                            try:
+                                # Check if it's already a simple string/number
+                                if isinstance(raw_person_id, (str, int, float)):
+                                    stored_person_id = str(raw_person_id).strip()
+                                # Handle list/array types
+                                elif hasattr(raw_person_id, '__len__') and hasattr(raw_person_id, '__getitem__'):
+                                    if len(raw_person_id) > 0:
+                                        stored_person_id = str(raw_person_id[0]).strip()
+                                    else:
+                                        stored_person_id = None
+                                # Handle numpy arrays specifically
+                                elif hasattr(raw_person_id, 'item'):
+                                    stored_person_id = str(raw_person_id.item()).strip()
+                                # Last resort conversion
+                                else:
+                                    stored_person_id = str(raw_person_id).strip()
+                                    
+                            except Exception as conversion_error:
+                                logger.warning(f"Person ID conversion failed for index {i}: {conversion_error}")
+                                stored_person_id = None
+                        
+                        # Only check faces with valid person data
+                        if stored_person_id and stored_person_id not in ["None", "null", ""]:
+                            first_name = (metadata.get('first_name') or '').lower()
+                            last_name = (metadata.get('last_name') or '').lower()
+                            full_name = (metadata.get('full_name') or '').lower()
+                            
+                            if (search_term in first_name or 
+                                search_term in last_name or 
+                                search_term in full_name):
+                                
+                                matching_faces.append({
+                                    'face_id': results['ids'][i],
+                                    'metadata': metadata,
+                                    'embedding': results['embeddings'][i] if results.get('embeddings') and i < len(results['embeddings']) else None
+                                })
+                    
+                    except Exception as search_error:
+                        logger.warning(f"Error processing search at index {i}: {search_error}")
+                        continue
             
+            logger.info(f"Found {len(matching_faces)} faces matching '{search_term}'")
             return matching_faces
             
         except Exception as e:
             logger.error(f"Error searching faces by name '{search_term}': {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return []

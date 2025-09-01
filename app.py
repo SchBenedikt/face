@@ -1064,7 +1064,7 @@ def display_search_results(results: List[Dict[str, Any]]):
                                         st.session_state.analysis_face_id = face_id
                                         st.rerun()
                                     if st.button("🏷️ Namen zuweisen", key=f"assign_name_{i}", help="Person einen Namen zuweisen"):
-                                        face_id = face_data.get('id', f"face_{i}")
+                                        face_id = face_data.get('face_id', face_data.get('id', f"face_{i}"))  # Try both face_id and id
                                         # Use session state to trigger name assignment modal
                                         st.session_state.show_name_assignment_modal = True
                                         st.session_state.name_assign_face_id = face_id
@@ -1131,7 +1131,7 @@ def display_search_results(results: List[Dict[str, Any]]):
                                     with btn_col3:
                                         # Add name assignment button
                                         if st.button("🏷️ Namen", key=f"assign_name_tuple_{i}", help="Person einen Namen zuweisen"):
-                                            face_id = face_data.get('id', f"face_{i}")
+                                            face_id = face_data.get('face_id', face_data.get('id', f"face_{i}"))  # Try both face_id and id
                                             # Use session state to trigger name assignment modal
                                             st.session_state.show_name_assignment_modal = True
                                             st.session_state.name_assign_face_id = face_id
@@ -3495,7 +3495,7 @@ def name_gallery_page():
                     with cols[idx % 4]:
                         metadata = face['metadata']
                         image_path = metadata.get('image_path', '')
-                        face_location = metadata.get('face_location', '')
+                        face_location = metadata.get('location', '')  # Use 'location' instead of 'face_location'
                         
                         try:
                             # Load and display face thumbnail
