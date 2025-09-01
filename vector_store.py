@@ -741,10 +741,16 @@ class FaceVectorStore:
             if results and results.get('metadatas'):
                 for i, metadata in enumerate(results['metadatas']):
                     try:
+                        # Safely get embedding - check if embeddings exist and has correct index
+                        embedding = None
+                        embeddings_data = results.get('embeddings')
+                        if embeddings_data is not None and isinstance(embeddings_data, (list, np.ndarray)) and i < len(embeddings_data):
+                            embedding = embeddings_data[i]
+                        
                         face_data = {
                             'face_id': results['ids'][i],
                             'metadata': metadata,
-                            'embedding': results['embeddings'][i] if results.get('embeddings') else None
+                            'embedding': embedding
                         }
                         faces.append(face_data)
                     except Exception as e:
