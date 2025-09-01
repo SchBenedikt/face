@@ -38,7 +38,7 @@ except ImportError:
         return {}
 
 # ------------- KONFIG -------------
-BASE_URL = "https://schachklub-toeging.de/"   # <-- anpassen
+BASE_URL = "https://www.innsalzach24.de/"   # <-- anpassen
 MAX_DEPTH = float('inf')  # Keine Begrenzung - crawle alle Seiten!
 CONCURRENT_PAGES = 3
 NAV_TIMEOUT = 20000  # ms

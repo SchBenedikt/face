@@ -53,6 +53,22 @@ Best Practices
 4. Respektieren Sie die Nutzungsbedingungen (ToS) von Webseiten und APIs.
 5. Bei Unsicherheit Rechtsberatung einholen.
 
+Benchmarking
+------------
+To run the LFW verification benchmark using the project's `FaceRecognitionEngine` (requires LFW images and `pairs.txt`):
+
+```bash
+# Install extra dependencies if needed
+pip install matplotlib scikit-learn
+
+# Download and extract LFW into ./data/lfw (see LFW official site)
+
+# Run benchmark
+python3 scripts/benchmark_lfw.py --lfw-dir ./data/lfw --pairs ./data/lfw/pairs.txt --out results/lfw
+```
+
+The script will produce `results/lfw/lfw_report.json` and `results/lfw/lfw_roc.png`.
+
 Mitwirken
 ---------
 PRs willkommen. Bitte erstellen Sie Issues für größere Änderungen.

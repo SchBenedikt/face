@@ -95,6 +95,7 @@ def process_images_fast(update_existing=False):
     # Process in batches
     total_faces = 0
     total_processed = 0
+    total_deleted = 0
     total_errors = 0
     start_time = time.time()
     
@@ -149,7 +150,21 @@ def process_images_fast(update_existing=False):
                 
             else:
                 total_processed += 1
-                print(f"  ⚠️ {image_name} → No faces detected")
+                # No faces detected: delete the image file to remove it completely
+                image_path_str = result.get('image_path')
+                try:
+                    img_path = Path(image_path_str) if image_path_str else None
+                    if img_path and not img_path.exists():
+                        # Try to resolve relative to IMAGES_DIR
+                        img_path = IMAGES_DIR / (Path(image_path_str).name if image_path_str else '')
+                    if img_path and img_path.exists():
+                        img_path.unlink()
+                        total_deleted += 1
+                        print(f"  🗑️ {image_name} → No faces detected — image deleted")
+                    else:
+                        print(f"  ⚠️ {image_name} → No faces detected (file not found to delete)")
+                except Exception as e:
+                    print(f"  ⚠️ {image_name} → No faces detected (failed to delete): {e}")
         
         # Add to database
         if face_ids:
@@ -194,6 +209,7 @@ def process_images_fast(update_existing=False):
     print(f"📊 Total Images: {total_images}")
     print(f"✅ Successfully Processed: {total_processed}")
     print(f"👥 Total Faces Found: {total_faces}")
+    print(f"🗑️ Images deleted (no faces): {total_deleted}")
     print(f"❌ Errors: {total_errors}")
     print(f"⏱️ Total Time: {total_time:.1f}s")
     print(f"🚀 Average per Image: {avg_time_per_image:.1f}s")
@@ -203,6 +219,7 @@ def process_images_fast(update_existing=False):
         avg_faces_per_image = total_faces / total_processed
         print(f"📈 Success Rate: {success_rate:.1f}%")
         print(f"👤 Avg Faces per Image: {avg_faces_per_image:.2f}")
+
 
 def process_images_streamlit(update_existing=False, progress_callback=None, status_callback=None):
     """Streamlit-compatible version of fast processing with callbacks"""
