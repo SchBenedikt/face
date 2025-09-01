@@ -1,0 +1,890 @@
+"""
+Vector Store for fast face similarity search using ChromaDB
+"""
+import chromadb
+import numpy as np
+from pathlib import Path
+from typing import List, Dict, Any, Optional, Tuple
+import logging
+import json
+from datetime import datetime
+
+from config import VECTOR_DB_PATH, COLLECTION_NAME, SIMILARITY_THRESHOLD
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class FaceVectorStore:
+    """
+    Vector database for storing and searching face embeddings
+    """
+    
+    def __init__(self, db_path: str = VECTOR_DB_PATH, collection_name: str = COLLECTION_NAME):
+        self.db_path = db_path
+        self.collection_name = collection_name
+        
+        # Initialize ChromaDB client
+        self.client = chromadb.PersistentClient(path=db_path)
+        
+        # Get or create collection
+        try:
+            self.collection = self.client.get_collection(name=collection_name)
+            logger.info(f"Loaded existing collection: {collection_name}")
+        except Exception:
+            self.collection = self.client.create_collection(
+                name=collection_name,
+                metadata={"description": "Face embeddings for similarity search"}
+            )
+            logger.info(f"Created new collection: {collection_name}")
+    
+    def add_face_embedding(
+        self, 
+        face_id: str, 
+        embedding: np.ndarray, 
+        metadata: Dict[str, Any]
+    ) -> bool:
+        """
+        Add a face embedding to the vector store
+        
+        Args:
+            face_id: Unique identifier for the face
+            embedding: Face embedding vector
+            metadata: Additional metadata (image_path, location, person_name, etc.)
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Ensure person_name is in metadata (default to None)
+            if 'person_name' not in metadata:
+                metadata['person_name'] = None
+                
+            self.collection.add(
+                ids=[face_id],
+                embeddings=[embedding.tolist()],
+                metadatas=[metadata]
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to add face embedding {face_id}: {e}")
+            return False
+            metadata: Additional metadata (image_path, location, etc.)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Convert embedding to list for ChromaDB
+            embedding_list = embedding.tolist()
+            
+            # Add metadata
+            full_metadata = {
+                **metadata,
+                "added_at": datetime.now().isoformat(),
+                "embedding_dimension": len(embedding)
+            }
+            
+            # Add to collection
+            self.collection.add(
+                embeddings=[embedding_list],
+                metadatas=[full_metadata],
+                ids=[face_id]
+            )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error adding face embedding {face_id}: {e}")
+            return False
+    
+    def add_face_embeddings_batch(
+        self, 
+        face_ids: List[str], 
+        embeddings: List[np.ndarray], 
+        metadatas: List[Dict[str, Any]]
+    ) -> int:
+        """
+        Add multiple face embeddings in batch
+        
+        Args:
+            face_ids: List of face identifiers
+            embeddings: List of face embeddings
+            metadatas: List of metadata dictionaries
+            
+        Returns:
+            Number of successfully added embeddings
+        """
+        try:
+            if len(face_ids) != len(embeddings) or len(face_ids) != len(metadatas):
+                raise ValueError("Lists must have the same length")
+            
+            # Convert embeddings to lists
+            embedding_lists = [emb.tolist() for emb in embeddings]
+            
+            # Add metadata
+            full_metadatas = []
+            for metadata in metadatas:
+                full_metadata = {
+                    **metadata,
+                    "added_at": datetime.now().isoformat(),
+                    "embedding_dimension": len(embeddings[0])
+                }
+                full_metadatas.append(full_metadata)
+            
+            # Add to collection
+            self.collection.add(
+                embeddings=embedding_lists,
+                metadatas=full_metadatas,
+                ids=face_ids
+            )
+            
+            logger.info(f"Added {len(face_ids)} face embeddings to vector store")
+            return len(face_ids)
+            
+        except Exception as e:
+            logger.error(f"Error adding batch embeddings: {e}")
+            return 0
+    
+    def search_similar_faces(
+        self, 
+        query_embedding: np.ndarray, 
+        n_results: int = 10,
+        min_similarity: float = SIMILARITY_THRESHOLD
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for similar faces with enhanced similarity calculation and better thresholding
+        
+        Args:
+            query_embedding: Query face embedding (should be normalized)
+            n_results: Maximum number of results to return
+            min_similarity: Minimum similarity threshold (0-1 scale)
+            
+        Returns:
+            List of similar faces with metadata and enhanced similarity scores
+        """
+        try:
+            # Ensure query embedding is properly normalized
+            query_norm = np.linalg.norm(query_embedding)
+            if query_norm > 0:
+                query_embedding_normalized = query_embedding / query_norm
+            else:
+                query_embedding_normalized = query_embedding
+                logger.warning("Query embedding has zero norm")
+                
+            # Convert embedding to list for ChromaDB
+            query_list = query_embedding_normalized.tolist()
+            
+            # Search with expanded results to allow better filtering
+            search_n = min(n_results * 5, 500)  # Get more candidates for better filtering
+            
+            results = self.collection.query(
+                query_embeddings=[query_list],
+                n_results=search_n,
+                include=['embeddings', 'metadatas', 'distances']
+            )
+            
+            # Process results with enhanced similarity calculation
+            similar_faces = []
+            
+            if results['ids'] and len(results['ids'][0]) > 0:
+                for i, face_id in enumerate(results['ids'][0]):
+                    try:
+                        distance = results['distances'][0][i]
+                        stored_embedding = np.array(results['embeddings'][0][i], dtype=np.float32)
+                        
+                        # Calculate comprehensive similarity metrics
+                        similarity_metrics = self._calculate_enhanced_similarity(
+                            query_embedding_normalized, 
+                            stored_embedding
+                        )
+                        
+                        # Use the primary similarity score for filtering and ranking
+                        primary_similarity = similarity_metrics['primary_similarity']
+                        
+                        # Apply similarity threshold filter
+                        if primary_similarity >= min_similarity:
+                            face_data = {
+                                'face_id': face_id,
+                                'similarity': primary_similarity,
+                                'similarity_percentage': primary_similarity * 100,
+                                'cosine_similarity': similarity_metrics['cosine_similarity'],
+                                'euclidean_distance': distance,
+                                'euclidean_similarity': similarity_metrics.get('euclidean_similarity', 0.0),
+                                'correlation_similarity': similarity_metrics.get('correlation_similarity', 0.0),
+                                'confidence_score': self._calculate_confidence_score(similarity_metrics),
+                                'metadata': results['metadatas'][0][i],
+                                'similarity_metrics': similarity_metrics
+                            }
+                            similar_faces.append(face_data)
+                            
+                    except Exception as e:
+                        logger.warning(f"Error processing result {i}: {e}")
+                        continue
+            
+            # Sort by confidence score (combination of similarity and reliability)
+            similar_faces.sort(key=lambda x: x['confidence_score'], reverse=True)
+            
+            # Limit to requested number of results
+            similar_faces = similar_faces[:n_results]
+            
+            # Log search results for debugging
+            if similar_faces:
+                top_result = similar_faces[0]
+                logger.info(f"Found {len(similar_faces)} similar faces - Top match: {top_result['similarity_percentage']:.1f}% confidence")
+                logger.debug(f"Top result metrics: cosine={top_result['cosine_similarity']:.4f}, euclidean_sim={top_result['euclidean_similarity']:.4f}")
+            else:
+                logger.info(f"No similar faces found above threshold {min_similarity:.3f}")
+            
+            return similar_faces
+            
+        except Exception as e:
+            logger.error(f"Error searching similar faces: {e}")
+            return []
+    
+    def _calculate_enhanced_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> Dict[str, float]:
+        """
+        Calculate comprehensive similarity metrics using ensemble approach
+        
+        Args:
+            embedding1: First embedding (query, should be normalized)
+            embedding2: Second embedding (from database)
+            
+        Returns:
+            Dictionary containing various similarity metrics with ensemble scoring
+        """
+        try:
+            # Normalize both embeddings to ensure consistent comparison
+            norm1 = np.linalg.norm(embedding1)
+            norm2 = np.linalg.norm(embedding2)
+            
+            if norm1 == 0 or norm2 == 0:
+                logger.warning("One of the embeddings has zero norm")
+                return self._get_zero_similarity_metrics()
+                
+            embedding1_normalized = embedding1 / norm1
+            embedding2_normalized = embedding2 / norm2
+            
+            metrics = {}
+            
+            # 1. Cosine similarity (most reliable for normalized embeddings)
+            cosine_similarity = np.dot(embedding1_normalized, embedding2_normalized)
+            cosine_similarity = float(np.clip(cosine_similarity, -1.0, 1.0))
+            metrics['cosine_similarity'] = cosine_similarity
+            
+            # 2. Euclidean distance and derived similarity
+            euclidean_distance = float(np.linalg.norm(embedding1_normalized - embedding2_normalized))
+            # For unit vectors, euclidean distance ranges from 0 (identical) to 2 (opposite)
+            euclidean_similarity = max(0.0, 1.0 - (euclidean_distance / 2.0))
+            metrics['euclidean_distance'] = euclidean_distance
+            metrics['euclidean_similarity'] = euclidean_similarity
+            
+            # 3. Dot product similarity (similar to cosine for normalized vectors)
+            dot_product = float(np.dot(embedding1_normalized, embedding2_normalized))
+            metrics['dot_product'] = dot_product
+            
+            # 4. Correlation similarity
+            try:
+                correlation = float(np.corrcoef(embedding1_normalized, embedding2_normalized)[0, 1])
+                if np.isnan(correlation):
+                    correlation = 0.0
+                metrics['correlation_similarity'] = correlation
+            except:
+                metrics['correlation_similarity'] = 0.0
+            
+            # 5. Angular distance (converted from cosine similarity)
+            try:
+                angular_distance = np.arccos(np.clip(cosine_similarity, -1.0, 1.0)) / np.pi
+                angular_similarity = 1.0 - angular_distance
+                metrics['angular_similarity'] = float(angular_similarity)
+            except:
+                metrics['angular_similarity'] = 0.0
+            
+            # 6. Manhattan (L1) similarity
+            try:
+                manhattan_distance = float(np.sum(np.abs(embedding1_normalized - embedding2_normalized)))
+                manhattan_similarity = max(0.0, 1.0 - (manhattan_distance / (2.0 * len(embedding1_normalized))))
+                metrics['manhattan_similarity'] = manhattan_similarity
+            except:
+                metrics['manhattan_similarity'] = 0.0
+            
+            # 7. ENSEMBLE PRIMARY SIMILARITY - Weighted combination of best metrics
+            # Based on research: cosine similarity is most reliable for face embeddings
+            weights = {
+                'cosine': 0.5,        # Primary weight on cosine similarity
+                'euclidean': 0.25,    # Secondary weight on euclidean 
+                'correlation': 0.15,  # Tertiary weight on correlation
+                'angular': 0.1        # Minor weight on angular
+            }
+            
+            # Normalize similarities to 0-1 range for combination
+            cosine_norm = (cosine_similarity + 1.0) / 2.0  # From [-1,1] to [0,1]
+            euclidean_norm = euclidean_similarity  # Already [0,1]
+            correlation_norm = (metrics['correlation_similarity'] + 1.0) / 2.0  # From [-1,1] to [0,1]
+            angular_norm = metrics['angular_similarity']  # Already [0,1]
+            
+            # Calculate ensemble score
+            ensemble_score = (
+                weights['cosine'] * cosine_norm +
+                weights['euclidean'] * euclidean_norm +
+                weights['correlation'] * correlation_norm +
+                weights['angular'] * angular_norm
+            )
+            
+            # Apply face-specific threshold mapping
+            if ensemble_score >= 0.65:  # High confidence threshold
+                primary_similarity = 0.7 + (ensemble_score - 0.65) * 0.857  # Scale to [0.7, 1.0]
+            elif ensemble_score >= 0.45:  # Medium confidence threshold  
+                primary_similarity = 0.4 + (ensemble_score - 0.45) * 1.5  # Scale to [0.4, 0.7]
+            else:  # Low confidence
+                primary_similarity = ensemble_score * 0.889  # Scale to [0, 0.4]
+            
+            metrics['primary_similarity'] = float(np.clip(primary_similarity, 0.0, 1.0))
+            metrics['ensemble_score'] = float(ensemble_score)
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Error calculating enhanced similarity: {e}")
+            return self._get_zero_similarity_metrics()
+    
+    def _get_zero_similarity_metrics(self) -> Dict[str, float]:
+        """Return zero similarity metrics for error cases"""
+        return {
+            'cosine_similarity': 0.0,
+            'euclidean_distance': 2.0,
+            'euclidean_similarity': 0.0,
+            'dot_product': 0.0,
+            'correlation_similarity': 0.0,
+            'angular_similarity': 0.0,
+            'manhattan_similarity': 0.0,
+            'primary_similarity': 0.0,
+            'ensemble_score': 0.0
+        }
+    
+    def _calculate_confidence_score(self, similarity_metrics: Dict[str, float]) -> float:
+        """
+        Calculate enhanced confidence score using ensemble metrics
+        
+        Args:
+            similarity_metrics: Dictionary of similarity metrics
+            
+        Returns:
+            Confidence score (0-1) with ensemble weighting
+        """
+        try:
+            primary_sim = similarity_metrics.get('primary_similarity', 0.0)
+            ensemble_score = similarity_metrics.get('ensemble_score', 0.0)
+            cosine_sim = similarity_metrics.get('cosine_similarity', 0.0)
+            correlation_sim = similarity_metrics.get('correlation_similarity', 0.0)
+            
+            # Enhanced confidence calculation using multiple metrics
+            base_confidence = (
+                primary_sim * 0.4 +          # Primary similarity (40%)
+                ensemble_score * 0.3 +       # Ensemble score (30%)
+                ((cosine_sim + 1.0) / 2.0) * 0.2 +  # Normalized cosine (20%)
+                ((correlation_sim + 1.0) / 2.0) * 0.1   # Normalized correlation (10%)
+            )
+            
+            # Apply confidence boost for very high similarities
+            if cosine_sim > 0.7 and primary_sim > 0.6:
+                base_confidence = min(1.0, base_confidence * 1.15)  # 15% boost
+            elif cosine_sim > 0.5 and primary_sim > 0.5:
+                base_confidence = min(1.0, base_confidence * 1.05)  # 5% boost
+            
+            # Apply penalty for inconsistent metrics (reliability check)
+            metric_values = [primary_sim, ensemble_score, (cosine_sim + 1.0) / 2.0]
+            metric_std = float(np.std(metric_values))
+            if metric_std > 0.2:  # High variance indicates inconsistent metrics
+                base_confidence *= 0.9  # 10% penalty
+            
+            return float(max(0.0, min(1.0, base_confidence)))
+            
+        except Exception as e:
+            logger.error(f"Error calculating confidence score: {e}")
+            return 0.0
+    
+    def _calculate_cosine_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
+        """
+        Calculate cosine similarity between two embeddings
+        
+        Args:
+            embedding1: First embedding (should be normalized)
+            embedding2: Second embedding
+            
+        Returns:
+            Cosine similarity (-1 to 1, where 1 is most similar)
+        """
+        try:
+            # Normalize both embeddings to unit length
+            norm1 = np.linalg.norm(embedding1)
+            norm2 = np.linalg.norm(embedding2)
+            
+            if norm1 == 0 or norm2 == 0:
+                return 0.0
+                
+            embedding1_normalized = embedding1 / norm1
+            embedding2_normalized = embedding2 / norm2
+            
+            # Calculate cosine similarity (dot product of normalized vectors)
+            similarity = np.dot(embedding1_normalized, embedding2_normalized)
+            
+            # Ensure result is in [-1, 1] range
+            similarity = np.clip(similarity, -1.0, 1.0)
+            
+            return float(similarity)
+            
+        except Exception as e:
+            logger.error(f"Error calculating cosine similarity: {e}")
+            return 0.0
+    
+    def get_face_by_id(self, face_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a specific face by ID
+        
+        Args:
+            face_id: Face identifier
+            
+        Returns:
+            Face data or None if not found
+        """
+        try:
+            results = self.collection.get(
+                ids=[face_id],
+                include=['embeddings', 'metadatas']
+            )
+            
+            if results['ids'] and len(results['ids']) > 0:
+                return {
+                    'face_id': results['ids'][0],
+                    'embedding': np.array(results['embeddings'][0]),
+                    'metadata': results['metadatas'][0]
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting face {face_id}: {e}")
+            return None
+    
+    def update_face_metadata(self, face_id: str, metadata: Dict[str, Any]) -> bool:
+        """
+        Update metadata for a face
+        
+        Args:
+            face_id: Face identifier
+            metadata: New metadata
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Get existing face
+            existing_face = self.get_face_by_id(face_id)
+            if not existing_face:
+                return False
+            
+            # Update metadata
+            updated_metadata = {
+                **existing_face['metadata'],
+                **metadata,
+                "updated_at": datetime.now().isoformat()
+            }
+            
+            # Update in collection
+            self.collection.update(
+                ids=[face_id],
+                metadatas=[updated_metadata]
+            )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error updating face metadata {face_id}: {e}")
+            return False
+    
+    def delete_face(self, face_id: str) -> bool:
+        """
+        Delete a face from the vector store
+        
+        Args:
+            face_id: Face identifier
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            self.collection.delete(ids=[face_id])
+            logger.info(f"Deleted face {face_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error deleting face {face_id}: {e}")
+            return False
+    
+    def get_collection_stats(self) -> Dict[str, Any]:
+        """
+        Get statistics about the collection
+        
+        Returns:
+            Collection statistics
+        """
+        try:
+            # Get collection info
+            collection_count = self.collection.count()
+            
+            # Get sample of metadata to analyze
+            sample_results = self.collection.get(
+                limit=min(100, collection_count),
+                include=['metadatas']
+            )
+            
+            stats = {
+                "total_faces": collection_count,
+                "collection_name": self.collection_name,
+                "db_path": self.db_path
+            }
+            
+            # Analyze metadata
+            if sample_results['metadatas']:
+                image_paths = set()
+                embedding_dimensions = []
+                
+                for metadata in sample_results['metadatas']:
+                    if 'image_path' in metadata:
+                        image_paths.add(metadata['image_path'])
+                    if 'embedding_dimension' in metadata:
+                        embedding_dimensions.append(metadata['embedding_dimension'])
+                
+                stats.update({
+                    "unique_images": len(image_paths),
+                    "avg_embedding_dimension": np.mean(embedding_dimensions) if embedding_dimensions else 0
+                })
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error getting collection stats: {e}")
+            return {"error": str(e)}
+    
+    def clear_collection(self) -> bool:
+        """
+        Clear all data from the collection
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Delete the collection
+            self.client.delete_collection(self.collection_name)
+            
+            # Recreate the collection
+            self.collection = self.client.create_collection(
+                name=self.collection_name,
+                metadata={"description": "Face embeddings for similarity search"}
+            )
+            
+            logger.info(f"Cleared collection {self.collection_name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error clearing collection: {e}")
+            return False
+    
+    def get_faces_paginated(self, offset: int = 0, limit: int = 50) -> Dict[str, Any]:
+        """
+        Robust paginated retrieval of faces with error handling
+        
+        Args:
+            offset: Number of faces to skip
+            limit: Maximum number of faces to return
+            
+        Returns:
+            Dictionary with faces data or empty result on error
+        """
+        try:
+            # First try normal pagination
+            try:
+                results = self.collection.get(
+                    limit=limit,
+                    offset=offset,
+                    include=['metadatas', 'embeddings', 'documents']
+                )
+                
+                if results and results.get('metadatas'):
+                    return results
+                    
+            except Exception as direct_error:
+                logger.warning(f"Direct pagination failed: {direct_error}")
+                
+                # Fallback approach: get a larger chunk and slice
+                try:
+                    chunk_size = min(offset + limit + 100, 2000)  # Get reasonable chunk
+                    all_results = self.collection.get(
+                        limit=chunk_size,
+                        include=['metadatas', 'embeddings', 'documents']
+                    )
+                    
+                    if all_results and all_results.get('metadatas'):
+                        # Manually slice the results
+                        metadatas = all_results.get('metadatas', [])
+                        embeddings = all_results.get('embeddings', [])
+                        documents = all_results.get('documents', [])
+                        ids = all_results.get('ids', [])
+                        
+                        if len(metadatas) > offset:
+                            end_idx = min(offset + limit, len(metadatas))
+                            
+                            return {
+                                'ids': [ids[offset:end_idx]] if ids else [[]],
+                                'metadatas': metadatas[offset:end_idx],
+                                'embeddings': embeddings[offset:end_idx] if embeddings else [],
+                                'documents': documents[offset:end_idx] if documents else []
+                            }
+                            
+                except Exception as fallback_error:
+                    logger.error(f"Fallback pagination failed: {fallback_error}")
+            
+            # Return empty result if all methods fail
+            return {
+                'ids': [[]],
+                'metadatas': [],
+                'embeddings': [],
+                'documents': []
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in get_faces_paginated: {e}")
+            return {
+                'ids': [[]],
+                'metadatas': [],
+                'embeddings': [],
+                'documents': []
+            }
+    
+    # ===== PERSON NAMING SYSTEM =====
+    
+    def assign_name_to_face(self, face_id: str, person_name: str) -> bool:
+        """
+        Assign a name to a specific face
+        
+        Args:
+            face_id: The face ID to name
+            person_name: The name to assign
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Get current face data
+            result = self.collection.get(ids=[face_id])
+            
+            if not result['ids']:
+                logger.error(f"Face {face_id} not found")
+                return False
+            
+            # Update metadata with person name
+            current_metadata = result['metadatas'][0]
+            current_metadata['person_name'] = person_name
+            current_metadata['named_date'] = datetime.now().isoformat()
+            
+            # Update the face in database
+            self.collection.update(
+                ids=[face_id],
+                metadatas=[current_metadata]
+            )
+            
+            logger.info(f"Assigned name '{person_name}' to face {face_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error assigning name to face {face_id}: {e}")
+            return False
+    
+    def remove_name_from_face(self, face_id: str) -> bool:
+        """
+        Remove name from a specific face
+        
+        Args:
+            face_id: The face ID to unname
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Get current face data
+            result = self.collection.get(ids=[face_id])
+            
+            if not result['ids']:
+                logger.error(f"Face {face_id} not found")
+                return False
+            
+            # Update metadata to remove person name
+            current_metadata = result['metadatas'][0]
+            current_metadata['person_name'] = None
+            if 'named_date' in current_metadata:
+                del current_metadata['named_date']
+            current_metadata['unnamed_date'] = datetime.now().isoformat()
+            
+            # Update the face in database
+            self.collection.update(
+                ids=[face_id],
+                metadatas=[current_metadata]
+            )
+            
+            logger.info(f"Removed name from face {face_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error removing name from face {face_id}: {e}")
+            return False
+    
+    def auto_assign_name_by_similarity(self, face_id: str, person_name: str, similarity_threshold: float = 0.8) -> int:
+        """
+        Automatically assign name to similar faces above threshold
+        
+        Args:
+            face_id: Source face ID that was manually named
+            person_name: Name to assign to similar faces
+            similarity_threshold: Minimum similarity to auto-assign (default 0.8 = 80%)
+            
+        Returns:
+            int: Number of faces auto-assigned
+        """
+        try:
+            # Get the source face embedding
+            source_result = self.collection.get(ids=[face_id], include=['embeddings'])
+            
+            if not source_result['embeddings']:
+                logger.error(f"Source face {face_id} not found or has no embedding")
+                return 0
+            
+            source_embedding = np.array(source_result['embeddings'][0])
+            
+            # Search for similar faces
+            similar_faces = self.search_similar_faces(
+                source_embedding,
+                n_results=1000,  # Large number to get all similar faces
+                min_similarity=similarity_threshold
+            )
+            
+            auto_assigned = 0
+            
+            for similar_face in similar_faces:
+                similar_face_id = similar_face.get('id')
+                current_name = similar_face.get('metadata', {}).get('person_name')
+                
+                # Skip if it's the source face or already has a name
+                if similar_face_id == face_id or current_name:
+                    continue
+                
+                # Auto-assign the name
+                if self.assign_name_to_face(similar_face_id, person_name):
+                    auto_assigned += 1
+                    logger.info(f"Auto-assigned '{person_name}' to similar face {similar_face_id} (similarity: {similar_face['similarity']:.3f})")
+            
+            return auto_assigned
+            
+        except Exception as e:
+            logger.error(f"Error in auto-assign for face {face_id}: {e}")
+            return 0
+    
+    def get_faces_by_name(self, person_name: str) -> List[Dict[str, Any]]:
+        """
+        Get all faces assigned to a specific person name
+        
+        Args:
+            person_name: Name to search for
+            
+        Returns:
+            List of face data dictionaries
+        """
+        try:
+            # Get all faces with this name
+            result = self.collection.get(
+                where={"person_name": person_name},
+                include=['metadatas', 'embeddings']
+            )
+            
+            faces = []
+            for i, face_id in enumerate(result['ids']):
+                face_data = {
+                    'id': face_id,
+                    'metadata': result['metadatas'][i],
+                    'embedding': result['embeddings'][i] if result['embeddings'] else None
+                }
+                faces.append(face_data)
+            
+            return faces
+            
+        except Exception as e:
+            logger.error(f"Error getting faces for name '{person_name}': {e}")
+            return []
+    
+    def get_all_person_names(self) -> List[str]:
+        """
+        Get all unique person names in the database
+        
+        Returns:
+            List of unique person names (excluding None)
+        """
+        try:
+            # Get all faces with person names
+            result = self.collection.get(
+                where={"person_name": {"$ne": None}},
+                include=['metadatas']
+            )
+            
+            # Extract unique names
+            names = set()
+            for metadata in result['metadatas']:
+                person_name = metadata.get('person_name')
+                if person_name:
+                    names.add(person_name)
+            
+            return sorted(list(names))
+            
+        except Exception as e:
+            logger.error(f"Error getting person names: {e}")
+            return []
+    
+    def get_name_statistics(self) -> Dict[str, Any]:
+        """
+        Get statistics about named faces
+        
+        Returns:
+            Dictionary with naming statistics
+        """
+        try:
+            # Get all faces
+            all_faces = self.collection.get(include=['metadatas'])
+            total_faces = len(all_faces['ids'])
+            
+            # Count named faces
+            named_faces = 0
+            name_counts = {}
+            
+            for metadata in all_faces['metadatas']:
+                person_name = metadata.get('person_name')
+                if person_name:
+                    named_faces += 1
+                    name_counts[person_name] = name_counts.get(person_name, 0) + 1
+            
+            return {
+                'total_faces': total_faces,
+                'named_faces': named_faces,
+                'unnamed_faces': total_faces - named_faces,
+                'unique_persons': len(name_counts),
+                'name_counts': name_counts,
+                'naming_percentage': (named_faces / total_faces * 100) if total_faces > 0 else 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting name statistics: {e}")
+            return {
+                'total_faces': 0,
+                'named_faces': 0,
+                'unnamed_faces': 0,
+                'unique_persons': 0,
+                'name_counts': {},
+                'naming_percentage': 0
+            }

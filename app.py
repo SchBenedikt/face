@@ -195,6 +195,10 @@ def face_search_page():
         # Display search results
         if st.session_state.search_results:
             display_search_results(st.session_state.search_results)
+    
+    # Modal for facial attribute analysis
+    if st.session_state.get('show_analysis_modal', False):
+        show_analysis_modal()
 
 def search_similar_faces(uploaded_file, max_results: int, similarity_threshold: float):
     """Perform enhanced face similarity search with ensemble processing"""
@@ -466,7 +470,7 @@ def analyze_facial_attributes(image_path, face_location):
         return {"error": f"Allgemeiner Fehler: {str(e)[:100]}..."}
 
 def show_facial_attributes_popup(image_path, face_location, face_id="unknown"):
-    """Display facial attributes analysis in a popup-style expander"""
+    """Display facial attributes analysis in a full-width dialog-style container"""
     
     with st.spinner("🧠 Analysiere Gesichtsattribute..."):
         analysis = analyze_facial_attributes(image_path, face_location)
@@ -479,105 +483,344 @@ def show_facial_attributes_popup(image_path, face_location, face_id="unknown"):
         st.error(f"❌ {analysis['error']}")
         return
     
-    # Create detailed popup display
-    with st.expander(f"🧬 Detaillierte Gesichtsanalyse - {face_id[:8]}...", expanded=True):
-        # Header with face preview (stacked vertically)
+    # Create a dialog-style container that takes full width
+    st.markdown("---")  # Visual separator
+    
+    # Create a container that uses the full width
+    with st.container():
+        # Header with larger title
+        st.markdown(f"# 🧬 **Detaillierte Gesichtsanalyse**")
+        st.markdown(f"**Face ID:** `{face_id}`")
+        st.markdown(f"**Datei:** `{Path(image_path).name}`")
+        
+        # Show face preview in a separate column layout
+        col_preview, col_spacer = st.columns([1, 3])
+        
+        with col_preview:
+            try:
+                full_image = load_and_preprocess_image(image_path)
+                if full_image is not None:
+                    if isinstance(face_location, str):
+                        coords = face_location.split(',')
+                        if len(coords) == 4:
+                            top, right, bottom, left = map(int, coords)
+                            face_crop = full_image[top:bottom, left:right]
+                            if face_crop.shape[0] > 0 and face_crop.shape[1] > 0:
+                                st.image(face_crop, caption="Analysiertes Gesicht", width=200)
+            except:
+                pass
+        
+        st.markdown("---")
+        
+        # Analysis results in a clean 2-column layout
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Age Analysis
+            if 'age' in analysis:
+                st.markdown("## 🎂 **Altersschätzung**")
+                age = analysis['age']
+                st.metric("Geschätztes Alter", f"{age} Jahre", help="Genauigkeit: ±4,65 Jahre")
+                
+                # Age category with visual indicator
+                if age < 18:
+                    st.info("👶 **Kategorie:** Jugendlich")
+                elif age < 30:
+                    st.info("👤 **Kategorie:** Junge(r) Erwachsene(r)")
+                elif age < 50:
+                    st.info("👨 **Kategorie:** Erwachsene(r)")
+                elif age < 70:
+                    st.info("👴 **Kategorie:** Ältere(r) Erwachsene(r)")
+                else:
+                    st.info("👵 **Kategorie:** Senior(in)")
+            
+            st.markdown("---")
+            
+            # Gender Analysis
+            if 'gender' in analysis:
+                st.markdown("## ⚧️ **Geschlechtsbestimmung**")
+                gender_data = analysis['gender']
+                if isinstance(gender_data, dict):
+                    male_prob = float(gender_data.get('Man', 0))
+                    female_prob = float(gender_data.get('Woman', 0))
+                    
+                    # Visual representation with progress bars
+                    st.write("**👨 Männlich**")
+                    st.progress(male_prob / 100.0)
+                    st.write(f"`{male_prob:.1f}%`")
+                    
+                    st.write("**👩 Weiblich**") 
+                    st.progress(female_prob / 100.0)
+                    st.write(f"`{female_prob:.1f}%`")
+                    
+                    # Highlight prediction
+                    dominant = "👨 Männlich" if male_prob > female_prob else "👩 Weiblich"
+                    confidence = max(male_prob, female_prob)
+                    st.success(f"**Vorhersage:** {dominant} (Konfidenz: {confidence:.1f}%)")
+                else:
+                    st.write(f"**Geschlecht:** {gender_data}")
+        
+        with col2:
+            # Emotion Analysis
+            if 'emotion' in analysis:
+                st.markdown("## 😊 **Emotionsanalyse**")
+                emotions = analysis['emotion']
+                if isinstance(emotions, dict):
+                    sorted_emotions = sorted(emotions.items(), key=lambda x: x[1], reverse=True)
+                    emotion_map = {
+                        'happy': ('😊 Glücklich', '#28a745'),
+                        'neutral': ('😐 Neutral', '#6c757d'),
+                        'sad': ('😢 Traurig', '#007bff'),
+                        'angry': ('😠 Wütend', '#dc3545'),
+                        'surprise': ('😲 Überrascht', '#ffc107'),
+                        'fear': ('😨 Ängstlich', '#fd7e14'),
+                        'disgust': ('🤢 Angeekelt', '#6f42c1')
+                    }
+                    
+                    # Show all emotions with visual bars
+                    for emotion, confidence in sorted_emotions:
+                        german_emotion, color = emotion_map.get(emotion, (emotion.title(), '#6c757d'))
+                        st.write(f"**{german_emotion}**")
+                        st.progress(float(confidence / 100.0))
+                        st.write(f"`{confidence:.1f}%`")
+                    
+                    # Dominant emotion highlight
+                    top_emotion, top_confidence = sorted_emotions[0]
+                    german_top, _ = emotion_map.get(top_emotion, (top_emotion.title(), '#6c757d'))
+                    st.success(f"**Dominante Emotion:** {german_top} ({top_confidence:.1f}%)")
+            
+            st.markdown("---")
+            
+            # Race/Ethnicity Analysis
+            if 'race' in analysis:
+                st.markdown("## 🌍 **Ethnische Herkunftsschätzung**")
+                race_data = analysis['race']
+                if isinstance(race_data, dict):
+                    sorted_races = sorted(race_data.items(), key=lambda x: x[1], reverse=True)
+                    race_map = {
+                        'asian': '🌏 Asiatisch',
+                        'white': '🌍 Kaukasisch', 
+                        'middle eastern': '🌍 Nahöstlich',
+                        'indian': '🌏 Indisch',
+                        'latino hispanic': '🌎 Lateinamerikanisch',
+                        'black': '🌍 Afrikanisch'
+                    }
+                    
+                    # Show top predictions with progress bars
+                    for race, confidence in sorted_races:
+                        german_race = race_map.get(race.lower(), race.title())
+                        st.write(f"**{german_race}**")
+                        st.progress(float(confidence / 100.0))
+                        st.write(f"`{confidence:.1f}%`")
+                    
+                    # Dominant prediction
+                    top_race, top_confidence = sorted_races[0]
+                    german_top_race = race_map.get(top_race.lower(), top_race.title())
+                    st.info(f"**Hauptvorhersage:** {german_top_race} ({top_confidence:.1f}%)")
+        
+        # Footer with important disclaimer
+        st.markdown("---")
+        st.markdown("### ⚠️ **Wichtiger Hinweis**")
+        st.warning("""
+        Diese Analyse basiert auf KI-Modellen und dient ausschließlich zu **Demonstrations- und Forschungszwecken**. 
+        
+        **Bitte beachten Sie:**
+        - Die Ergebnisse sind **Schätzungen** und können ungenau sein
+        - Diese Technologie sollte **nicht für Identifikation, Diskriminierung oder Entscheidungsfindung** verwendet werden
+        - Respektieren Sie die Privatsphäre und Rechte der abgebildeten Personen
+        - Die Genauigkeit kann je nach Bildqualität, Beleuchtung und Kamerawinkel variieren
+        """)
+        
+        # Close button
+        st.markdown("---")
+        if st.button("❌ Analyse schließen", key=f"close_analysis_{face_id}", type="primary"):
+            st.rerun()
+
+@st.dialog("🧬 Detaillierte Gesichtsanalyse", width="large")
+def show_analysis_modal():
+    """Display the analysis modal as a proper popup dialog"""
+    
+    # Make the dialog content even wider using custom CSS
+    st.markdown("""
+    <style>
+    .stDialog > div:first-child > div:first-child > div:first-child {
+        width: 95vw !important;
+        max-width: 1400px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Display the detailed analysis
+    if all(key in st.session_state for key in ['analysis_image_path', 'analysis_face_location', 'analysis_face_id']):
+        
+        # Get analysis data
+        with st.spinner("🧠 Analysiere Gesichtsattribute..."):
+            analysis = analyze_facial_attributes(
+                st.session_state.analysis_image_path,
+                st.session_state.analysis_face_location
+            )
+        
+        if analysis is None:
+            st.error("❌ Keine Analyse möglich")
+            return
+        
+        if "error" in analysis:
+            st.error(f"❌ {analysis['error']}")
+            return
+        
+        # Header info
+        st.markdown(f"**Face ID:** `{st.session_state.analysis_face_id}`")
+        st.markdown(f"**Datei:** `{Path(st.session_state.analysis_image_path).name}`")
+        
+        # Show face preview
         try:
-            full_image = load_and_preprocess_image(image_path)
+            full_image = load_and_preprocess_image(st.session_state.analysis_image_path)
             if full_image is not None:
+                face_location = st.session_state.analysis_face_location
                 if isinstance(face_location, str):
                     coords = face_location.split(',')
                     if len(coords) == 4:
                         top, right, bottom, left = map(int, coords)
                         face_crop = full_image[top:bottom, left:right]
                         if face_crop.shape[0] > 0 and face_crop.shape[1] > 0:
-                            st.image(face_crop, caption="Analysiertes Gesicht", width=150)
+                            col1, col2, col3 = st.columns([1, 2, 1])
+                            with col2:
+                                st.image(face_crop, caption="Analysiertes Gesicht", width=250)
         except:
             pass
-        st.markdown("### 📊 Analyseergebnisse")
-        st.write(f"**Datei:** {Path(image_path).name}")
-        st.write(f"**Face ID:** {face_id}")
+        
         st.markdown("---")
-        # Age Analysis
-        if 'age' in analysis:
-            st.markdown("### 🎂 **Alter**")
-            age = analysis['age']
-            st.metric("Geschätztes Alter", f"{age} Jahre")
-            if age < 18:
-                st.info("👶 Jugendlich")
-            elif age < 30:
-                st.info("👤 Junge(r) Erwachsene(r)")
-            elif age < 50:
-                st.info("👨 Erwachsene(r)")
-            elif age < 70:
-                st.info("👴 Ältere(r) Erwachsene(r)")
-            else:
-                st.info("👵 Senior(in)")
+        
+        # Analysis results in a clean 2-column layout
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Age Analysis
+            if 'age' in analysis:
+                st.markdown("## 🎂 **Alter**")
+                age = analysis['age']
+                st.metric("Geschätztes Alter", f"{age} Jahre", help="Genauigkeit: ±4,65 Jahre")
+                
+                # Age category with visual indicator
+                if age < 18:
+                    st.info("👶 **Kategorie:** Jugendlich")
+                elif age < 30:
+                    st.info("👤 **Kategorie:** Junge(r) Erwachsene(r)")
+                elif age < 50:
+                    st.info("👨 **Kategorie:** Erwachsene(r)")
+                elif age < 70:
+                    st.info("👴 **Kategorie:** Ältere(r) Erwachsene(r)")
+                else:
+                    st.info("👵 **Kategorie:** Senior(in)")
+            
+            st.markdown("---")
+            
+            # Gender Analysis
+            if 'gender' in analysis:
+                st.markdown("## ⚧️ **Geschlecht**")
+                gender_data = analysis['gender']
+                if isinstance(gender_data, dict):
+                    male_prob = float(gender_data.get('Man', 0))
+                    female_prob = float(gender_data.get('Woman', 0))
+                    
+                    # Visual representation with progress bars
+                    st.write("**👨 Männlich**")
+                    st.progress(male_prob / 100.0)
+                    st.write(f"`{male_prob:.1f}%`")
+                    
+                    st.write("**👩 Weiblich**") 
+                    st.progress(female_prob / 100.0)
+                    st.write(f"`{female_prob:.1f}%`")
+                    
+                    # Highlight prediction
+                    dominant = "👨 Männlich" if male_prob > female_prob else "👩 Weiblich"
+                    confidence = max(male_prob, female_prob)
+                    st.success(f"**Vorhersage:** {dominant} (Konfidenz: {confidence:.1f}%)")
+                else:
+                    st.write(f"**Geschlecht:** {gender_data}")
+        
+        with col2:
+            # Emotion Analysis
+            if 'emotion' in analysis:
+                st.markdown("## 😊 **Emotionen**")
+                emotions = analysis['emotion']
+                if isinstance(emotions, dict):
+                    sorted_emotions = sorted(emotions.items(), key=lambda x: x[1], reverse=True)
+                    emotion_map = {
+                        'happy': ('😊 Glücklich', '#28a745'),
+                        'neutral': ('😐 Neutral', '#6c757d'),
+                        'sad': ('😢 Traurig', '#007bff'),
+                        'angry': ('😠 Wütend', '#dc3545'),
+                        'surprise': ('😲 Überrascht', '#ffc107'),
+                        'fear': ('😨 Ängstlich', '#fd7e14'),
+                        'disgust': ('🤢 Angeekelt', '#6f42c1')
+                    }
+                    
+                    # Show top 5 emotions with visual bars
+                    for emotion, confidence in sorted_emotions[:5]:
+                        german_emotion, color = emotion_map.get(emotion, (emotion.title(), '#6c757d'))
+                        st.write(f"**{german_emotion}**")
+                        st.progress(float(confidence / 100.0))
+                        st.write(f"`{confidence:.1f}%`")
+                    
+                    # Dominant emotion highlight
+                    top_emotion, top_confidence = sorted_emotions[0]
+                    german_top, _ = emotion_map.get(top_emotion, (top_emotion.title(), '#6c757d'))
+                    st.success(f"**Dominante Emotion:** {german_top} ({top_confidence:.1f}%)")
+            
+            st.markdown("---")
+            
+            # Race/Ethnicity Analysis
+            if 'race' in analysis:
+                st.markdown("## 🌍 **Ethnische Herkunft**")
+                race_data = analysis['race']
+                if isinstance(race_data, dict):
+                    sorted_races = sorted(race_data.items(), key=lambda x: x[1], reverse=True)
+                    race_map = {
+                        'asian': '🌏 Asiatisch',
+                        'white': '🌍 Kaukasisch', 
+                        'middle eastern': '🌍 Nahöstlich',
+                        'indian': '🌏 Indisch',
+                        'latino hispanic': '🌎 Lateinamerikanisch',
+                        'black': '🌍 Afrikanisch'
+                    }
+                    
+                    # Show top predictions with progress bars
+                    for race, confidence in sorted_races:
+                        german_race = race_map.get(race.lower(), race.title())
+                        st.write(f"**{german_race}**")
+                        st.progress(float(confidence / 100.0))
+                        st.write(f"`{confidence:.1f}%`")
+                    
+                    # Dominant prediction
+                    top_race, top_confidence = sorted_races[0]
+                    german_top_race = race_map.get(top_race.lower(), top_race.title())
+                    st.info(f"**Hauptvorhersage:** {german_top_race} ({top_confidence:.1f}%)")
+        
+        # Footer with important disclaimer
         st.markdown("---")
-        # Gender Analysis
-        if 'gender' in analysis:
-            st.markdown("### ⚧️ **Geschlecht**")
-            gender_data = analysis['gender']
-            if isinstance(gender_data, dict):
-                male_prob = gender_data.get('Man', 0)
-                female_prob = gender_data.get('Woman', 0)
-                st.metric("👨 Männlich", f"{male_prob:.1f}%")
-                st.metric("👩 Weiblich", f"{female_prob:.1f}%")
-                dominant = "👨 Männlich" if male_prob > female_prob else "👩 Weiblich"
-                confidence = max(male_prob, female_prob)
-                st.success(f"**Vorhersage:** {dominant} (Konfidenz: {confidence:.1f}%)")
-            else:
-                st.write(f"**Geschlecht:** {gender_data}")
-        st.markdown("---")
-        # Emotion Analysis
-        if 'emotion' in analysis:
-            st.markdown("### 😊 **Emotionen**")
-            emotions = analysis['emotion']
-            if isinstance(emotions, dict):
-                sorted_emotions = sorted(emotions.items(), key=lambda x: x[1], reverse=True)
-                emotion_map = {
-                    'happy': ('😊 Glücklich', '🟢'),
-                    'neutral': ('😐 Neutral', '🔵'),
-                    'sad': ('😢 Traurig', '🔵'),
-                    'angry': ('😠 Wütend', '🔴'),
-                    'surprise': ('😲 Überrascht', '🟡'),
-                    'fear': ('😨 Ängstlich', '🟠'),
-                    'disgust': ('🤢 Angeekelt', '🟤')
-                }
-                # Show top 3 emotions
-                for i, (emotion, confidence) in enumerate(sorted_emotions[:3]):
-                    german_emotion, color = emotion_map.get(emotion, (emotion.title(), '⚪'))
-                    st.write(f"{color} **{german_emotion}**: {confidence:.1f}%")
-                    st.progress(confidence / 100.0)
-                # Dominant emotion highlight
-                top_emotion, top_confidence = sorted_emotions[0]
-                german_top, _ = emotion_map.get(top_emotion, (top_emotion.title(), '⚪'))
-                st.success(f"**Dominante Emotion:** {german_top} ({top_confidence:.1f}%)")
-        st.markdown("---")
-        # Race/Ethnicity Analysis
-        if 'race' in analysis:
-            st.markdown("### 🌍 **Ethnische Herkunft**")
-            race_data = analysis['race']
-            if isinstance(race_data, dict):
-                sorted_races = sorted(race_data.items(), key=lambda x: x[1], reverse=True)
-                race_map = {
-                    'asian': '🌏 Asiatisch',
-                    'white': '🌍 Kaukasisch',
-                    'middle eastern': '🌍 Nahöstlich',
-                    'indian': '🌏 Indisch',
-                    'latino hispanic': '🌎 Lateinamerikanisch',
-                    'black': '🌍 Afrikanisch'
-                }
-                # Show top 3 predictions
-                for i, (race, confidence) in enumerate(sorted_races[:3]):
-                    german_race = race_map.get(race.lower(), race.title())
-                    st.metric(german_race, f"{confidence:.1f}%")
-                # Dominant prediction
-                top_race, top_confidence = sorted_races[0]
-                german_top_race = race_map.get(top_race.lower(), top_race.title())
-                st.info(f"**Hauptvorhersage:** {german_top_race} ({top_confidence:.1f}%)")
-        st.markdown("---")
-        st.caption("⚠️ **Hinweis:** Diese Analyse basiert auf KI-Modellen und dient nur zu Demonstrationszwecken. Die Ergebnisse sind Schätzungen und sollten nicht für Identifikation oder Diskriminierung verwendet werden.")
+        st.warning("""
+        **⚠️ Wichtiger Hinweis:** Diese Analyse basiert auf KI-Modellen und dient ausschließlich zu **Demonstrations- und Forschungszwecken**. 
+        Die Ergebnisse sind Schätzungen und sollten nicht für Identifikation, Diskriminierung oder Entscheidungsfindung verwendet werden.
+        """)
+        
+        # Close button
+        if st.button("✅ Analyse schließen", key="close_popup_analysis", type="primary", use_container_width=True):
+            # Clear modal state
+            st.session_state.show_analysis_modal = False
+            if 'analysis_image_path' in st.session_state:
+                del st.session_state.analysis_image_path
+            if 'analysis_face_location' in st.session_state:
+                del st.session_state.analysis_face_location  
+            if 'analysis_face_id' in st.session_state:
+                del st.session_state.analysis_face_id
+            st.rerun()
+    
+    else:
+        st.error("❌ Analysedaten nicht verfügbar")
+        if st.button("❌ Schließen", key="close_error_modal"):
+            st.session_state.show_analysis_modal = False
+            st.rerun()
 
 def display_search_results(results: List[Dict[str, Any]]):
     """Display search results"""
@@ -680,7 +923,12 @@ def display_search_results(results: List[Dict[str, Any]]):
                                         show_full_image_with_face_box(image_path, location)
                                     if st.button("🧬 Analyse", key=f"analyze_face_{i}", help="Detaillierte Gesichtsanalyse: Alter, Geschlecht, Emotionen, Ethnie"):
                                         face_id = face_data.get('id', f"face_{i}")
-                                        show_facial_attributes_popup(image_path, location, face_id)
+                                        # Use session state to trigger modal display
+                                        st.session_state.show_analysis_modal = True
+                                        st.session_state.analysis_image_path = image_path
+                                        st.session_state.analysis_face_location = location
+                                        st.session_state.analysis_face_id = face_id
+                                        st.rerun()
                                 else:
                                     # Fallback: show full image
                                     st.image(image, use_container_width=True)
@@ -725,7 +973,12 @@ def display_search_results(results: List[Dict[str, Any]]):
                                         # Add facial attribute analysis button
                                         if st.button("🧬 Analyse", key=f"analyze_tuple_{i}", help="Detaillierte Gesichtsanalyse: Alter, Geschlecht, Emotionen, Ethnie"):
                                             face_id = face_data.get('id', f"face_{i}")
-                                            show_facial_attributes_popup(image_path, (top, right, bottom, left), face_id)
+                                            # Use session state to trigger modal display
+                                            st.session_state.show_analysis_modal = True
+                                            st.session_state.analysis_image_path = image_path
+                                            st.session_state.analysis_face_location = (top, right, bottom, left)
+                                            st.session_state.analysis_face_id = face_id
+                                            st.rerun()
                                         
                                 except:
                                     # Fallback: show full image
@@ -908,7 +1161,8 @@ def process_with_fast_engine(directory_path, update_existing=False):
         
         # Callback functions for progress updates
         def update_progress(percent):
-            progress_bar.progress(percent)
+            # Ensure percent is a regular Python int/float, not numpy type
+            progress_bar.progress(float(percent))
             progress_text.text(f"Processing: {percent}%")
         
         def update_status(message):
@@ -2262,6 +2516,10 @@ def face_gallery_page():
     except Exception as e:
         st.error(f"Fehler beim Laden der Face Gallery: {e}")
         logger.error(f"Face gallery error: {e}")
+    
+    # Modal for facial attribute analysis in gallery
+    if st.session_state.get('show_analysis_modal', False):
+        show_analysis_modal()
 
 def display_faces_grouped_by_image(metadatas, show_metadata=True):
     """Display faces grouped by source image"""
@@ -2431,7 +2689,12 @@ def display_face_from_metadata(metadata, show_metadata=True, compact=False):
                         with btn_col2:
                             # Add facial attribute analysis button
                             if st.button("🧬 Analyse", key=f"gallery_analyze_{face_id}", help="Detaillierte Gesichtsanalyse: Alter, Geschlecht, Emotionen, Ethnie"):
-                                show_facial_attributes_popup(Path(image_path), location_str, face_id)
+                                # Use session state to trigger modal display
+                                st.session_state.show_analysis_modal = True
+                                st.session_state.analysis_image_path = Path(image_path)
+                                st.session_state.analysis_face_location = location_str
+                                st.session_state.analysis_face_id = face_id
+                                st.rerun()
                         
                         with btn_col3:
                             # Add delete button with enhanced confirmation
