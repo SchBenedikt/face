@@ -80,6 +80,7 @@ def main():
                 "🧠 Batch Face Processing",
                 "🌐 Web Scraping",
                 "👥 Face Gallery",
+                "🏷️ Name Gallery",
                 "🔧 Duplicate Manager",
                 "📊 Database Statistics",
                 "⚙️ Settings"
@@ -109,6 +110,8 @@ def main():
         web_scraping_page()
     elif page == "👥 Face Gallery":
         face_gallery_page()
+    elif page == "🏷️ Name Gallery":
+        name_gallery_page()
     elif page == "🔧 Duplicate Manager":
         duplicate_manager_page()
     elif page == "📊 Database Statistics":
@@ -199,6 +202,10 @@ def face_search_page():
     # Modal for facial attribute analysis
     if st.session_state.get('show_analysis_modal', False):
         show_analysis_modal()
+    
+    # Modal for name assignment
+    if st.session_state.get('show_name_assignment_modal', False):
+        show_name_assignment_modal()
 
 def search_similar_faces(uploaded_file, max_results: int, similarity_threshold: float):
     """Perform enhanced face similarity search with ensemble processing"""
@@ -636,6 +643,127 @@ def show_facial_attributes_popup(image_path, face_location, face_id="unknown"):
         if st.button("❌ Analyse schließen", key=f"close_analysis_{face_id}", type="primary"):
             st.rerun()
 
+@st.dialog("🏷️ Person Namen zuweisen", width="large")
+def show_name_assignment_modal():
+    """Display the name assignment modal"""
+    
+    if not all(key in st.session_state for key in ['name_assign_face_id', 'name_assign_image_path', 'name_assign_face_location']):
+        st.error("Fehlende Gesichtsdaten für Namenszuweisung")
+        return
+    
+    face_id = st.session_state.name_assign_face_id
+    image_path = st.session_state.name_assign_image_path
+    face_location = st.session_state.name_assign_face_location
+    
+    st.markdown(f"**Face ID:** `{face_id}`")
+    st.markdown(f"**Datei:** `{Path(image_path).name}`")
+    
+    # Show face preview
+    try:
+        full_image = load_and_preprocess_image(image_path)
+        if full_image is not None:
+            if isinstance(face_location, str):
+                coords = face_location.split(',')
+                if len(coords) == 4:
+                    top, right, bottom, left = map(int, coords)
+                    face_crop = full_image[top:bottom, left:right]
+            elif isinstance(face_location, (tuple, list)) and len(face_location) == 4:
+                top, right, bottom, left = face_location
+                face_crop = full_image[top:bottom, left:right]
+            else:
+                face_crop = None
+            
+            if face_crop is not None and face_crop.shape[0] > 0 and face_crop.shape[1] > 0:
+                col1, col2, col3 = st.columns([1, 2, 1])
+                with col2:
+                    st.image(face_crop, caption="Gesicht für Namenszuweisung", width=200)
+    except Exception as e:
+        st.warning(f"Konnte Gesicht nicht anzeigen: {e}")
+    
+    st.markdown("---")
+    
+    # Check if face already has a name
+    existing_face = st.session_state.vector_store.get_face_by_id(face_id)
+    current_name = ""
+    current_first = ""
+    current_last = ""
+    
+    if existing_face and existing_face.get('metadata', {}).get('person_id'):
+        current_first = existing_face['metadata'].get('first_name', '')
+        current_last = existing_face['metadata'].get('last_name', '')
+        current_name = existing_face['metadata'].get('full_name', '')
+        
+        st.info(f"✅ **Aktueller Name:** {current_name}")
+    
+    # Name input form
+    st.subheader("📝 Person Namen eingeben")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        first_name = st.text_input("Vorname:", value=current_first, key="name_first")
+    with col2:
+        last_name = st.text_input("Nachname:", value=current_last, key="name_last")
+    
+    # Preview full name
+    if first_name or last_name:
+        full_name = f"{first_name.strip()} {last_name.strip()}".strip()
+        st.write(f"**Vollständiger Name:** {full_name}")
+    
+    # Action buttons
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("💾 Namen speichern", type="primary"):
+            if first_name.strip() or last_name.strip():
+                # Assign name
+                person_id = st.session_state.vector_store.assign_person_name(
+                    face_id, first_name.strip(), last_name.strip()
+                )
+                
+                if person_id:
+                    st.success(f"✅ Name erfolgreich zugewiesen! Person ID: `{person_id}`")
+                    
+                    # Auto-assign to similar faces if enabled
+                    auto_assign_count = st.session_state.vector_store.auto_assign_similar_faces(
+                        face_id, similarity_threshold=0.8
+                    )
+                    
+                    if auto_assign_count > 0:
+                        st.success(f"🔄 {auto_assign_count} ähnliche Gesichter (>80%) automatisch zugewiesen!")
+                    
+                    # Clear session state
+                    for key in ['name_assign_face_id', 'name_assign_image_path', 'name_assign_face_location']:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                    
+                    st.rerun()
+                else:
+                    st.error("❌ Fehler beim Zuweisen des Namens")
+            else:
+                st.warning("⚠️ Bitte mindestens Vor- oder Nachname eingeben")
+    
+    with col2:
+        if current_name and st.button("🗑️ Namen entfernen"):
+            if st.session_state.vector_store.remove_person_name(face_id):
+                st.success("✅ Name erfolgreich entfernt!")
+                
+                # Clear session state
+                for key in ['name_assign_face_id', 'name_assign_image_path', 'name_assign_face_location']:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                
+                st.rerun()
+            else:
+                st.error("❌ Fehler beim Entfernen des Namens")
+    
+    with col3:
+        if st.button("❌ Schließen"):
+            # Clear session state
+            for key in ['name_assign_face_id', 'name_assign_image_path', 'name_assign_face_location']:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
+
 @st.dialog("🧬 Detaillierte Gesichtsanalyse", width="large")
 def show_analysis_modal():
     """Display the analysis modal as a proper popup dialog"""
@@ -917,6 +1045,12 @@ def display_search_results(results: List[Dict[str, Any]]):
                                     
                                     st.write(f"**📁 {image_path.name}**")
                                     
+                                    # Display person name if assigned
+                                    face_metadata = face_data.get('metadata', {})
+                                    person_name = face_metadata.get('full_name', '')
+                                    if person_name:
+                                        st.success(f"👤 **{person_name}**")
+                                    
                                     # Action buttons in columns
                                     # Action buttons (stacked vertically to avoid nested columns)
                                     if st.button("🖼️ Ganzes Bild", key=f"full_img_{i}", help="Ganzes Bild mit markiertem Gesicht anzeigen"):
@@ -928,6 +1062,14 @@ def display_search_results(results: List[Dict[str, Any]]):
                                         st.session_state.analysis_image_path = image_path
                                         st.session_state.analysis_face_location = location
                                         st.session_state.analysis_face_id = face_id
+                                        st.rerun()
+                                    if st.button("🏷️ Namen zuweisen", key=f"assign_name_{i}", help="Person einen Namen zuweisen"):
+                                        face_id = face_data.get('id', f"face_{i}")
+                                        # Use session state to trigger name assignment modal
+                                        st.session_state.show_name_assignment_modal = True
+                                        st.session_state.name_assign_face_id = face_id
+                                        st.session_state.name_assign_image_path = image_path
+                                        st.session_state.name_assign_face_location = location
                                         st.rerun()
                                 else:
                                     # Fallback: show full image
@@ -961,8 +1103,14 @@ def display_search_results(results: List[Dict[str, Any]]):
                                     st.write(f"**📁 {image_path.name}**")
                                     st.caption(f"🔒 Vertrauen: {confidence_score:.1f}%")
                                     
+                                    # Display person name if assigned
+                                    face_metadata = face_data.get('metadata', {})
+                                    person_name = face_metadata.get('full_name', '')
+                                    if person_name:
+                                        st.success(f"👤 **{person_name}**")
+                                    
                                     # Action buttons in columns
-                                    btn_col1, btn_col2 = st.columns(2)
+                                    btn_col1, btn_col2, btn_col3 = st.columns(3)
                                     
                                     with btn_col1:
                                         # Add full image view button
@@ -978,6 +1126,17 @@ def display_search_results(results: List[Dict[str, Any]]):
                                             st.session_state.analysis_image_path = image_path
                                             st.session_state.analysis_face_location = (top, right, bottom, left)
                                             st.session_state.analysis_face_id = face_id
+                                            st.rerun()
+                                    
+                                    with btn_col3:
+                                        # Add name assignment button
+                                        if st.button("🏷️ Namen", key=f"assign_name_tuple_{i}", help="Person einen Namen zuweisen"):
+                                            face_id = face_data.get('id', f"face_{i}")
+                                            # Use session state to trigger name assignment modal
+                                            st.session_state.show_name_assignment_modal = True
+                                            st.session_state.name_assign_face_id = face_id
+                                            st.session_state.name_assign_image_path = image_path
+                                            st.session_state.name_assign_face_location = (top, right, bottom, left)
                                             st.rerun()
                                         
                                 except:
@@ -2520,6 +2679,10 @@ def face_gallery_page():
     # Modal for facial attribute analysis in gallery
     if st.session_state.get('show_analysis_modal', False):
         show_analysis_modal()
+    
+    # Modal for name assignment in gallery
+    if st.session_state.get('show_name_assignment_modal', False):
+        show_name_assignment_modal()
 
 def display_faces_grouped_by_image(metadatas, show_metadata=True):
     """Display faces grouped by source image"""
@@ -2679,7 +2842,7 @@ def display_face_from_metadata(metadata, show_metadata=True, compact=False):
                         st.image(thumbnail, use_container_width=True)
                         
                         # Action buttons in columns
-                        btn_col1, btn_col2, btn_col3 = st.columns(3)
+                        btn_col1, btn_col2, btn_col3, btn_col4 = st.columns(4)
                         
                         with btn_col1:
                             # Add full image view button
@@ -2697,6 +2860,16 @@ def display_face_from_metadata(metadata, show_metadata=True, compact=False):
                                 st.rerun()
                         
                         with btn_col3:
+                            # Add name assignment button
+                            if st.button("🏷️ Namen", key=f"gallery_assign_name_{face_id}", help="Person einen Namen zuweisen"):
+                                # Use session state to trigger name assignment modal
+                                st.session_state.show_name_assignment_modal = True
+                                st.session_state.name_assign_face_id = face_id
+                                st.session_state.name_assign_image_path = Path(image_path)
+                                st.session_state.name_assign_face_location = location_str
+                                st.rerun()
+                        
+                        with btn_col4:
                             # Add delete button with enhanced confirmation
                             if not compact:  # Only show delete in full view, not compact
                                 if st.button("🗑️ Löschen", key=f"gallery_delete_{face_id}", help="Dieses falsch erkannte Gesicht löschen", type="secondary"):
@@ -2725,8 +2898,15 @@ def display_face_from_metadata(metadata, show_metadata=True, compact=False):
                                         st.rerun()
                         
                         if show_metadata:
+                            # Show person name if assigned
+                            person_name = metadata.get('full_name', '')
+                            if person_name:
+                                st.success(f"👤 **{person_name}**")
+                            
                             if compact:
                                 st.caption(f"🆔 {face_id[:8]}...")
+                                if person_name:
+                                    st.caption(f"👤 {person_name}")
                             else:
                                 st.caption(f"🆔 Face ID: {face_id}")
                                 st.caption(f"📁 {Path(image_path).name}")
@@ -3205,6 +3385,149 @@ def fast_process_all_images():
     except Exception as e:
         st.error(f"❌ Error during fast processing: {e}")
         current_status.text("❌ Fast processing failed!")
+
+def name_gallery_page():
+    """Name Gallery page to view and manage person names"""
+    
+    st.header("🏷️ Name Gallery")
+    st.markdown("Verwalten Sie alle Personen-Namen in der Datenbank")
+    
+    try:
+        # Get all persons from database
+        persons = st.session_state.vector_store.get_all_persons()
+        
+        if not persons:
+            st.info("Noch keine Namen vergeben. Gehen Sie zu Face Search oder Face Gallery, um Namen zuzuweisen.")
+            return
+        
+        # Stats
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("👤 Anzahl Personen", len(persons))
+        with col2:
+            total_assigned_faces = sum(p['face_count'] for p in persons)
+            st.metric("🏷️ Benannte Gesichter", total_assigned_faces)
+        with col3:
+            avg_faces = total_assigned_faces / len(persons) if persons else 0
+            st.metric("📊 Ø Gesichter/Person", f"{avg_faces:.1f}")
+        
+        st.markdown("---")
+        
+        # Search functionality
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            name_search = st.text_input("🔍 Suche nach Namen:", 
+                                      placeholder="Vor- oder Nachname eingeben...")
+        with col2:
+            sort_option = st.selectbox("Sortieren nach:", 
+                                     ["Name (A-Z)", "Name (Z-A)", "Gesichter (↑)", "Gesichter (↓)"])
+        
+        # Filter persons based on search
+        filtered_persons = persons
+        if name_search.strip():
+            search_term = name_search.lower()
+            filtered_persons = [p for p in persons 
+                              if search_term in p['full_name'].lower()]
+        
+        # Sort persons
+        if sort_option == "Name (A-Z)":
+            filtered_persons.sort(key=lambda x: x['full_name'])
+        elif sort_option == "Name (Z-A)":
+            filtered_persons.sort(key=lambda x: x['full_name'], reverse=True)
+        elif sort_option == "Gesichter (↑)":
+            filtered_persons.sort(key=lambda x: x['face_count'])
+        elif sort_option == "Gesichter (↓)":
+            filtered_persons.sort(key=lambda x: x['face_count'], reverse=True)
+        
+        if not filtered_persons:
+            st.warning(f"Keine Personen gefunden für '{name_search}'")
+            return
+        
+        st.markdown(f"**{len(filtered_persons)} Personen gefunden:**")
+        
+        # Display persons
+        for person in filtered_persons:
+            with st.expander(f"👤 **{person['full_name']}** ({person['face_count']} Gesichter)", expanded=False):
+                col1, col2, col3 = st.columns([2, 2, 1])
+                
+                with col1:
+                    st.write(f"**Vorname:** {person['first_name']}")
+                    st.write(f"**Nachname:** {person['last_name']}")
+                    st.write(f"**Person ID:** `{person['person_id']}`")
+                
+                with col2:
+                    st.write(f"**Anzahl Gesichter:** {person['face_count']}")
+                    if st.button(f"🔍 Alle Gesichter anzeigen", key=f"show_faces_{person['person_id']}"):
+                        st.session_state.selected_person = person['person_id']
+                        st.rerun()
+                
+                with col3:
+                    if st.button("🗑️ Namen löschen", key=f"remove_person_{person['person_id']}",
+                                help="Entfernt den Namen von ALLEN Gesichtern dieser Person"):
+                        if st.session_state.get(f'confirm_remove_{person["person_id"]}', False):
+                            # Remove names from all faces of this person
+                            removed_count = 0
+                            for face_id in person['face_ids']:
+                                if st.session_state.vector_store.remove_person_name(face_id):
+                                    removed_count += 1
+                            
+                            st.success(f"✅ Name von {removed_count} Gesichtern entfernt!")
+                            st.session_state[f'confirm_remove_{person["person_id"]}'] = False
+                            st.rerun()
+                        else:
+                            st.session_state[f'confirm_remove_{person["person_id"]}'] = True
+                            st.warning("⚠️ Nochmals klicken zum Bestätigen!")
+                            st.rerun()
+        
+        # Display faces for selected person
+        if st.session_state.get('selected_person'):
+            person_id = st.session_state.selected_person
+            person_faces = st.session_state.vector_store.get_faces_by_person_id(person_id)
+            
+            if person_faces:
+                st.markdown("---")
+                selected_person_name = next((p['full_name'] for p in persons if p['person_id'] == person_id), "Unbekannt")
+                st.subheader(f"🔍 Alle Gesichter von **{selected_person_name}**")
+                
+                # Display faces in grid
+                cols = st.columns(4)
+                for idx, face in enumerate(person_faces):
+                    with cols[idx % 4]:
+                        metadata = face['metadata']
+                        image_path = metadata.get('image_path', '')
+                        face_location = metadata.get('face_location', '')
+                        
+                        try:
+                            # Load and display face thumbnail
+                            full_image = load_and_preprocess_image(image_path)
+                            if full_image is not None and face_location:
+                                coords = face_location.split(',')
+                                if len(coords) == 4:
+                                    top, right, bottom, left = map(int, coords)
+                                    face_crop = full_image[top:bottom, left:right]
+                                    if face_crop.shape[0] > 0 and face_crop.shape[1] > 0:
+                                        st.image(face_crop, caption=f"Face {face['face_id'][:8]}...", width=150)
+                        except Exception as e:
+                            st.error(f"Fehler beim Laden: {e}")
+                        
+                        # Face info
+                        st.text(f"ID: {face['face_id'][:12]}...")
+                        st.text(f"Bild: {Path(image_path).name}")
+                        
+                        # Remove individual face name button
+                        if st.button("🗑️ Name entfernen", key=f"remove_face_{face['face_id']}"):
+                            if st.session_state.vector_store.remove_person_name(face['face_id']):
+                                st.success("✅ Name entfernt!")
+                                st.rerun()
+                            else:
+                                st.error("❌ Fehler beim Entfernen")
+                
+                if st.button("❌ Ansicht schließen"):
+                    del st.session_state.selected_person
+                    st.rerun()
+    
+    except Exception as e:
+        st.error(f"Fehler beim Laden der Name Gallery: {e}")
 
 if __name__ == "__main__":
     main()

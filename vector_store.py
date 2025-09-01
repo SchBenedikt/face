@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import logging
 import json
 from datetime import datetime
+import uuid
 
 from config import VECTOR_DB_PATH, COLLECTION_NAME, SIMILARITY_THRESHOLD
 
@@ -641,3 +642,227 @@ class FaceVectorStore:
                 'embeddings': [],
                 'documents': []
             }
+    
+    # Person Name Assignment Functions
+    
+    def assign_person_name(self, face_id: str, first_name: str, last_name: str, person_id: str = None) -> str:
+        """
+        Assign a person name to a face
+        
+        Args:
+            face_id: Face identifier
+            first_name: Person's first name
+            last_name: Person's last name 
+            person_id: Unique person ID (if None, creates new one)
+            
+        Returns:
+            person_id if successful, None if failed
+        """
+        try:
+            # Generate person_id if not provided
+            if not person_id:
+                person_id = str(uuid.uuid4())
+            
+            # Update face metadata with person info
+            person_metadata = {
+                'person_id': person_id,
+                'first_name': first_name.strip() if first_name else "",
+                'last_name': last_name.strip() if last_name else "",
+                'full_name': f"{first_name.strip()} {last_name.strip()}".strip(),
+                'name_assigned_at': datetime.now().isoformat()
+            }
+            
+            success = self.update_face_metadata(face_id, person_metadata)
+            return person_id if success else None
+            
+        except Exception as e:
+            logger.error(f"Error assigning person name to {face_id}: {e}")
+            return None
+    
+    def remove_person_name(self, face_id: str) -> bool:
+        """
+        Remove person name assignment from a face
+        
+        Args:
+            face_id: Face identifier
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Remove person-related metadata
+            removal_metadata = {
+                'person_id': None,
+                'first_name': None,
+                'last_name': None,
+                'full_name': None,
+                'name_assigned_at': None,
+                'name_removed_at': datetime.now().isoformat()
+            }
+            
+            return self.update_face_metadata(face_id, removal_metadata)
+            
+        except Exception as e:
+            logger.error(f"Error removing person name from {face_id}: {e}")
+            return False
+    
+    def get_faces_by_person_id(self, person_id: str) -> List[Dict[str, Any]]:
+        """
+        Get all faces assigned to a specific person
+        
+        Args:
+            person_id: Person identifier
+            
+        Returns:
+            List of face dictionaries
+        """
+        try:
+            # Query faces with this person_id
+            results = self.collection.get(
+                include=['metadatas', 'embeddings'],
+                where={"person_id": person_id}
+            )
+            
+            faces = []
+            if results and results.get('metadatas'):
+                for i, metadata in enumerate(results['metadatas']):
+                    faces.append({
+                        'face_id': results['ids'][i],
+                        'metadata': metadata,
+                        'embedding': results['embeddings'][i] if results.get('embeddings') else None
+                    })
+                    
+            return faces
+            
+        except Exception as e:
+            logger.error(f"Error getting faces for person {person_id}: {e}")
+            return []
+    
+    def get_all_persons(self) -> List[Dict[str, Any]]:
+        """
+        Get all unique persons in the database
+        
+        Returns:
+            List of person dictionaries with names and face counts
+        """
+        try:
+            # Get all faces with person info
+            results = self.collection.get(
+                include=['metadatas'],
+                where={"person_id": {"$ne": None}}
+            )
+            
+            persons = {}
+            if results and results.get('metadatas'):
+                for i, metadata in enumerate(results['metadatas']):
+                    person_id = metadata.get('person_id')
+                    if person_id:
+                        if person_id not in persons:
+                            persons[person_id] = {
+                                'person_id': person_id,
+                                'first_name': metadata.get('first_name', ''),
+                                'last_name': metadata.get('last_name', ''),
+                                'full_name': metadata.get('full_name', ''),
+                                'face_count': 0,
+                                'face_ids': []
+                            }
+                        persons[person_id]['face_count'] += 1
+                        persons[person_id]['face_ids'].append(results['ids'][i])
+            
+            return list(persons.values())
+            
+        except Exception as e:
+            logger.error(f"Error getting all persons: {e}")
+            return []
+    
+    def auto_assign_similar_faces(self, face_id: str, similarity_threshold: float = 0.8) -> int:
+        """
+        Automatically assign person name to faces with high similarity (>threshold)
+        
+        Args:
+            face_id: Reference face with assigned person
+            similarity_threshold: Minimum similarity to auto-assign (default 0.8 = 80%)
+            
+        Returns:
+            Number of faces that were auto-assigned
+        """
+        try:
+            # Get the reference face
+            reference_face = self.get_face_by_id(face_id)
+            if not reference_face or not reference_face['metadata'].get('person_id'):
+                return 0
+            
+            person_id = reference_face['metadata']['person_id']
+            first_name = reference_face['metadata'].get('first_name', '')
+            last_name = reference_face['metadata'].get('last_name', '')
+            
+            # Find similar faces
+            similar_faces = self.find_similar_faces(
+                reference_face['embedding'],
+                n_results=1000,  # Check many faces
+                min_similarity=similarity_threshold
+            )
+            
+            assigned_count = 0
+            for similar_face in similar_faces:
+                # Skip if already has person assigned or is the reference face
+                if (similar_face['face_id'] != face_id and 
+                    not similar_face['metadata'].get('person_id')):
+                    
+                    # Auto-assign the same person
+                    success = self.assign_person_name(
+                        similar_face['face_id'],
+                        first_name,
+                        last_name,
+                        person_id
+                    )
+                    if success:
+                        assigned_count += 1
+                        
+            return assigned_count
+            
+        except Exception as e:
+            logger.error(f"Error auto-assigning similar faces for {face_id}: {e}")
+            return 0
+    
+    def search_faces_by_name(self, search_term: str) -> List[Dict[str, Any]]:
+        """
+        Search faces by person name
+        
+        Args:
+            search_term: Name to search for (first name, last name, or full name)
+            
+        Returns:
+            List of matching faces
+        """
+        try:
+            search_term = search_term.lower().strip()
+            
+            # Get all faces with person names
+            results = self.collection.get(
+                include=['metadatas', 'embeddings'],
+                where={"person_id": {"$ne": None}}
+            )
+            
+            matching_faces = []
+            if results and results.get('metadatas'):
+                for i, metadata in enumerate(results['metadatas']):
+                    first_name = (metadata.get('first_name') or '').lower()
+                    last_name = (metadata.get('last_name') or '').lower()
+                    full_name = (metadata.get('full_name') or '').lower()
+                    
+                    if (search_term in first_name or 
+                        search_term in last_name or 
+                        search_term in full_name):
+                        
+                        matching_faces.append({
+                            'face_id': results['ids'][i],
+                            'metadata': metadata,
+                            'embedding': results['embeddings'][i] if results.get('embeddings') else None
+                        })
+            
+            return matching_faces
+            
+        except Exception as e:
+            logger.error(f"Error searching faces by name '{search_term}': {e}")
+            return []
