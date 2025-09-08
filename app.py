@@ -398,8 +398,26 @@ def show_full_image_with_face_box(image_path, face_location):
 def load_image_metadata(image_path):
     """Load metadata for a specific image from various sources"""
     try:
-        image_path = Path(image_path)
+        image_path = Path(image_path).resolve()  # Resolve to absolute path
         metadata = {}
+        
+        # Security: Ensure the path is within allowed directories
+        allowed_dirs = [
+            Path("data").resolve(),
+            Path("static").resolve(), 
+            Path(".").resolve(),  # Current directory
+            # Add more allowed directories as needed
+        ]
+        
+        # Check if image path is within allowed directories
+        path_allowed = any(
+            str(image_path).startswith(str(allowed_dir)) 
+            for allowed_dir in allowed_dirs
+        )
+        
+        if not path_allowed:
+            logger.warning(f"Image path outside allowed directories: {image_path}")
+            # Still allow, but with limited metadata
         
         # Try to load from image_metadata.json in different locations
         possible_metadata_paths = [
@@ -414,6 +432,11 @@ def load_image_metadata(image_path):
                 try:
                     with open(metadata_path, 'r', encoding='utf-8') as f:
                         all_metadata = json.load(f)
+                    
+                    # Validate JSON structure
+                    if not isinstance(all_metadata, dict):
+                        logger.warning(f"Invalid metadata structure in {metadata_path}")
+                        continue
                     
                     # Look for metadata by exact path match or filename
                     str_path = str(image_path)
@@ -430,19 +453,40 @@ def load_image_metadata(image_path):
                     if metadata:
                         break
                         
-                except Exception as e:
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
                     logger.error(f"Error reading metadata from {metadata_path}: {e}")
                     continue
+                except Exception as e:
+                    logger.error(f"Unexpected error reading metadata from {metadata_path}: {e}")
+                    continue
         
-        # Add file system metadata if available
-        if image_path.exists():
-            stat_info = image_path.stat()
-            metadata.update({
-                'file_size': metadata.get('file_size', stat_info.st_size),
-                'file_path': str(image_path),
-                'file_name': image_path.name,
-                'last_modified': datetime.fromtimestamp(stat_info.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-            })
+        # Validate and sanitize metadata
+        if isinstance(metadata, dict):
+            # Ensure required fields are strings and safe
+            for field in ['source_url', 'website', 'download_date']:
+                if field in metadata:
+                    metadata[field] = str(metadata[field])[:1000]  # Limit length
+            
+            # Ensure file_size is numeric
+            if 'file_size' in metadata:
+                try:
+                    metadata['file_size'] = int(metadata['file_size'])
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid file_size in metadata: {metadata.get('file_size')}")
+                    del metadata['file_size']
+        
+        # Add file system metadata if available and path is allowed
+        if image_path.exists() and path_allowed:
+            try:
+                stat_info = image_path.stat()
+                metadata.update({
+                    'file_size': metadata.get('file_size', stat_info.st_size),
+                    'file_path': str(image_path),
+                    'file_name': image_path.name,
+                    'last_modified': datetime.fromtimestamp(stat_info.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                })
+            except OSError as e:
+                logger.warning(f"Could not read file stats for {image_path}: {e}")
         
         return metadata
         
@@ -484,37 +528,55 @@ def show_image_metadata_modal():
     st.markdown(f"**Datei:** `{image_path.name}`")
     
     # Load image metadata
-    metadata = load_image_metadata(image_path)
+    with st.spinner("📋 Lade Bild-Metadaten..."):
+        metadata = load_image_metadata(image_path)
+    
+    # Check if image file exists
+    if not image_path.exists():
+        st.error(f"❌ Bilddatei nicht gefunden: {image_path}")
+        st.info("Das Bild wurde möglicherweise verschoben oder gelöscht.")
+        # Still show available metadata
     
     # Display the image
     try:
-        full_image = load_and_preprocess_image(image_path)
-        if full_image is not None:
-            # Optional: Add face box if face location is provided
-            if 'image_metadata_face_location' in st.session_state:
-                face_location = st.session_state.image_metadata_face_location
-                if isinstance(face_location, str):
-                    coords = face_location.split(',')
-                    if len(coords) == 4:
-                        top, right, bottom, left = map(int, coords)
-                        # Draw bounding box
-                        image_with_box = full_image.copy()
-                        cv2.rectangle(image_with_box, (left, top), (right, bottom), (0, 255, 0), 3)
-                        st.image(image_with_box, caption=f"Vollbild mit markiertem Gesicht - {image_path.name}", use_container_width=True)
+        if image_path.exists():
+            full_image = load_and_preprocess_image(image_path)
+            if full_image is not None:
+                # Optional: Add face box if face location is provided
+                if 'image_metadata_face_location' in st.session_state:
+                    face_location = st.session_state.image_metadata_face_location
+                    if isinstance(face_location, str):
+                        coords = face_location.split(',')
+                        if len(coords) == 4:
+                            try:
+                                top, right, bottom, left = map(int, coords)
+                                # Draw bounding box
+                                image_with_box = full_image.copy()
+                                cv2.rectangle(image_with_box, (left, top), (right, bottom), (0, 255, 0), 3)
+                                st.image(image_with_box, caption=f"Vollbild mit markiertem Gesicht - {image_path.name}", use_container_width=True)
+                            except (ValueError, IndexError) as e:
+                                logger.warning(f"Invalid face coordinates: {face_location}")
+                                st.image(full_image, caption=f"Vollbild - {image_path.name}", use_container_width=True)
+                        else:
+                            st.image(full_image, caption=f"Vollbild - {image_path.name}", use_container_width=True)
+                    elif isinstance(face_location, (tuple, list)) and len(face_location) == 4:
+                        try:
+                            top, right, bottom, left = face_location
+                            # Draw bounding box
+                            image_with_box = full_image.copy()
+                            cv2.rectangle(image_with_box, (left, top), (right, bottom), (0, 255, 0), 3)
+                            st.image(image_with_box, caption=f"Vollbild mit markiertem Gesicht - {image_path.name}", use_container_width=True)
+                        except Exception as e:
+                            logger.warning(f"Error drawing face box: {e}")
+                            st.image(full_image, caption=f"Vollbild - {image_path.name}", use_container_width=True)
                     else:
                         st.image(full_image, caption=f"Vollbild - {image_path.name}", use_container_width=True)
-                elif isinstance(face_location, (tuple, list)) and len(face_location) == 4:
-                    top, right, bottom, left = face_location
-                    # Draw bounding box
-                    image_with_box = full_image.copy()
-                    cv2.rectangle(image_with_box, (left, top), (right, bottom), (0, 255, 0), 3)
-                    st.image(image_with_box, caption=f"Vollbild mit markiertem Gesicht - {image_path.name}", use_container_width=True)
                 else:
                     st.image(full_image, caption=f"Vollbild - {image_path.name}", use_container_width=True)
             else:
-                st.image(full_image, caption=f"Vollbild - {image_path.name}", use_container_width=True)
+                st.error("❌ Fehler beim Laden des Bildes - Datei möglicherweise beschädigt")
         else:
-            st.error("❌ Fehler beim Laden des Bildes")
+            st.warning("⚠️ Bilddatei nicht gefunden - zeige nur verfügbare Metadaten")
     except Exception as e:
         st.error(f"❌ Fehler beim Anzeigen des Bildes: {str(e)}")
     

@@ -9,6 +9,7 @@
 - Vollbild-Ansicht mit markiertem Gesicht
 - Detaillierte Gesichtsanalyse (Alter, Geschlecht, Emotionen, Ethnie)
 - **Neu: Person Namen zuweisen** für gefundene Gesichter
+- **✨ NEU: Bild-Metadaten Popup** mit Quell-URL, Download-Datum und Dateigröße
 
 ### 👥 **Face Gallery (Gesichts-Galerie)**
 - Übersicht aller Gesichter in der Datenbank
@@ -19,6 +20,7 @@
   - Batch-Löschung ganzer Seiten
   - Intelligente Qualitätskontrolle (niedrige Qualität automatisch erkennen)
 - **Neu: Person Namen zuweisen** in der Galerie
+- **✨ NEU: Bild-Metadaten Popup** mit vollständigen Download-Informationen
 
 ### 🏷️ **Name Gallery (Namen-Galerie)** - NEU!
 - Übersicht aller vergebenen Personen-Namen
@@ -26,6 +28,7 @@
 - Namen-Suche und Sortierung
 - Namen von einzelnen Gesichtern oder ganzen Personen entfernen
 - Statistiken über benannte Gesichter
+- **✨ NEU: Bild-Metadaten Popup** für jedes Gesicht
 
 ### 🧬 **Facial Attribute Analysis (Gesichtsanalyse)**
 - **Alter**: Geschätztes Alter in Jahren (±4.65 Jahre Genauigkeit)
@@ -40,6 +43,24 @@
 - **Automatische Namensverbreitung**: Gesichter mit >80% Ähnlichkeit erhalten automatisch den gleichen Namen
 - **Namen-Verwaltung**: Namen können jederzeit entfernt oder geändert werden
 - **Such-Integration**: Namen werden in Face Search und Gallery angezeigt
+
+### 📋 **Image Metadata Viewer (Bild-Metadaten Anzeige)** - ✨ NEU!
+- **Vollbild-Ansicht:** Zeigt das komplette Bild mit oder ohne Gesichtsmarkierung
+- **Download-Informationen:**
+  - Quell-URL (wo das Bild heruntergeladen wurde)
+  - Download-Datum und -zeit
+  - Dateigröße in Bytes/KB/MB
+  - Website/Quelle
+- **Dateisystem-Informationen:**
+  - Lokaler Dateipfad
+  - Dateiname
+  - Letzte Änderung
+- **Sicherheit:**
+  - Validierung von Dateipfaden
+  - Schutz vor Path-Traversal-Angriffen
+  - Sanitizing von Metadaten-Inhalten
+- **Verfügbar in:** Face Search, Face Gallery, Name Gallery
+- **Popup-Interface:** Ähnlich der Gesichtsanalyse für konsistente UX
 
 ### 🔧 **Löschfunktionen**
 - **Einzellöschung**: Mit doppelter Bestätigung

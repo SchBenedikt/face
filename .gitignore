@@ -79,3 +79,7 @@ model/
 
 # Face recognition model cache
 ~/.deepface/
+
+# Test files
+test_metadata_functionality.py
+test_*.json
