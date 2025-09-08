@@ -21,6 +21,7 @@ import plotly.graph_objects as go
 from typing import List, Dict, Any
 import time
 import logging
+import json
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -393,6 +394,205 @@ def show_full_image_with_face_box(image_path, face_location):
     
     except Exception as e:
         st.error(f"❌ Fehler beim Anzeigen des Vollbildes: {str(e)}")
+
+def load_image_metadata(image_path):
+    """Load metadata for a specific image from various sources"""
+    try:
+        image_path = Path(image_path)
+        metadata = {}
+        
+        # Try to load from image_metadata.json in different locations
+        possible_metadata_paths = [
+            Path("data/scraped/image_metadata.json"),
+            Path("static/images/image_metadata.json"), 
+            Path("image_metadata.json"),
+            Path("data/image_metadata.json")
+        ]
+        
+        for metadata_path in possible_metadata_paths:
+            if metadata_path.exists():
+                try:
+                    with open(metadata_path, 'r', encoding='utf-8') as f:
+                        all_metadata = json.load(f)
+                    
+                    # Look for metadata by exact path match or filename
+                    str_path = str(image_path)
+                    if str_path in all_metadata:
+                        metadata = all_metadata[str_path]
+                        break
+                    
+                    # Try relative path matching
+                    for stored_path, stored_metadata in all_metadata.items():
+                        if Path(stored_path).name == image_path.name:
+                            metadata = stored_metadata
+                            break
+                    
+                    if metadata:
+                        break
+                        
+                except Exception as e:
+                    logger.error(f"Error reading metadata from {metadata_path}: {e}")
+                    continue
+        
+        # Add file system metadata if available
+        if image_path.exists():
+            stat_info = image_path.stat()
+            metadata.update({
+                'file_size': metadata.get('file_size', stat_info.st_size),
+                'file_path': str(image_path),
+                'file_name': image_path.name,
+                'last_modified': datetime.fromtimestamp(stat_info.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+            })
+        
+        return metadata
+        
+    except Exception as e:
+        logger.error(f"Error loading metadata for {image_path}: {e}")
+        return {}
+
+@st.dialog("🖼️ Bild-Metadaten und Vollansicht", width="large")
+def show_image_metadata_modal():
+    """Display image with full metadata in a popup modal"""
+    
+    # Check required session state
+    required_keys = ['image_metadata_path']
+    missing_keys = [key for key in required_keys if key not in st.session_state]
+    
+    if missing_keys:
+        st.error(f"Fehlende Bilddaten: {', '.join(missing_keys)}")
+        if st.button("❌ Schließen"):
+            for key in required_keys:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
+        return
+    
+    image_path = Path(st.session_state.image_metadata_path)
+    
+    # Make the dialog content wide using custom CSS
+    st.markdown("""
+    <style>
+    .stDialog > div:first-child > div:first-child > div:first-child {
+        width: 90vw !important;
+        max-width: 1200px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Header
+    st.markdown(f"# 🖼️ **Bild-Metadaten und Vollansicht**")
+    st.markdown(f"**Datei:** `{image_path.name}`")
+    
+    # Load image metadata
+    metadata = load_image_metadata(image_path)
+    
+    # Display the image
+    try:
+        full_image = load_and_preprocess_image(image_path)
+        if full_image is not None:
+            # Optional: Add face box if face location is provided
+            if 'image_metadata_face_location' in st.session_state:
+                face_location = st.session_state.image_metadata_face_location
+                if isinstance(face_location, str):
+                    coords = face_location.split(',')
+                    if len(coords) == 4:
+                        top, right, bottom, left = map(int, coords)
+                        # Draw bounding box
+                        image_with_box = full_image.copy()
+                        cv2.rectangle(image_with_box, (left, top), (right, bottom), (0, 255, 0), 3)
+                        st.image(image_with_box, caption=f"Vollbild mit markiertem Gesicht - {image_path.name}", use_container_width=True)
+                    else:
+                        st.image(full_image, caption=f"Vollbild - {image_path.name}", use_container_width=True)
+                elif isinstance(face_location, (tuple, list)) and len(face_location) == 4:
+                    top, right, bottom, left = face_location
+                    # Draw bounding box
+                    image_with_box = full_image.copy()
+                    cv2.rectangle(image_with_box, (left, top), (right, bottom), (0, 255, 0), 3)
+                    st.image(image_with_box, caption=f"Vollbild mit markiertem Gesicht - {image_path.name}", use_container_width=True)
+                else:
+                    st.image(full_image, caption=f"Vollbild - {image_path.name}", use_container_width=True)
+            else:
+                st.image(full_image, caption=f"Vollbild - {image_path.name}", use_container_width=True)
+        else:
+            st.error("❌ Fehler beim Laden des Bildes")
+    except Exception as e:
+        st.error(f"❌ Fehler beim Anzeigen des Bildes: {str(e)}")
+    
+    st.markdown("---")
+    
+    # Display metadata in two columns
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("## 📋 **Allgemeine Informationen**")
+        
+        # File information
+        if metadata.get('file_name'):
+            st.text_input("Dateiname:", value=metadata['file_name'], disabled=True, key="meta_filename")
+        
+        if metadata.get('file_size'):
+            file_size = metadata['file_size']
+            if isinstance(file_size, int):
+                size_mb = file_size / (1024 * 1024)
+                size_kb = file_size / 1024
+                if size_mb >= 1:
+                    size_display = f"{size_mb:.2f} MB ({file_size:,} bytes)"
+                else:
+                    size_display = f"{size_kb:.2f} KB ({file_size:,} bytes)"
+            else:
+                size_display = str(file_size)
+            st.text_input("Dateigröße:", value=size_display, disabled=True, key="meta_filesize")
+        
+        if metadata.get('last_modified'):
+            st.text_input("Letzte Änderung:", value=metadata['last_modified'], disabled=True, key="meta_modified")
+        
+        if metadata.get('file_path'):
+            st.text_area("Dateipfad:", value=metadata['file_path'], disabled=True, height=60, key="meta_filepath")
+    
+    with col2:
+        st.markdown("## 🌐 **Download-Informationen**")
+        
+        # Download/source information
+        if metadata.get('source_url'):
+            st.text_area("Quell-URL:", value=metadata['source_url'], disabled=True, height=100, key="meta_source")
+        else:
+            st.info("ℹ️ Keine Quell-URL verfügbar (möglicherweise lokal hochgeladenes Bild)")
+        
+        if metadata.get('download_date'):
+            st.text_input("Download-Datum:", value=metadata['download_date'], disabled=True, key="meta_download")
+        
+        if metadata.get('website'):
+            st.text_input("Website:", value=metadata['website'], disabled=True, key="meta_website")
+        
+        # Additional metadata if available
+        additional_fields = set(metadata.keys()) - {
+            'file_name', 'file_size', 'last_modified', 'file_path', 
+            'source_url', 'download_date', 'website'
+        }
+        
+        if additional_fields:
+            st.markdown("### 📝 **Weitere Informationen**")
+            for field in sorted(additional_fields):
+                value = metadata[field]
+                if isinstance(value, (dict, list)):
+                    value = json.dumps(value, indent=2, ensure_ascii=False)
+                st.text_area(f"{field.replace('_', ' ').title()}:", value=str(value), disabled=True, height=60, key=f"meta_additional_{field}")
+    
+    # Footer with important info
+    st.markdown("---")
+    st.info("""
+    **ℹ️ Hinweis:** Diese Metadaten stammen aus der Bild-Download-Historie und Dateisystem-Informationen. 
+    Fehlende Informationen deuten darauf hin, dass das Bild möglicherweise manuell hochgeladen wurde.
+    """)
+    
+    # Close button
+    if st.button("❌ Schließen", key="close_image_metadata", type="primary", use_container_width=True):
+        # Clear session state
+        keys_to_clear = ['image_metadata_path', 'image_metadata_face_location']
+        for key in keys_to_clear:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.rerun()
 
 def analyze_facial_attributes(image_path, face_location):
     """Analyze facial attributes using DeepFace"""
@@ -1211,6 +1411,11 @@ def display_search_results(results: List[Dict[str, Any]]):
                                     # Action buttons (stacked vertically to avoid nested columns)
                                     if st.button("🖼️ Ganzes Bild", key=f"full_img_{i}", help="Ganzes Bild mit markiertem Gesicht anzeigen"):
                                         show_full_image_with_face_box(image_path, location)
+                                    if st.button("📋 Bild-Metadaten", key=f"metadata_{i}", help="Bild-Metadaten und Vollansicht anzeigen"):
+                                        # Set metadata data and call modal
+                                        st.session_state.image_metadata_path = image_path
+                                        st.session_state.image_metadata_face_location = location
+                                        show_image_metadata_modal()
                                     if st.button("🧬 Analyse", key=f"analyze_face_{i}", help="Detaillierte Gesichtsanalyse: Alter, Geschlecht, Emotionen, Ethnie"):
                                         face_id = face_data.get('id', f"face_{i}")
                                         # Set analysis data and directly call modal
@@ -1264,7 +1469,7 @@ def display_search_results(results: List[Dict[str, Any]]):
                                         st.success(f"👤 **{person_name}**")
                                     
                                     # Action buttons in columns
-                                    btn_col1, btn_col2, btn_col3 = st.columns(3)
+                                    btn_col1, btn_col2, btn_col3, btn_col4 = st.columns(4)
                                     
                                     with btn_col1:
                                         # Add full image view button
@@ -1272,6 +1477,14 @@ def display_search_results(results: List[Dict[str, Any]]):
                                             show_full_image_with_face_box(image_path, (top, right, bottom, left))
                                     
                                     with btn_col2:
+                                        # Add image metadata button
+                                        if st.button("📋 Metadaten", key=f"metadata_tuple_{i}", help="Bild-Metadaten und Vollansicht anzeigen"):
+                                            # Set metadata data and call modal
+                                            st.session_state.image_metadata_path = image_path
+                                            st.session_state.image_metadata_face_location = (top, right, bottom, left)
+                                            show_image_metadata_modal()
+                                    
+                                    with btn_col3:
                                         # Add facial attribute analysis button
                                         if st.button("🧬 Analyse", key=f"analyze_tuple_{i}", help="Detaillierte Gesichtsanalyse: Alter, Geschlecht, Emotionen, Ethnie"):
                                             face_id = face_data.get('id', f"face_{i}")
@@ -1281,7 +1494,7 @@ def display_search_results(results: List[Dict[str, Any]]):
                                             st.session_state.analysis_face_id = face_id
                                             show_analysis_modal()
                                     
-                                    with btn_col3:
+                                    with btn_col4:
                                         # Add name assignment button
                                         if st.button("🏷️ Namen", key=f"assign_name_tuple_{i}", help="Person einen Namen zuweisen"):
                                             face_id = face_data.get('face_id', face_data.get('id', f"face_{i}"))  # Try both face_id and id
@@ -1300,6 +1513,12 @@ def display_search_results(results: List[Dict[str, Any]]):
                                     if st.button("🖼️ Ganzes Bild", key=f"full_img_fallback_{i}", help="Ganzes Bild anzeigen"):
                                         with st.expander(f"�️ Vollbild: {image_path.name}", expanded=True):
                                             st.image(image, caption=f"Vollbild - {image_path.name}", use_container_width=True)
+                                    
+                                    # Add metadata button
+                                    if st.button("📋 Metadaten", key=f"metadata_fallback_{i}", help="Bild-Metadaten anzeigen"):
+                                        # Set metadata data and call modal
+                                        st.session_state.image_metadata_path = image_path
+                                        show_image_metadata_modal()
                         else:
                             st.image(image, use_container_width=True)
                             
@@ -1322,6 +1541,12 @@ def display_search_results(results: List[Dict[str, Any]]):
                             if st.button("🖼️ Ganzes Bild", key=f"full_img_no_loc_{i}", help="Ganzes Bild anzeigen"):
                                 with st.expander(f"🖼️ Vollbild: {image_path.name}", expanded=True):
                                     st.image(image, caption=f"Vollbild - {image_path.name}", use_container_width=True)
+                            
+                            # Add metadata button
+                            if st.button("📋 Metadaten", key=f"metadata_no_loc_{i}", help="Bild-Metadaten anzeigen"):
+                                # Set metadata data and call modal
+                                st.session_state.image_metadata_path = image_path
+                                show_image_metadata_modal()
                 else:
                     st.error("Image not found")
                     
@@ -2987,8 +3212,8 @@ def display_face_from_metadata(metadata, show_metadata=True, compact=False):
                         # Display face with enhanced styling
                         st.image(thumbnail, use_container_width=True)
                         
-                        # Action buttons in columns
-                        btn_col1, btn_col2, btn_col3, btn_col4 = st.columns(4)
+                        # Action buttons in columns  
+                        btn_col1, btn_col2, btn_col3, btn_col4, btn_col5 = st.columns(5)
                         
                         with btn_col1:
                             # Add full image view button
@@ -2996,6 +3221,14 @@ def display_face_from_metadata(metadata, show_metadata=True, compact=False):
                                 show_full_image_with_face_box(Path(image_path), location_str)
                         
                         with btn_col2:
+                            # Add image metadata button
+                            if st.button("📋 Metadaten", key=f"gallery_metadata_{face_id}", help="Bild-Metadaten und Vollansicht anzeigen"):
+                                # Set metadata data and call modal
+                                st.session_state.image_metadata_path = Path(image_path)
+                                st.session_state.image_metadata_face_location = location_str
+                                show_image_metadata_modal()
+                        
+                        with btn_col3:
                             # Add facial attribute analysis button
                             if st.button("🧬 Analyse", key=f"gallery_analyze_{face_id}", help="Detaillierte Gesichtsanalyse: Alter, Geschlecht, Emotionen, Ethnie"):
                                 # Set analysis data and directly call modal
@@ -3004,7 +3237,7 @@ def display_face_from_metadata(metadata, show_metadata=True, compact=False):
                                 st.session_state.analysis_face_id = face_id
                                 show_analysis_modal()
                         
-                        with btn_col3:
+                        with btn_col4:
                             # Add name assignment button
                             if st.button("🏷️ Namen", key=f"gallery_assign_name_{face_id}", help="Person einen Namen zuweisen"):
                                 # Set name assignment data and directly call modal
@@ -3013,7 +3246,7 @@ def display_face_from_metadata(metadata, show_metadata=True, compact=False):
                                 st.session_state.name_assign_face_location = location_str
                                 show_name_assignment_modal()
                         
-                        with btn_col4:
+                        with btn_col5:
                             # Add delete button with enhanced confirmation
                             if not compact:  # Only show delete in full view, not compact
                                 if st.button("🗑️ Löschen", key=f"gallery_delete_{face_id}", help="Dieses falsch erkannte Gesicht löschen", type="secondary"):
@@ -3658,13 +3891,27 @@ def name_gallery_page():
                         st.text(f"ID: {face['face_id'][:12]}...")
                         st.text(f"Bild: {Path(image_path).name}")
                         
-                        # Remove individual face name button
-                        if st.button("🗑️ Name entfernen", key=f"remove_face_{face['face_id']}"):
-                            if st.session_state.vector_store.remove_person_name(face['face_id']):
-                                st.success("✅ Name entfernt!")
-                                st.rerun()
-                            else:
-                                st.error("❌ Fehler beim Entfernen")
+                        # Action buttons
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            # Full image button
+                            if st.button("🖼️ Bild", key=f"name_gallery_full_{face['face_id']}", help="Ganzes Bild anzeigen"):
+                                show_full_image_with_face_box(Path(image_path), face_location)
+                        with col2:
+                            # Metadata button  
+                            if st.button("📋 Meta", key=f"name_gallery_metadata_{face['face_id']}", help="Bild-Metadaten anzeigen"):
+                                # Set metadata data and call modal
+                                st.session_state.image_metadata_path = Path(image_path)
+                                st.session_state.image_metadata_face_location = face_location
+                                show_image_metadata_modal()
+                        with col3:
+                            # Remove individual face name button
+                            if st.button("🗑️ Name", key=f"remove_face_{face['face_id']}", help="Name von diesem Gesicht entfernen"):
+                                if st.session_state.vector_store.remove_person_name(face['face_id']):
+                                    st.success("✅ Name entfernt!")
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Fehler beim Entfernen")
                 
                 if st.button("❌ Ansicht schließen"):
                     del st.session_state.selected_person
