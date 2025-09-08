@@ -654,14 +654,19 @@ class FaceVectorStore:
     
     # Person Name Assignment Functions
     
-    def assign_person_name(self, face_id: str, first_name: str, last_name: str, person_id: str = None) -> str:
+    def assign_person_name(self, face_id: str, person_data: Dict[str, str], person_id: Optional[str] = None) -> Optional[str]:
         """
-        Assign a person name to a face
+        Assign extended person data to a face
         
         Args:
             face_id: Face identifier
-            first_name: Person's first name
-            last_name: Person's last name 
+            person_data: Dictionary with person information:
+                - first_name: First name (required)
+                - middle_names: Middle names (optional)
+                - last_name: Last name (required)
+                - birth_date: Birth date (optional)
+                - birth_place: Birth place (optional)
+                - notes: Additional notes (optional)
             person_id: Unique person ID (if None, creates new one)
             
         Returns:
@@ -672,12 +677,32 @@ class FaceVectorStore:
             if not person_id:
                 person_id = str(uuid.uuid4())
             
-            # Update face metadata with person info
+            # Extract and validate person data
+            first_name = person_data.get('first_name', '').strip()
+            middle_names = person_data.get('middle_names', '').strip()
+            last_name = person_data.get('last_name', '').strip()
+            birth_date = person_data.get('birth_date', '').strip()
+            birth_place = person_data.get('birth_place', '').strip()
+            notes = person_data.get('notes', '').strip()
+            
+            # Build full name
+            name_parts = [first_name]
+            if middle_names:
+                name_parts.append(middle_names)
+            if last_name:
+                name_parts.append(last_name)
+            full_name = ' '.join(name_parts)
+            
+            # Update face metadata with extended person info
             person_metadata = {
                 'person_id': person_id,
-                'first_name': first_name.strip() if first_name else "",
-                'last_name': last_name.strip() if last_name else "",
-                'full_name': f"{first_name.strip()} {last_name.strip()}".strip(),
+                'first_name': first_name,
+                'middle_names': middle_names,
+                'last_name': last_name,
+                'full_name': full_name,
+                'birth_date': birth_date,
+                'birth_place': birth_place,
+                'notes': notes,
                 'name_assigned_at': datetime.now().isoformat()
             }
             
@@ -685,7 +710,7 @@ class FaceVectorStore:
             return person_id if success else None
             
         except Exception as e:
-            logger.error(f"Error assigning person name to {face_id}: {e}")
+            logger.error(f"Error assigning person data to {face_id}: {e}")
             return None
     
     def remove_person_name(self, face_id: str) -> bool:
@@ -699,12 +724,16 @@ class FaceVectorStore:
             True if successful, False otherwise
         """
         try:
-            # Remove person-related metadata
+            # Remove all person-related metadata (extended version)
             removal_metadata = {
                 'person_id': None,
                 'first_name': None,
+                'middle_names': None,
                 'last_name': None,
                 'full_name': None,
+                'birth_date': None,
+                'birth_place': None,
+                'notes': None,
                 'name_assigned_at': None,
                 'name_removed_at': datetime.now().isoformat()
             }
@@ -766,7 +795,7 @@ class FaceVectorStore:
     
     def get_all_persons(self) -> List[Dict[str, Any]]:
         """
-        Get all unique persons in the database
+        Get all unique persons in the database with enhanced debugging
         
         Returns:
             List of person dictionaries with names and face counts
@@ -780,11 +809,20 @@ class FaceVectorStore:
             )
             
             persons = {}
+            person_ids_found = []  # Debug list
+            
             if results and results.get('ids') and results.get('metadatas'):
-                logger.info(f"Processing {len(results['metadatas'])} faces for person extraction")
+                total_faces = len(results['metadatas'])
+                logger.info(f"Processing {total_faces} faces for person extraction")
                 
                 for i, metadata in enumerate(results['metadatas']):
                     try:
+                        # Debug: Show sample metadata for first few faces
+                        if i < 3:
+                            logger.debug(f"Face {i} metadata keys: {list(metadata.keys())}")
+                            if 'person_id' in metadata:
+                                logger.debug(f"Face {i} person_id raw: {metadata['person_id']} (type: {type(metadata['person_id'])})")
+                        
                         # Check if this face has a person assigned
                         if 'person_id' not in metadata:
                             continue
@@ -812,13 +850,31 @@ class FaceVectorStore:
                         if not person_id or person_id in ["None", "null", "", "nan"]:
                             continue
                         
+                        # Track found person IDs for debugging
+                        if person_id not in person_ids_found:
+                            person_ids_found.append(person_id)
+                            logger.debug(f"Found person ID: {person_id}")
+                        
                         # Add or update person
                         if person_id not in persons:
+                            # Build full name from components
+                            first_name = metadata.get('first_name', '')
+                            middle_names = metadata.get('middle_names', '')
+                            last_name = metadata.get('last_name', '')
+                            
+                            # Create full name
+                            name_parts = [p.strip() for p in [first_name, middle_names, last_name] if p.strip()]
+                            full_name = ' '.join(name_parts) if name_parts else 'Unbekannt'
+                            
                             persons[person_id] = {
                                 'person_id': person_id,
-                                'first_name': metadata.get('first_name', ''),
-                                'last_name': metadata.get('last_name', ''),
-                                'full_name': metadata.get('full_name', ''),
+                                'first_name': first_name,
+                                'middle_names': middle_names,
+                                'last_name': last_name,
+                                'full_name': full_name,
+                                'birth_date': metadata.get('birth_date', ''),
+                                'birth_place': metadata.get('birth_place', ''),
+                                'notes': metadata.get('notes', ''),
                                 'face_count': 0,
                                 'face_ids': []
                             }
@@ -829,13 +885,24 @@ class FaceVectorStore:
                     except Exception as e:
                         logger.debug(f"Skipping person at index {i}: {e}")
                         continue
+                
+                # Debug output
+                logger.info(f"Person IDs found: {person_ids_found}")
             
             persons_list = list(persons.values())
             logger.info(f"Found {len(persons_list)} unique persons")
+            
+            # Additional debug for first person
+            if persons_list:
+                first_person = persons_list[0]
+                logger.debug(f"First person: {first_person['full_name']} with {first_person['face_count']} faces")
+            
             return persons_list
             
         except Exception as e:
             logger.error(f"Error getting all persons: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return []
     
     def find_similar_faces(
@@ -874,9 +941,17 @@ class FaceVectorStore:
             if not reference_face or not reference_face['metadata'].get('person_id'):
                 return 0
             
-            person_id = reference_face['metadata']['person_id']
-            first_name = reference_face['metadata'].get('first_name', '')
-            last_name = reference_face['metadata'].get('last_name', '')
+            # Extract all person data from reference face
+            metadata = reference_face['metadata']
+            person_data = {
+                'first_name': metadata.get('first_name', ''),
+                'middle_names': metadata.get('middle_names', ''),
+                'last_name': metadata.get('last_name', ''),
+                'birth_date': metadata.get('birth_date', ''),
+                'birth_place': metadata.get('birth_place', ''),
+                'notes': metadata.get('notes', '')
+            }
+            person_id = metadata['person_id']
             
             # Find similar faces using the correct method
             similar_faces = self.search_similar_faces(
@@ -891,11 +966,10 @@ class FaceVectorStore:
                 if (similar_face['face_id'] != face_id and 
                     not similar_face['metadata'].get('person_id')):
                     
-                    # Auto-assign the same person
+                    # Auto-assign the same person with all data
                     success = self.assign_person_name(
                         similar_face['face_id'],
-                        first_name,
-                        last_name,
+                        person_data,
                         person_id
                     )
                     if success:

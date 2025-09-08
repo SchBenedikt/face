@@ -199,13 +199,7 @@ def face_search_page():
         if st.session_state.search_results:
             display_search_results(st.session_state.search_results)
     
-    # Modal for facial attribute analysis
-    if st.session_state.get('show_analysis_modal', False):
-        show_analysis_modal()
-    
-    # Modal for name assignment
-    if st.session_state.get('show_name_assignment_modal', False):
-        show_name_assignment_modal()
+    # The modals are now called directly from button events, no need for session state checks
 
 def search_similar_faces(uploaded_file, max_results: int, similarity_threshold: float):
     """Perform enhanced face similarity search with ensemble processing"""
@@ -643,9 +637,9 @@ def show_facial_attributes_popup(image_path, face_location, face_id="unknown"):
         if st.button("❌ Analyse schließen", key=f"close_analysis_{face_id}", type="primary"):
             st.rerun()
 
-@st.dialog("🏷️ Person Namen zuweisen", width="large")
+@st.dialog("👤 Erweiterte Namenszuweisung", width="large")
 def show_name_assignment_modal():
-    """Display the name assignment modal"""
+    """Enhanced name assignment interface with extended fields and existing person selection"""
     
     # Required keys for name assignment
     required_keys = ['name_assign_face_id', 'name_assign_image_path', 'name_assign_face_location']
@@ -670,73 +664,123 @@ def show_name_assignment_modal():
     if isinstance(image_path, str):
         image_path = Path(image_path)
     
-    st.markdown(f"**Face ID:** `{face_id}`")
-    st.markdown(f"**Datei:** `{image_path.name}`")
+    # Header info
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.markdown(f"**Face ID:** `{face_id}`")
+        st.markdown(f"**Datei:** `{image_path.name}`")
     
     # Show face preview
-    try:
-        full_image = load_and_preprocess_image(image_path)
-        if full_image is not None:
-            if isinstance(face_location, str):
-                coords = face_location.split(',')
-                if len(coords) == 4:
-                    top, right, bottom, left = map(int, coords)
+    with col2:
+        try:
+            full_image = load_and_preprocess_image(image_path)
+            face_crop = None
+            if full_image is not None:
+                if isinstance(face_location, str):
+                    coords = face_location.split(',')
+                    if len(coords) == 4:
+                        top, right, bottom, left = map(int, coords)
+                        face_crop = full_image[top:bottom, left:right]
+                elif isinstance(face_location, (tuple, list)) and len(face_location) == 4:
+                    top, right, bottom, left = face_location
                     face_crop = full_image[top:bottom, left:right]
-            elif isinstance(face_location, (tuple, list)) and len(face_location) == 4:
-                top, right, bottom, left = face_location
-                face_crop = full_image[top:bottom, left:right]
-            else:
-                face_crop = None
-            
-            if face_crop is not None and face_crop.shape[0] > 0 and face_crop.shape[1] > 0:
-                col1, col2, col3 = st.columns([1, 2, 1])
-                with col2:
-                    st.image(face_crop, caption="Gesicht für Namenszuweisung", width=200)
-    except Exception as e:
-        st.warning(f"Konnte Gesicht nicht anzeigen: {e}")
+                
+                if face_crop is not None and face_crop.shape[0] > 0 and face_crop.shape[1] > 0:
+                    st.image(face_crop, caption="Zuzuweisendes Gesicht", width=150)
+        except Exception as e:
+            st.warning(f"Konnte Gesicht nicht anzeigen: {e}")
     
     st.markdown("---")
     
-    # Check if face already has a name
+    # Get existing person data if available
     existing_face = st.session_state.vector_store.get_face_by_id(face_id)
-    current_name = ""
-    current_first = ""
-    current_last = ""
-    
+    existing_data = {}
     if existing_face and existing_face.get('metadata', {}).get('person_id'):
-        current_first = existing_face['metadata'].get('first_name', '')
-        current_last = existing_face['metadata'].get('last_name', '')
-        current_name = existing_face['metadata'].get('full_name', '')
+        metadata = existing_face['metadata']
+        existing_data = {
+            'first_name': metadata.get('first_name', ''),
+            'middle_names': metadata.get('middle_names', ''),
+            'last_name': metadata.get('last_name', ''),
+            'full_name': metadata.get('full_name', ''),
+            'birth_date': metadata.get('birth_date', ''),
+            'birth_place': metadata.get('birth_place', ''),
+            'notes': metadata.get('notes', ''),
+            'person_id': metadata.get('person_id', '')
+        }
+        st.info(f"✅ **Aktueller Name:** {existing_data['full_name']}")
+    
+    # Get all existing persons for selection
+    all_persons = st.session_state.vector_store.get_all_persons()
+    
+    # Choice between new person or existing person
+    st.subheader("🎯 Person auswählen")
+    
+    assignment_type = st.radio(
+        "Wie möchten Sie den Namen zuweisen?",
+        ["🆕 Neue Person erstellen", "👥 Bestehende Person auswählen"],
+        key="assignment_type",
+        horizontal=True
+    )
+    
+    if assignment_type == "👥 Bestehende Person auswählen" and all_persons:
+        # Show existing persons selection
+        st.subheader("📋 Bestehende Personen")
         
-        st.info(f"✅ **Aktueller Name:** {current_name}")
-    
-    # Name input form
-    st.subheader("📝 Person Namen eingeben")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        first_name = st.text_input("Vorname:", value=current_first, key="name_first")
-    with col2:
-        last_name = st.text_input("Nachname:", value=current_last, key="name_last")
-    
-    # Preview full name
-    if first_name or last_name:
-        full_name = f"{first_name.strip()} {last_name.strip()}".strip()
-        st.write(f"**Vollständiger Name:** {full_name}")
-    
-    # Action buttons
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("💾 Namen speichern", type="primary"):
-            if first_name.strip() or last_name.strip():
-                # Assign name
-                person_id = st.session_state.vector_store.assign_person_name(
-                    face_id, first_name.strip(), last_name.strip()
+        # Create searchable list of persons
+        person_options = {"-- Bitte Person auswählen --": None}
+        for person in all_persons:
+            display_name = f"{person['full_name']}"
+            if person.get('birth_date'):
+                display_name += f" (*{person['birth_date']})"
+            display_name += f" ({person['face_count']} Gesichter)"
+            person_options[display_name] = person
+        
+        selected_person_display = st.selectbox(
+            "Person auswählen:",
+            options=list(person_options.keys()),
+            key="selected_existing_person"
+        )
+        
+        if selected_person_display and person_options[selected_person_display] is not None:
+            selected_person = person_options[selected_person_display]
+            
+            # Show person details in columns
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.write(f"**Vollständiger Name:**")
+                st.write(f"*{selected_person['full_name']}*")
+                st.write(f"**Vorname:** {selected_person['first_name']}")
+                if selected_person.get('middle_names'):
+                    st.write(f"**Zweite Namen:** {selected_person['middle_names']}")
+                st.write(f"**Nachname:** {selected_person['last_name']}")
+            
+            with col2:
+                st.write(f"**Geburtsdatum:** {selected_person.get('birth_date', '-')}")
+                st.write(f"**Geburtsort:** {selected_person.get('birth_place', '-')}")
+                st.write(f"**Anzahl Gesichter:** {selected_person['face_count']}")
+            
+            with col3:
+                if selected_person.get('notes'):
+                    st.write(f"**Notizen:**")
+                    st.write(selected_person['notes'])
+            
+            # Assign button
+            if st.button("✅ Diese Person zuweisen", type="primary", use_container_width=True):
+                person_data = {
+                    'first_name': selected_person['first_name'],
+                    'middle_names': selected_person.get('middle_names', ''),
+                    'last_name': selected_person['last_name'],
+                    'birth_date': selected_person.get('birth_date', ''),
+                    'birth_place': selected_person.get('birth_place', ''),
+                    'notes': selected_person.get('notes', '')
+                }
+                
+                result = st.session_state.vector_store.assign_person_name(
+                    face_id, person_data, selected_person['person_id']
                 )
                 
-                if person_id:
-                    st.success(f"✅ Name erfolgreich zugewiesen! Person ID: `{person_id}`")
+                if result:
+                    st.success(f"✅ Person erfolgreich zugewiesen!")
                     
                     # Auto-assign to similar faces if enabled
                     auto_assign_count = st.session_state.vector_store.auto_assign_similar_faces(
@@ -746,38 +790,137 @@ def show_name_assignment_modal():
                     if auto_assign_count > 0:
                         st.success(f"🔄 {auto_assign_count} ähnliche Gesichter (>80%) automatisch zugewiesen!")
                     
-                    # Clear session state
-                    for key in ['name_assign_face_id', 'name_assign_image_path', 'name_assign_face_location']:
-                        if key in st.session_state:
-                            del st.session_state[key]
-                    
+                    # Clear session state and close dialog
+                    _clear_name_assignment_session()
                     st.rerun()
                 else:
-                    st.error("❌ Fehler beim Zuweisen des Namens")
+                    st.error("❌ Fehler beim Zuweisen der Person")
+    
+    elif assignment_type == "👥 Bestehende Person auswählen" and not all_persons:
+        st.info("🔍 Keine bestehenden Personen gefunden. Erstellen Sie eine neue Person.")
+    
+    else:
+        # New person creation form
+        st.subheader("📝 Neue Person erstellen")
+        
+        # Extended person form in columns
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Grunddaten:**")
+            first_name = st.text_input(
+                "Vorname: *", 
+                value=existing_data.get('first_name', ''), 
+                key="new_first_name"
+            )
+            middle_names = st.text_input(
+                "Zweite Namen:", 
+                value=existing_data.get('middle_names', ''),
+                help="Z.B.: Moritz Luitpold Damian",
+                key="new_middle_names"
+            )
+            last_name = st.text_input(
+                "Nachname: *", 
+                value=existing_data.get('last_name', ''), 
+                key="new_last_name"
+            )
+        
+        with col2:
+            st.write("**Zusätzliche Informationen:**")
+            birth_date = st.text_input(
+                "Geburtsdatum:",
+                value=existing_data.get('birth_date', ''),
+                help="Z.B.: 1985-03-15 oder 15.03.1985",
+                key="new_birth_date"
+            )
+            birth_place = st.text_input(
+                "Geburtsort:",
+                value=existing_data.get('birth_place', ''),
+                help="Z.B.: München, Deutschland",
+                key="new_birth_place"
+            )
+        
+        notes = st.text_area(
+            "Notizen:",
+            value=existing_data.get('notes', ''),
+            help="Zusätzliche Informationen zur Person",
+            key="new_notes",
+            height=80
+        )
+        
+        # Preview full name
+        if first_name or middle_names or last_name:
+            name_parts = [p.strip() for p in [first_name, middle_names, last_name] if p.strip()]
+            full_name = ' '.join(name_parts)
+            st.success(f"**Vollständiger Name:** {full_name}")
+        
+        # Save new person button
+        if st.button("💾 Person speichern", type="primary", use_container_width=True):
+            if first_name.strip() or last_name.strip():
+                # Create person data
+                person_data = {
+                    'first_name': first_name.strip(),
+                    'middle_names': middle_names.strip(),
+                    'last_name': last_name.strip(),
+                    'birth_date': birth_date.strip(),
+                    'birth_place': birth_place.strip(),
+                    'notes': notes.strip()
+                }
+                
+                # Assign person
+                person_id = st.session_state.vector_store.assign_person_name(
+                    face_id, person_data
+                )
+                
+                if person_id:
+                    st.success(f"✅ Person erfolgreich erstellt und zugewiesen!")
+                    
+                    # Auto-assign to similar faces if enabled
+                    auto_assign_count = st.session_state.vector_store.auto_assign_similar_faces(
+                        face_id, similarity_threshold=0.8
+                    )
+                    
+                    if auto_assign_count > 0:
+                        st.success(f"🔄 {auto_assign_count} ähnliche Gesichter (>80%) automatisch zugewiesen!")
+                    
+                    # Clear session state and close dialog
+                    _clear_name_assignment_session()
+                    st.rerun()
+                else:
+                    st.error("❌ Fehler beim Erstellen der Person")
             else:
                 st.warning("⚠️ Bitte mindestens Vor- oder Nachname eingeben")
     
-    with col2:
-        if current_name and st.button("🗑️ Namen entfernen"):
-            if st.session_state.vector_store.remove_person_name(face_id):
-                st.success("✅ Name erfolgreich entfernt!")
-                
-                # Clear session state
-                for key in ['name_assign_face_id', 'name_assign_image_path', 'name_assign_face_location']:
-                    if key in st.session_state:
-                        del st.session_state[key]
-                
-                st.rerun()
-            else:
-                st.error("❌ Fehler beim Entfernen des Namens")
+    # Action buttons at the bottom
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if existing_data.get('full_name'):
+            if st.button("🗑️ Namen entfernen", use_container_width=True):
+                if st.session_state.vector_store.remove_person_name(face_id):
+                    st.success("✅ Name erfolgreich entfernt!")
+                    _clear_name_assignment_session()
+                    st.rerun()
+                else:
+                    st.error("❌ Fehler beim Entfernen des Namens")
     
     with col3:
-        if st.button("❌ Schließen"):
-            # Clear session state
-            for key in ['name_assign_face_id', 'name_assign_image_path', 'name_assign_face_location']:
-                if key in st.session_state:
-                    del st.session_state[key]
+        if st.button("❌ Abbrechen", use_container_width=True):
+            _clear_name_assignment_session()
             st.rerun()
+
+def _clear_name_assignment_session():
+    """Helper function to clear name assignment session state"""
+    keys_to_clear = [
+        'name_assign_face_id', 'name_assign_image_path', 'name_assign_face_location',
+        'assignment_type', 'selected_existing_person', 'new_first_name', 
+        'new_middle_names', 'new_last_name', 'new_birth_date', 
+        'new_birth_place', 'new_notes'
+    ]
+    for key in keys_to_clear:
+        if key in st.session_state:
+            del st.session_state[key]
 
 @st.dialog("🧬 Detaillierte Gesichtsanalyse", width="large")
 def show_analysis_modal():
@@ -949,8 +1092,7 @@ def show_analysis_modal():
         
         # Close button
         if st.button("✅ Analyse schließen", key="close_popup_analysis", type="primary", use_container_width=True):
-            # Clear modal state
-            st.session_state.show_analysis_modal = False
+            # Clear analysis data
             if 'analysis_image_path' in st.session_state:
                 del st.session_state.analysis_image_path
             if 'analysis_face_location' in st.session_state:
@@ -962,7 +1104,6 @@ def show_analysis_modal():
     else:
         st.error("❌ Analysedaten nicht verfügbar")
         if st.button("❌ Schließen", key="close_error_modal"):
-            st.session_state.show_analysis_modal = False
             st.rerun()
 
 def display_search_results(results: List[Dict[str, Any]]):
@@ -1072,20 +1213,18 @@ def display_search_results(results: List[Dict[str, Any]]):
                                         show_full_image_with_face_box(image_path, location)
                                     if st.button("🧬 Analyse", key=f"analyze_face_{i}", help="Detaillierte Gesichtsanalyse: Alter, Geschlecht, Emotionen, Ethnie"):
                                         face_id = face_data.get('id', f"face_{i}")
-                                        # Use session state to trigger modal display
-                                        st.session_state.show_analysis_modal = True
+                                        # Set analysis data and directly call modal
                                         st.session_state.analysis_image_path = image_path
                                         st.session_state.analysis_face_location = location
                                         st.session_state.analysis_face_id = face_id
-                                        st.rerun()
+                                        show_analysis_modal()
                                     if st.button("🏷️ Namen zuweisen", key=f"assign_name_{i}", help="Person einen Namen zuweisen"):
                                         face_id = face_data.get('face_id', face_data.get('id', f"face_{i}"))  # Try both face_id and id
-                                        # Use session state to trigger name assignment modal
-                                        st.session_state.show_name_assignment_modal = True
+                                        # Set name assignment data and directly call modal
                                         st.session_state.name_assign_face_id = face_id
                                         st.session_state.name_assign_image_path = image_path
                                         st.session_state.name_assign_face_location = location
-                                        st.rerun()
+                                        show_name_assignment_modal()
                                 else:
                                     # Fallback: show full image
                                     st.image(image, use_container_width=True)
@@ -1136,23 +1275,21 @@ def display_search_results(results: List[Dict[str, Any]]):
                                         # Add facial attribute analysis button
                                         if st.button("🧬 Analyse", key=f"analyze_tuple_{i}", help="Detaillierte Gesichtsanalyse: Alter, Geschlecht, Emotionen, Ethnie"):
                                             face_id = face_data.get('id', f"face_{i}")
-                                            # Use session state to trigger modal display
-                                            st.session_state.show_analysis_modal = True
+                                            # Set analysis data and directly call modal
                                             st.session_state.analysis_image_path = image_path
                                             st.session_state.analysis_face_location = (top, right, bottom, left)
                                             st.session_state.analysis_face_id = face_id
-                                            st.rerun()
+                                            show_analysis_modal()
                                     
                                     with btn_col3:
                                         # Add name assignment button
                                         if st.button("🏷️ Namen", key=f"assign_name_tuple_{i}", help="Person einen Namen zuweisen"):
                                             face_id = face_data.get('face_id', face_data.get('id', f"face_{i}"))  # Try both face_id and id
-                                            # Use session state to trigger name assignment modal
-                                            st.session_state.show_name_assignment_modal = True
+                                            # Set name assignment data and directly call modal
                                             st.session_state.name_assign_face_id = face_id
                                             st.session_state.name_assign_image_path = image_path
                                             st.session_state.name_assign_face_location = (top, right, bottom, left)
-                                            st.rerun()
+                                            show_name_assignment_modal()
                                         
                                 except:
                                     # Fallback: show full image
@@ -2691,13 +2828,7 @@ def face_gallery_page():
         st.error(f"Fehler beim Laden der Face Gallery: {e}")
         logger.error(f"Face gallery error: {e}")
     
-    # Modal for facial attribute analysis in gallery
-    if st.session_state.get('show_analysis_modal', False):
-        show_analysis_modal()
-    
-    # Modal for name assignment in gallery
-    if st.session_state.get('show_name_assignment_modal', False):
-        show_name_assignment_modal()
+    # The modals are now called directly from button events, no need for session state checks
 
 def display_faces_grouped_by_image(metadatas, show_metadata=True):
     """Display faces grouped by source image"""
@@ -2867,22 +2998,20 @@ def display_face_from_metadata(metadata, show_metadata=True, compact=False):
                         with btn_col2:
                             # Add facial attribute analysis button
                             if st.button("🧬 Analyse", key=f"gallery_analyze_{face_id}", help="Detaillierte Gesichtsanalyse: Alter, Geschlecht, Emotionen, Ethnie"):
-                                # Use session state to trigger modal display
-                                st.session_state.show_analysis_modal = True
+                                # Set analysis data and directly call modal
                                 st.session_state.analysis_image_path = Path(image_path)
                                 st.session_state.analysis_face_location = location_str
                                 st.session_state.analysis_face_id = face_id
-                                st.rerun()
+                                show_analysis_modal()
                         
                         with btn_col3:
                             # Add name assignment button
                             if st.button("🏷️ Namen", key=f"gallery_assign_name_{face_id}", help="Person einen Namen zuweisen"):
-                                # Use session state to trigger name assignment modal
-                                st.session_state.show_name_assignment_modal = True
+                                # Set name assignment data and directly call modal
                                 st.session_state.name_assign_face_id = face_id
                                 st.session_state.name_assign_image_path = image_path  # Keep as string to avoid path issues
                                 st.session_state.name_assign_face_location = location_str
-                                st.rerun()
+                                show_name_assignment_modal()
                         
                         with btn_col4:
                             # Add delete button with enhanced confirmation
