@@ -156,8 +156,17 @@ class FaceVectorStore:
             # Convert embedding to list for ChromaDB
             query_list = query_embedding_normalized.tolist()
             
-            # Search with expanded results to allow better filtering
-            search_n = min(n_results * 5, 500)  # Get more candidates for better filtering
+            # Search ALL faces - no limit to ensure comprehensive search
+            # Get total count first to determine appropriate search size
+            try:
+                total_faces_result = self.collection.get(limit=1, include=[])
+                if total_faces_result and total_faces_result.get('ids'):
+                    # Use a very large number to get all faces, but reasonable for processing
+                    search_n = min(n_results * 20, 10000)  # Search up to 10k faces instead of 500
+                else:
+                    search_n = n_results * 5
+            except:
+                search_n = n_results * 5
             
             results = self.collection.query(
                 query_embeddings=[query_list],
@@ -645,14 +654,19 @@ class FaceVectorStore:
     
     # Person Name Assignment Functions
     
-    def assign_person_name(self, face_id: str, first_name: str, last_name: str, person_id: str = None) -> str:
+    def assign_person_name(self, face_id: str, person_data: Dict[str, str], person_id: Optional[str] = None) -> Optional[str]:
         """
-        Assign a person name to a face
+        Assign extended person data to a face
         
         Args:
             face_id: Face identifier
-            first_name: Person's first name
-            last_name: Person's last name 
+            person_data: Dictionary with person information:
+                - first_name: First name (required)
+                - middle_names: Middle names (optional)
+                - last_name: Last name (required)
+                - birth_date: Birth date (optional)
+                - birth_place: Birth place (optional)
+                - notes: Additional notes (optional)
             person_id: Unique person ID (if None, creates new one)
             
         Returns:
@@ -663,12 +677,32 @@ class FaceVectorStore:
             if not person_id:
                 person_id = str(uuid.uuid4())
             
-            # Update face metadata with person info
+            # Extract and validate person data
+            first_name = person_data.get('first_name', '').strip()
+            middle_names = person_data.get('middle_names', '').strip()
+            last_name = person_data.get('last_name', '').strip()
+            birth_date = person_data.get('birth_date', '').strip()
+            birth_place = person_data.get('birth_place', '').strip()
+            notes = person_data.get('notes', '').strip()
+            
+            # Build full name
+            name_parts = [first_name]
+            if middle_names:
+                name_parts.append(middle_names)
+            if last_name:
+                name_parts.append(last_name)
+            full_name = ' '.join(name_parts)
+            
+            # Update face metadata with extended person info
             person_metadata = {
                 'person_id': person_id,
-                'first_name': first_name.strip() if first_name else "",
-                'last_name': last_name.strip() if last_name else "",
-                'full_name': f"{first_name.strip()} {last_name.strip()}".strip(),
+                'first_name': first_name,
+                'middle_names': middle_names,
+                'last_name': last_name,
+                'full_name': full_name,
+                'birth_date': birth_date,
+                'birth_place': birth_place,
+                'notes': notes,
                 'name_assigned_at': datetime.now().isoformat()
             }
             
@@ -676,7 +710,7 @@ class FaceVectorStore:
             return person_id if success else None
             
         except Exception as e:
-            logger.error(f"Error assigning person name to {face_id}: {e}")
+            logger.error(f"Error assigning person data to {face_id}: {e}")
             return None
     
     def remove_person_name(self, face_id: str) -> bool:
@@ -690,12 +724,16 @@ class FaceVectorStore:
             True if successful, False otherwise
         """
         try:
-            # Remove person-related metadata
+            # Remove all person-related metadata (extended version)
             removal_metadata = {
                 'person_id': None,
                 'first_name': None,
+                'middle_names': None,
                 'last_name': None,
                 'full_name': None,
+                'birth_date': None,
+                'birth_place': None,
+                'notes': None,
                 'name_assigned_at': None,
                 'name_removed_at': datetime.now().isoformat()
             }
@@ -717,21 +755,38 @@ class FaceVectorStore:
             List of face dictionaries
         """
         try:
-            # Query faces with this person_id
+            logger.info(f"Getting faces for person {person_id}")
+            
+            # Use ChromaDB's where clause to filter by person_id directly
+            # This is much more efficient than manual iteration
+            target_person_id = str(person_id).strip()
+            
             results = self.collection.get(
-                include=['metadatas', 'embeddings'],
-                where={"person_id": person_id}
+                where={"person_id": target_person_id},
+                include=['metadatas', 'embeddings']
             )
             
             faces = []
             if results and results.get('metadatas'):
                 for i, metadata in enumerate(results['metadatas']):
-                    faces.append({
-                        'face_id': results['ids'][i],
-                        'metadata': metadata,
-                        'embedding': results['embeddings'][i] if results.get('embeddings') else None
-                    })
-                    
+                    try:
+                        # Safely get embedding - check if embeddings exist and has correct index
+                        embedding = None
+                        embeddings_data = results.get('embeddings')
+                        if embeddings_data is not None and isinstance(embeddings_data, (list, np.ndarray)) and i < len(embeddings_data):
+                            embedding = embeddings_data[i]
+                        
+                        face_data = {
+                            'face_id': results['ids'][i],
+                            'metadata': metadata,
+                            'embedding': embedding
+                        }
+                        faces.append(face_data)
+                    except Exception as e:
+                        logger.warning(f"Skipping face at index {i}: {e}")
+                        continue
+                        
+            logger.info(f"Found {len(faces)} faces for person {person_id}")
             return faces
             
         except Exception as e:
@@ -740,40 +795,134 @@ class FaceVectorStore:
     
     def get_all_persons(self) -> List[Dict[str, Any]]:
         """
-        Get all unique persons in the database
+        Get all unique persons in the database with enhanced debugging
         
         Returns:
             List of person dictionaries with names and face counts
         """
         try:
-            # Get all faces with person info
+            logger.info("Getting all persons from database")
+            
+            # Get all faces with person_id metadata
             results = self.collection.get(
-                include=['metadatas'],
-                where={"person_id": {"$ne": None}}
+                include=['metadatas']
             )
             
             persons = {}
-            if results and results.get('metadatas'):
+            person_ids_found = []  # Debug list
+            
+            if results and results.get('ids') and results.get('metadatas'):
+                total_faces = len(results['metadatas'])
+                logger.info(f"Processing {total_faces} faces for person extraction")
+                
                 for i, metadata in enumerate(results['metadatas']):
-                    person_id = metadata.get('person_id')
-                    if person_id:
+                    try:
+                        # Debug: Show sample metadata for first few faces
+                        if i < 3:
+                            logger.debug(f"Face {i} metadata keys: {list(metadata.keys())}")
+                            if 'person_id' in metadata:
+                                logger.debug(f"Face {i} person_id raw: {metadata['person_id']} (type: {type(metadata['person_id'])})")
+                        
+                        # Check if this face has a person assigned
+                        if 'person_id' not in metadata:
+                            continue
+                            
+                        raw_person_id = metadata['person_id']
+                        
+                        # Skip None values
+                        if raw_person_id is None:
+                            continue
+                        
+                        # Convert to string and clean
+                        person_id = str(raw_person_id).strip()
+                        
+                        # Handle array-like strings (from ChromaDB serialization issues)
+                        if person_id.startswith('[') and person_id.endswith(']'):
+                            inner_content = person_id[1:-1].strip()
+                            if inner_content:
+                                # Remove quotes and take first value if comma separated
+                                if ',' in inner_content:
+                                    person_id = inner_content.split(',')[0].strip().strip("'\"")
+                                else:
+                                    person_id = inner_content.strip("'\"")
+                        
+                        # Skip invalid values
+                        if not person_id or person_id in ["None", "null", "", "nan"]:
+                            continue
+                        
+                        # Track found person IDs for debugging
+                        if person_id not in person_ids_found:
+                            person_ids_found.append(person_id)
+                            logger.debug(f"Found person ID: {person_id}")
+                        
+                        # Add or update person
                         if person_id not in persons:
+                            # Build full name from components
+                            first_name = metadata.get('first_name', '')
+                            middle_names = metadata.get('middle_names', '')
+                            last_name = metadata.get('last_name', '')
+                            
+                            # Create full name
+                            name_parts = [p.strip() for p in [first_name, middle_names, last_name] if p.strip()]
+                            full_name = ' '.join(name_parts) if name_parts else 'Unbekannt'
+                            
                             persons[person_id] = {
                                 'person_id': person_id,
-                                'first_name': metadata.get('first_name', ''),
-                                'last_name': metadata.get('last_name', ''),
-                                'full_name': metadata.get('full_name', ''),
+                                'first_name': first_name,
+                                'middle_names': middle_names,
+                                'last_name': last_name,
+                                'full_name': full_name,
+                                'birth_date': metadata.get('birth_date', ''),
+                                'birth_place': metadata.get('birth_place', ''),
+                                'notes': metadata.get('notes', ''),
                                 'face_count': 0,
                                 'face_ids': []
                             }
+                        
                         persons[person_id]['face_count'] += 1
                         persons[person_id]['face_ids'].append(results['ids'][i])
+                    
+                    except Exception as e:
+                        logger.debug(f"Skipping person at index {i}: {e}")
+                        continue
+                
+                # Debug output
+                logger.info(f"Person IDs found: {person_ids_found}")
             
-            return list(persons.values())
+            persons_list = list(persons.values())
+            logger.info(f"Found {len(persons_list)} unique persons")
+            
+            # Additional debug for first person
+            if persons_list:
+                first_person = persons_list[0]
+                logger.debug(f"First person: {first_person['full_name']} with {first_person['face_count']} faces")
+            
+            return persons_list
             
         except Exception as e:
             logger.error(f"Error getting all persons: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return []
+    
+    def find_similar_faces(
+        self, 
+        query_embedding: np.ndarray, 
+        n_results: int = 10,
+        min_similarity: float = SIMILARITY_THRESHOLD
+    ) -> List[Dict[str, Any]]:
+        """
+        Find similar faces (alias for search_similar_faces for compatibility)
+        
+        Args:
+            query_embedding: Query face embedding
+            n_results: Maximum number of results to return
+            min_similarity: Minimum similarity threshold
+            
+        Returns:
+            List of similar faces with metadata
+        """
+        return self.search_similar_faces(query_embedding, n_results, min_similarity)
     
     def auto_assign_similar_faces(self, face_id: str, similarity_threshold: float = 0.8) -> int:
         """
@@ -792,12 +941,20 @@ class FaceVectorStore:
             if not reference_face or not reference_face['metadata'].get('person_id'):
                 return 0
             
-            person_id = reference_face['metadata']['person_id']
-            first_name = reference_face['metadata'].get('first_name', '')
-            last_name = reference_face['metadata'].get('last_name', '')
+            # Extract all person data from reference face
+            metadata = reference_face['metadata']
+            person_data = {
+                'first_name': metadata.get('first_name', ''),
+                'middle_names': metadata.get('middle_names', ''),
+                'last_name': metadata.get('last_name', ''),
+                'birth_date': metadata.get('birth_date', ''),
+                'birth_place': metadata.get('birth_place', ''),
+                'notes': metadata.get('notes', '')
+            }
+            person_id = metadata['person_id']
             
-            # Find similar faces
-            similar_faces = self.find_similar_faces(
+            # Find similar faces using the correct method
+            similar_faces = self.search_similar_faces(
                 reference_face['embedding'],
                 n_results=1000,  # Check many faces
                 min_similarity=similarity_threshold
@@ -809,11 +966,10 @@ class FaceVectorStore:
                 if (similar_face['face_id'] != face_id and 
                     not similar_face['metadata'].get('person_id')):
                     
-                    # Auto-assign the same person
+                    # Auto-assign the same person with all data
                     success = self.assign_person_name(
                         similar_face['face_id'],
-                        first_name,
-                        last_name,
+                        person_data,
                         person_id
                     )
                     if success:
@@ -837,32 +993,72 @@ class FaceVectorStore:
         """
         try:
             search_term = search_term.lower().strip()
+            logger.info(f"Searching faces by name: '{search_term}'")
             
-            # Get all faces with person names
+            # Get all faces with person names - completely safe approach
             results = self.collection.get(
-                include=['metadatas', 'embeddings'],
-                where={"person_id": {"$ne": None}}
+                include=['metadatas', 'embeddings']
             )
             
             matching_faces = []
-            if results and results.get('metadatas'):
+            if results and results.get('ids') and results.get('metadatas'):
+                logger.info(f"Searching through {len(results['metadatas'])} faces")
+                
                 for i, metadata in enumerate(results['metadatas']):
-                    first_name = (metadata.get('first_name') or '').lower()
-                    last_name = (metadata.get('last_name') or '').lower()
-                    full_name = (metadata.get('full_name') or '').lower()
-                    
-                    if (search_term in first_name or 
-                        search_term in last_name or 
-                        search_term in full_name):
+                    try:
+                        # Extract person_id with extreme safety measures
+                        stored_person_id = None
                         
-                        matching_faces.append({
-                            'face_id': results['ids'][i],
-                            'metadata': metadata,
-                            'embedding': results['embeddings'][i] if results.get('embeddings') else None
-                        })
+                        if 'person_id' in metadata and metadata['person_id'] is not None:
+                            raw_person_id = metadata['person_id']
+                            
+                            # Multiple safe extraction attempts
+                            try:
+                                # Check if it's already a simple string/number
+                                if isinstance(raw_person_id, (str, int, float)):
+                                    stored_person_id = str(raw_person_id).strip()
+                                # Handle list/array types
+                                elif hasattr(raw_person_id, '__len__') and hasattr(raw_person_id, '__getitem__'):
+                                    if len(raw_person_id) > 0:
+                                        stored_person_id = str(raw_person_id[0]).strip()
+                                    else:
+                                        stored_person_id = None
+                                # Handle numpy arrays specifically
+                                elif hasattr(raw_person_id, 'item'):
+                                    stored_person_id = str(raw_person_id.item()).strip()
+                                # Last resort conversion
+                                else:
+                                    stored_person_id = str(raw_person_id).strip()
+                                    
+                            except Exception as conversion_error:
+                                logger.warning(f"Person ID conversion failed for index {i}: {conversion_error}")
+                                stored_person_id = None
+                        
+                        # Only check faces with valid person data
+                        if stored_person_id and stored_person_id not in ["None", "null", ""]:
+                            first_name = (metadata.get('first_name') or '').lower()
+                            last_name = (metadata.get('last_name') or '').lower()
+                            full_name = (metadata.get('full_name') or '').lower()
+                            
+                            if (search_term in first_name or 
+                                search_term in last_name or 
+                                search_term in full_name):
+                                
+                                matching_faces.append({
+                                    'face_id': results['ids'][i],
+                                    'metadata': metadata,
+                                    'embedding': results['embeddings'][i] if results.get('embeddings') and i < len(results['embeddings']) else None
+                                })
+                    
+                    except Exception as search_error:
+                        logger.warning(f"Error processing search at index {i}: {search_error}")
+                        continue
             
+            logger.info(f"Found {len(matching_faces)} faces matching '{search_term}'")
             return matching_faces
             
         except Exception as e:
             logger.error(f"Error searching faces by name '{search_term}': {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return []
