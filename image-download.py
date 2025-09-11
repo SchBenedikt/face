@@ -45,7 +45,7 @@ NAV_TIMEOUT = 20000  # ms
 OUTPUT_FILE = "bilder_alles.txt"
 
 # Download-Konfiguration
-DOWNLOAD_DIR = "static/images"  # Direkt in static/images
+DOWNLOAD_DIR = "data/images"  # Direkt in static/images
 MAX_DOWNLOAD_SIZE = 50 * 1024 * 1024  # 50MB max pro Bild
 CONCURRENT_DOWNLOADS = 5
 METADATA_FILE = "image_metadata.json"  # Speichert URL-Mapping
