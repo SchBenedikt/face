@@ -15,44 +15,44 @@ SCRAPED_DIR = DATA_DIR / "scraped"
 for directory in [DATA_DIR, IMAGES_DIR, EMBEDDINGS_DIR, SCRAPED_DIR]:
     directory.mkdir(exist_ok=True)
 
-# Face recognition settings
-FACE_RECOGNITION_MODEL = "cnn"  # "hog" (schneller) oder "cnn" (genauer)
-FACE_RECOGNITION_TOLERANCE = 0.6
-MIN_FACE_SIZE = (30, 30)  # Kleinere Gesichter zulassen
-MAX_FACE_SIZE = (None, None)  # Keine Begrenzung für Gesichtsgröße - maximale Qualität
+# Face recognition settings - Optimized for BEST accuracy over speed
+FACE_RECOGNITION_MODEL = "cnn"  # Always use CNN for maximum accuracy
+FACE_RECOGNITION_TOLERANCE = 0.5  # Lower tolerance for better precision  
+MIN_FACE_SIZE = (40, 40)  # Slightly larger minimum for better quality detection
+MAX_FACE_SIZE = (None, None)  # No limit for maximum quality
 
-# Model comparison:
-# HOG: Schneller, weniger Ressourcen, gut für Echtzeit
-# CNN: Genauer, mehr Ressourcen, besser für Qualität
+# Best accuracy models prioritized over speed
 
 # Vector database settings
 VECTOR_DB_PATH = str(DATA_DIR / "face_vectors.db")
 COLLECTION_NAME = "face_embeddings"
 SIMILARITY_THRESHOLD = 0.4  # Verbesserte Threshold für bessere Gesichtserkennung (0.4 = 40% Ähnlichkeit)
 
-# Face Recognition Quality Settings - Enhanced for better accuracy
-FACE_EMBEDDING_MODEL = "Facenet512"  # Primary DeepFace model for highest quality
-FACE_EMBEDDING_MODELS = ["Facenet512", "ArcFace", "VGG-Face", "Facenet"]  # Ensemble models
-FACE_DETECTION_BACKENDS = ["opencv", "mtcnn", "retinaface"]  # Multiple detection backends
-FACE_PREPROCESSING_ENABLED = True   # Erweiterte Gesichtsvorverarbeitung aktivieren
-FACE_QUALITY_VALIDATION = True     # Embedding-Qualität validieren
-FACE_SIMILARITY_ALGORITHM = "enhanced"  # "basic", "enhanced" oder "premium" für bessere Genauigkeit
+# Face Recognition Quality Settings - PREMIUM MODE: Best accuracy models only
+FACE_EMBEDDING_MODEL = "ArcFace"  # Primary model - best for face verification and recognition
+FACE_EMBEDDING_MODELS = ["ArcFace", "Facenet512", "VGG-Face", "SFace"]  # Best models ranked by accuracy
+FACE_DETECTION_BACKENDS = ["retinaface", "mtcnn", "opencv"]  # Best detection backends ranked by accuracy
+FACE_PREPROCESSING_ENABLED = True   # Advanced face preprocessing for maximum quality
+FACE_QUALITY_VALIDATION = True     # Validate embedding quality  
+FACE_SIMILARITY_ALGORITHM = "premium"  # Use premium algorithm for best accuracy
 FACE_ENSEMBLE_WEIGHTING = True     # Use weighted ensemble of multiple models
 FACE_ALIGNMENT_ENABLED = True      # Enable face alignment for better embeddings
 
-# Advanced similarity settings
-SIMILARITY_THRESHOLD = 0.35  # Lowered threshold for better recall with ensemble approach
+# Advanced similarity settings - Optimized for best accuracy
+SIMILARITY_THRESHOLD = 0.3  # Lower threshold for better recall with premium ensemble approach
 ENSEMBLE_SIMILARITY_WEIGHTS = {
-    'cosine': 0.5,
-    'euclidean': 0.25, 
-    'correlation': 0.15,
-    'angular': 0.1
+    'cosine': 0.4,        # ArcFace works best with cosine similarity
+    'euclidean': 0.3,     # Good secondary measure
+    'correlation': 0.2,   # Additional validation
+    'angular': 0.1        # Fine-tuning measure
 }
 
-# Model performance settings
-EMBEDDING_CACHE_SIZE = 1000  # Cache embeddings for faster processing
+# Model performance settings - Prioritize accuracy over speed
+EMBEDDING_CACHE_SIZE = 2000  # Larger cache for better model performance
 BATCH_PROCESSING_ENABLED = True
-PARALLEL_MODEL_EXTRACTION = False  # Set to False to avoid memory issues
+PARALLEL_MODEL_EXTRACTION = True  # Enable parallel processing for ensemble accuracy
+FACE_DETECTION_UPSAMPLING = 2     # Higher upsampling for better small face detection
+FACE_DETECTION_MIN_NEIGHBORS = 6  # More strict detection for accuracy
 
 # Scraping settings
 MAX_IMAGES_PER_SITE = 0  # 0 = Unbegrenzt, alle verfügbaren Bilder herunterladen

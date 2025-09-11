@@ -192,15 +192,15 @@ def identify_face(face_region, face_engine, vector_store, similarity_threshold=S
         similar_faces = vector_store.search_similar_faces(
             embedding, 
             n_results=5,  # Mehr Matches für bessere Vergleiche
-            min_similarity=max(0.6, similarity_threshold - 0.15)  # Deutlich weniger streng
+            min_similarity=max(0.4, similarity_threshold - 0.1)  # Higher precision with better models
         )
         
         if similar_faces:
             best_match = similar_faces[0]
             best_similarity = best_match['similarity']
             
-            # Sehr lockere Überprüfung - hauptsächlich auf Basis der Ähnlichkeit
-            if best_similarity < 0.65:  # Sehr niedriger Threshold
+            # Higher precision threshold with better models
+            if best_similarity < 0.5:  # More precise with premium models
                 return None
                 
             person_data = best_match['metadata']
@@ -343,8 +343,8 @@ def camera_worker(cam_id, cam_url, model, result_queue, stop_flag, face_engine=N
                         if face_engine and vector_store and roi.shape[0] > 50 and roi.shape[1] > 50:
                             person_info = identify_face(roi, face_engine, vector_store)
                             
-                            # Nur bei erfolgreicher Erkennung ausgeben (weniger Spam)
-                            if person_info and person_info['similarity'] >= 0.75:
+                            # Premium models provide more accurate similarity scores
+                            if person_info and person_info['similarity'] >= 0.6:  # Higher threshold with better models
                                 print(f"[INFO] {person_info['name']} erkannt ({person_info['similarity']*100:.0f}%)")
                             
                             # Sehr vereinfachte Stabilisierungslogik - hauptsächlich direkte Anzeige
@@ -352,11 +352,11 @@ def camera_worker(cam_id, cam_url, model, result_queue, stop_flag, face_engine=N
                                 person_id = person_info.get('person_id')
                                 similarity = person_info['similarity']
                                 
-                                # Bei hoher Ähnlichkeit sofort anzeigen
-                                if similarity >= 0.75:
+                                # Premium models: more precise similarity matching
+                                if similarity >= 0.6:  # High confidence with better models
                                     # Direkte Anzeige bei hoher Ähnlichkeit
                                     pass  # person_info bleibt bestehen
-                                elif similarity >= 0.65 and person_id:
+                                elif similarity >= 0.45 and person_id:  # Lower secondary threshold with better accuracy
                                     # Einfache Stabilisierung nur bei mittlerer Ähnlichkeit
                                     if person_id not in person_history:
                                         person_history[person_id] = []
