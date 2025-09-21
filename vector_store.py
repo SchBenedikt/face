@@ -234,16 +234,19 @@ class FaceVectorStore:
     
     def _calculate_enhanced_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> Dict[str, float]:
         """
-        Calculate comprehensive similarity metrics using ensemble approach
+        Calculate comprehensive similarity metrics using premium ensemble approach
         
         Args:
             embedding1: First embedding (query, should be normalized)
             embedding2: Second embedding (from database)
             
         Returns:
-            Dictionary containing various similarity metrics with ensemble scoring
+            Dictionary containing various similarity metrics with premium ensemble scoring
         """
         try:
+            # Import config for premium settings
+            from config import FACE_SIMILARITY_ALGORITHM, ENSEMBLE_SIMILARITY_WEIGHTS
+            
             # Normalize both embeddings to ensure consistent comparison
             norm1 = np.linalg.norm(embedding1)
             norm2 = np.linalg.norm(embedding2)
@@ -264,16 +267,11 @@ class FaceVectorStore:
             
             # 2. Euclidean distance and derived similarity
             euclidean_distance = float(np.linalg.norm(embedding1_normalized - embedding2_normalized))
-            # For unit vectors, euclidean distance ranges from 0 (identical) to 2 (opposite)
             euclidean_similarity = max(0.0, 1.0 - (euclidean_distance / 2.0))
             metrics['euclidean_distance'] = euclidean_distance
             metrics['euclidean_similarity'] = euclidean_similarity
             
-            # 3. Dot product similarity (similar to cosine for normalized vectors)
-            dot_product = float(np.dot(embedding1_normalized, embedding2_normalized))
-            metrics['dot_product'] = dot_product
-            
-            # 4. Correlation similarity
+            # 3. Correlation similarity
             try:
                 correlation = float(np.corrcoef(embedding1_normalized, embedding2_normalized)[0, 1])
                 if np.isnan(correlation):
@@ -282,7 +280,7 @@ class FaceVectorStore:
             except:
                 metrics['correlation_similarity'] = 0.0
             
-            # 5. Angular distance (converted from cosine similarity)
+            # 4. Angular distance (converted from cosine similarity)
             try:
                 angular_distance = np.arccos(np.clip(cosine_similarity, -1.0, 1.0)) / np.pi
                 angular_similarity = 1.0 - angular_distance
@@ -290,22 +288,50 @@ class FaceVectorStore:
             except:
                 metrics['angular_similarity'] = 0.0
             
-            # 6. Manhattan (L1) similarity
-            try:
-                manhattan_distance = float(np.sum(np.abs(embedding1_normalized - embedding2_normalized)))
-                manhattan_similarity = max(0.0, 1.0 - (manhattan_distance / (2.0 * len(embedding1_normalized))))
-                metrics['manhattan_similarity'] = manhattan_similarity
-            except:
-                metrics['manhattan_similarity'] = 0.0
+            # Premium algorithm: Add more sophisticated metrics
+            if FACE_SIMILARITY_ALGORITHM == "premium":
+                # 5. Manhattan (L1) similarity
+                try:
+                    manhattan_distance = float(np.sum(np.abs(embedding1_normalized - embedding2_normalized)))
+                    manhattan_similarity = max(0.0, 1.0 - (manhattan_distance / (2.0 * len(embedding1_normalized))))
+                    metrics['manhattan_similarity'] = manhattan_similarity
+                except:
+                    metrics['manhattan_similarity'] = 0.0
+                
+                # 6. Chebyshev (L-infinity) similarity  
+                try:
+                    chebyshev_distance = float(np.max(np.abs(embedding1_normalized - embedding2_normalized)))
+                    chebyshev_similarity = max(0.0, 1.0 - chebyshev_distance)
+                    metrics['chebyshev_similarity'] = chebyshev_similarity
+                except:
+                    metrics['chebyshev_similarity'] = 0.0
+                
+                # 7. Bray-Curtis similarity for premium mode
+                try:
+                    abs_sum = np.sum(np.abs(embedding1_normalized) + np.abs(embedding2_normalized))
+                    if abs_sum > 0:
+                        bray_curtis_dist = np.sum(np.abs(embedding1_normalized - embedding2_normalized)) / abs_sum
+                        bray_curtis_similarity = max(0.0, 1.0 - bray_curtis_dist)
+                    else:
+                        bray_curtis_similarity = 0.0
+                    metrics['bray_curtis_similarity'] = bray_curtis_similarity
+                except:
+                    metrics['bray_curtis_similarity'] = 0.0
+                
+                # 8. Canberra similarity for premium mode
+                try:
+                    numerator = np.abs(embedding1_normalized - embedding2_normalized)
+                    denominator = np.abs(embedding1_normalized) + np.abs(embedding2_normalized)
+                    # Avoid division by zero
+                    denominator = np.where(denominator == 0, 1.0, denominator)
+                    canberra_distance = np.sum(numerator / denominator) / len(embedding1_normalized)
+                    canberra_similarity = max(0.0, 1.0 - canberra_distance)
+                    metrics['canberra_similarity'] = canberra_similarity
+                except:
+                    metrics['canberra_similarity'] = 0.0
             
-            # 7. ENSEMBLE PRIMARY SIMILARITY - Weighted combination of best metrics
-            # Based on research: cosine similarity is most reliable for face embeddings
-            weights = {
-                'cosine': 0.5,        # Primary weight on cosine similarity
-                'euclidean': 0.25,    # Secondary weight on euclidean 
-                'correlation': 0.15,  # Tertiary weight on correlation
-                'angular': 0.1        # Minor weight on angular
-            }
+            # ENSEMBLE PRIMARY SIMILARITY - Using configured weights
+            weights = ENSEMBLE_SIMILARITY_WEIGHTS.copy()
             
             # Normalize similarities to 0-1 range for combination
             cosine_norm = (cosine_similarity + 1.0) / 2.0  # From [-1,1] to [0,1]
@@ -313,21 +339,37 @@ class FaceVectorStore:
             correlation_norm = (metrics['correlation_similarity'] + 1.0) / 2.0  # From [-1,1] to [0,1]
             angular_norm = metrics['angular_similarity']  # Already [0,1]
             
-            # Calculate ensemble score
+            # Calculate base ensemble score
             ensemble_score = (
-                weights['cosine'] * cosine_norm +
-                weights['euclidean'] * euclidean_norm +
-                weights['correlation'] * correlation_norm +
-                weights['angular'] * angular_norm
+                weights.get('cosine', 0.4) * cosine_norm +
+                weights.get('euclidean', 0.25) * euclidean_norm +
+                weights.get('correlation', 0.15) * correlation_norm +
+                weights.get('angular', 0.1) * angular_norm
             )
             
-            # Apply face-specific threshold mapping
-            if ensemble_score >= 0.65:  # High confidence threshold
-                primary_similarity = 0.7 + (ensemble_score - 0.65) * 0.857  # Scale to [0.7, 1.0]
-            elif ensemble_score >= 0.45:  # Medium confidence threshold  
-                primary_similarity = 0.4 + (ensemble_score - 0.45) * 1.5  # Scale to [0.4, 0.7]
+            # Add premium metrics if available
+            if FACE_SIMILARITY_ALGORITHM == "premium":
+                manhattan_norm = metrics.get('manhattan_similarity', 0.0)  # Already [0,1]
+                chebyshev_norm = metrics.get('chebyshev_similarity', 0.0)  # Already [0,1]
+                
+                ensemble_score += (
+                    weights.get('manhattan', 0.05) * manhattan_norm +
+                    weights.get('chebyshev', 0.05) * chebyshev_norm
+                )
+                
+                # Renormalize weights for premium mode
+                total_weight = sum(weights.values())
+                ensemble_score = ensemble_score / total_weight if total_weight > 0 else ensemble_score
+            
+            # Enhanced face-specific threshold mapping for better quality
+            if ensemble_score >= 0.75:  # Very high confidence threshold
+                primary_similarity = 0.80 + (ensemble_score - 0.75) * 0.80  # Scale to [0.80, 1.0]
+            elif ensemble_score >= 0.60:  # High confidence threshold
+                primary_similarity = 0.65 + (ensemble_score - 0.60) * 1.0  # Scale to [0.65, 0.80]
+            elif ensemble_score >= 0.40:  # Medium confidence threshold  
+                primary_similarity = 0.35 + (ensemble_score - 0.40) * 1.5  # Scale to [0.35, 0.65]
             else:  # Low confidence
-                primary_similarity = ensemble_score * 0.889  # Scale to [0, 0.4]
+                primary_similarity = ensemble_score * 0.875  # Scale to [0, 0.35]
             
             metrics['primary_similarity'] = float(np.clip(primary_similarity, 0.0, 1.0))
             metrics['ensemble_score'] = float(ensemble_score)

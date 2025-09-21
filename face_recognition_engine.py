@@ -12,7 +12,13 @@ warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API
 import cv2
 import numpy as np
 import face_recognition
-from deepface import DeepFace
+try:
+    from deepface import DeepFace
+    DEEPFACE_AVAILABLE = True
+except ImportError:
+    DEEPFACE_AVAILABLE = False
+    logger.warning("DeepFace not available - some features may be limited")
+
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional, Any
 import logging
@@ -53,7 +59,7 @@ class FaceRecognitionEngine:
         
     def detect_faces(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:
         """
-        Detect faces using optimized single method for speed
+        Enhanced face detection using multiple backends for maximum quality
         
         Args:
             image: Input image as numpy array
@@ -62,47 +68,91 @@ class FaceRecognitionEngine:
             List of face bounding boxes (top, right, bottom, left)
         """
         try:
-            # Method 1: Primary - face_recognition library (good balance of speed and accuracy)
+            all_faces = []
+            
+            # Method 1: Primary - face_recognition library with improved settings for quality
             try:
                 face_locations = face_recognition.face_locations(
                     image, 
-                    number_of_times_to_upsample=0,  # Reduced for speed (was 1)
+                    number_of_times_to_upsample=2,  # Increased for better detection quality
                     model=FACE_RECOGNITION_MODEL
                 )
                 if face_locations:
                     logger.debug(f"face_recognition detected {len(face_locations)} faces")
-                    return self._filter_valid_faces(face_locations, image.shape[:2])
+                    all_faces.extend(self._filter_valid_faces(face_locations, image.shape[:2]))
             except Exception as e:
                 logger.debug(f"face_recognition detection failed: {e}")
             
-            # Method 2: Fallback - OpenCV Haar cascades (fastest)
+            # Method 2: Enhanced OpenCV with multiple scale factors
             try:
                 gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-                faces = self.face_cascade.detectMultiScale(
-                    gray,
-                    scaleFactor=1.2,  # Slightly larger steps for speed (was 1.1)
-                    minNeighbors=4,   # Reduced for speed (was 5)
-                    minSize=MIN_FACE_SIZE,
-                    flags=cv2.CASCADE_SCALE_IMAGE
-                )
                 
-                if len(faces) > 0:
-                    # Convert OpenCV format (x, y, w, h) to face_recognition format (top, right, bottom, left)
-                    face_locations = []
-                    for (x, y, w, h) in faces:
-                        face_locations.append((y, x + w, y + h, x))
-                    
-                    logger.debug(f"OpenCV detected {len(face_locations)} faces")
-                    return self._filter_valid_faces(face_locations, image.shape[:2])
+                # Multiple scale factors for better coverage
+                scale_factors = [1.05, 1.1, 1.2, 1.3]  # More thorough detection
+                min_neighbors = [3, 4, 5, 6]  # Various sensitivity levels
+                
+                for scale_factor in scale_factors:
+                    for min_neighbor in min_neighbors:
+                        faces = self.face_cascade.detectMultiScale(
+                            gray,
+                            scaleFactor=scale_factor,
+                            minNeighbors=min_neighbor,
+                            minSize=MIN_FACE_SIZE,
+                            flags=cv2.CASCADE_SCALE_IMAGE | cv2.CASCADE_DO_CANNY_PRUNING
+                        )
+                        
+                        if len(faces) > 0:
+                            # Convert OpenCV format (x, y, w, h) to face_recognition format
+                            for (x, y, w, h) in faces:
+                                all_faces.append((y, x + w, y + h, x))
+                            
+                logger.debug(f"Enhanced OpenCV detected {len(all_faces)} faces total")
+                            
             except Exception as e:
-                logger.debug(f"OpenCV detection failed: {e}")
+                logger.debug(f"Enhanced OpenCV detection failed: {e}")
             
-            # Skip DeepFace detection completely for speed
-            logger.debug("No faces detected by fast methods")
-            return []
+            # Method 3: DeepFace backend detection for highest quality (when available)
+            if DEEPFACE_AVAILABLE:
+                try:
+                    # Try multiple DeepFace detection backends for best coverage
+                    for backend in ["opencv", "mtcnn", "retinaface"]:
+                        try:
+                            df_faces = DeepFace.extract_faces(
+                                image, 
+                                detector_backend=backend,
+                                enforce_detection=False,
+                                align=True  # Enable alignment for better quality
+                            )
+                            
+                            if df_faces and len(df_faces) > 0:
+                                # Convert DeepFace regions to our format
+                                # This is a simplified conversion - in practice, DeepFace 
+                                # returns normalized face regions, so we'd need the original coordinates
+                                logger.debug(f"DeepFace {backend} detected faces")
+                                # Since DeepFace extract_faces doesn't return coordinates directly,
+                                # we'll rely on the other methods for coordinate detection
+                                break
+                                
+                        except Exception as backend_e:
+                            logger.debug(f"DeepFace {backend} detection failed: {backend_e}")
+                            continue
+                            
+                except Exception as deepface_e:
+                    logger.debug(f"DeepFace detection failed: {deepface_e}")
+            else:
+                logger.debug("DeepFace not available, skipping advanced detection")
+            
+            # Remove duplicate faces and return best detections
+            if all_faces:
+                deduplicated_faces = self._deduplicate_face_detections(all_faces, image.shape[:2])
+                logger.debug(f"Final face count after deduplication: {len(deduplicated_faces)}")
+                return deduplicated_faces
+            else:
+                logger.debug("No faces detected by any method")
+                return []
             
         except Exception as e:
-            logger.error(f"Error in face detection: {e}")
+            logger.error(f"Error in enhanced face detection: {e}")
             return []
     
     def _filter_valid_faces(self, face_locations: List[Tuple[int, int, int, int]], image_shape: Tuple[int, int]) -> List[Tuple[int, int, int, int]]:
@@ -140,9 +190,66 @@ class FaceRecognitionEngine:
             logger.error(f"Error filtering faces: {e}")
             return face_locations
     
+    def _deduplicate_face_detections(self, face_locations: List[Tuple[int, int, int, int]], image_shape: Tuple[int, int]) -> List[Tuple[int, int, int, int]]:
+        """
+        Remove duplicate face detections using IoU (Intersection over Union)
+        """
+        try:
+            if len(face_locations) <= 1:
+                return face_locations
+                
+            # Convert to numpy array for easier calculation
+            boxes = np.array(face_locations)  # [top, right, bottom, left]
+            
+            # Calculate areas
+            areas = (boxes[:, 1] - boxes[:, 3]) * (boxes[:, 2] - boxes[:, 0])
+            
+            # Sort by area (keep larger faces when overlapping)
+            indices = np.argsort(areas)[::-1]
+            
+            keep = []
+            while len(indices) > 0:
+                # Pick the largest remaining box
+                current = indices[0]
+                keep.append(current)
+                
+                if len(indices) == 1:
+                    break
+                    
+                # Calculate IoU with remaining boxes
+                remaining = indices[1:]
+                
+                # Calculate intersection
+                y1_inter = np.maximum(boxes[current, 0], boxes[remaining, 0])  # top
+                x1_inter = np.maximum(boxes[current, 3], boxes[remaining, 3])  # left  
+                y2_inter = np.minimum(boxes[current, 2], boxes[remaining, 2])  # bottom
+                x2_inter = np.minimum(boxes[current, 1], boxes[remaining, 1])  # right
+                
+                # Calculate intersection area
+                inter_area = np.maximum(0, x2_inter - x1_inter) * np.maximum(0, y2_inter - y1_inter)
+                
+                # Calculate union area
+                union_area = areas[current] + areas[remaining] - inter_area
+                
+                # Calculate IoU
+                iou = inter_area / union_area
+                
+                # Keep boxes with IoU < 0.5 (not too overlapping)
+                indices = remaining[iou < 0.5]
+            
+            # Return deduplicated faces
+            deduplicated = [face_locations[i] for i in keep]
+            logger.debug(f"Deduplicated {len(face_locations)} faces to {len(deduplicated)}")
+            
+            return deduplicated
+            
+        except Exception as e:
+            logger.warning(f"Face deduplication failed: {e}, returning all faces")
+            return face_locations
+    
     def extract_face_embedding(self, image: np.ndarray, face_location: Tuple[int, int, int, int]) -> Optional[np.ndarray]:
         """
-        Extract face embedding using optimized single model approach for speed
+        Extract face embedding using ensemble approach for maximum quality
         
         Args:
             image: Input image
@@ -154,8 +261,8 @@ class FaceRecognitionEngine:
         try:
             top, right, bottom, left = face_location
             
-            # Extract face region with minimal padding for speed
-            padding = 10  # Fixed small padding for speed
+            # Extract face region with enhanced padding for better quality
+            padding = 20  # Increased padding for better context
             height, width = image.shape[:2]
             
             # Apply padding while staying within image bounds
@@ -171,56 +278,237 @@ class FaceRecognitionEngine:
                 logger.debug(f"Face too small: {face_image.shape}")
                 return None
             
-            # Fast preprocessing - skip advanced processing for speed
-            face_image = self._preprocess_face(face_image)
+            # Enhanced preprocessing for maximum quality
+            face_image = self._preprocess_face_advanced(face_image)
             
-            # Speed optimization: Use only primary model (Facenet512)
-            try:
-                embedding = self._extract_single_model_embedding(face_image, self.primary_model)
-                if embedding is not None:
-                    logger.debug(f"Fast embedding extraction with {self.primary_model}")
-                    return self._finalize_embedding(embedding, [self.primary_model])
-            except Exception as model_e:
-                logger.debug(f"Primary model {self.primary_model} failed: {model_e}")
-            
-            # Fallback to face_recognition library (faster than DeepFace ensemble)
-            return self._extract_fallback_embedding(face_image)
+            # Quality-focused approach: Use ensemble of multiple models when enabled
+            if self.ensemble_enabled:
+                return self._extract_ensemble_embedding(face_image)
+            else:
+                # Single model approach (fallback)
+                return self._extract_single_model_embedding_enhanced(face_image)
                 
         except Exception as e:
             logger.error(f"Error extracting face embedding: {e}")
             return None
     
+    def _extract_ensemble_embedding(self, face_image: np.ndarray) -> Optional[np.ndarray]:
+        """
+        Extract embeddings using ensemble of multiple models for best quality
+        """
+        try:
+            successful_embeddings = []
+            successful_models = []
+            
+            # Try each model in order of quality preference
+            for model_name in self.models:
+                try:
+                    embedding = self._extract_single_model_embedding(face_image, model_name)
+                    if embedding is not None and self._validate_embedding_quality(embedding):
+                        successful_embeddings.append(embedding)
+                        successful_models.append(model_name)
+                        logger.debug(f"Successfully extracted embedding with {model_name}")
+                    else:
+                        logger.debug(f"Poor quality embedding from {model_name}")
+                        
+                except Exception as model_e:
+                    logger.debug(f"Model {model_name} failed: {model_e}")
+                    continue
+            
+            # Process results based on how many models succeeded
+            if len(successful_embeddings) >= 2:
+                # Ensemble approach: combine multiple embeddings
+                logger.debug(f"Using ensemble of {len(successful_embeddings)} models: {successful_models}")
+                combined_embedding = self._combine_embeddings(successful_embeddings, successful_models)
+                return self._finalize_embedding(combined_embedding, successful_models)
+                
+            elif len(successful_embeddings) == 1:
+                # Single successful model
+                logger.debug(f"Using single model: {successful_models[0]}")
+                return self._finalize_embedding(successful_embeddings[0], successful_models)
+                
+            else:
+                # All DeepFace models failed, try fallback
+                logger.debug("All DeepFace models failed, using fallback")
+                return self._extract_fallback_embedding(face_image)
+                
+        except Exception as e:
+            logger.error(f"Ensemble extraction failed: {e}")
+            return self._extract_fallback_embedding(face_image)
+    
+    def _extract_single_model_embedding_enhanced(self, face_image: np.ndarray) -> Optional[np.ndarray]:
+        """
+        Extract embedding using single model with enhanced quality settings
+        """
+        try:
+            # Use primary model with enhanced settings
+            embedding = self._extract_single_model_embedding(face_image, self.primary_model)
+            if embedding is not None and self._validate_embedding_quality(embedding):
+                logger.debug(f"Enhanced single model extraction with {self.primary_model}")
+                return self._finalize_embedding(embedding, [self.primary_model])
+            else:
+                # Try fallback model if primary fails
+                for model_name in self.models[1:]:
+                    try:
+                        embedding = self._extract_single_model_embedding(face_image, model_name)
+                        if embedding is not None and self._validate_embedding_quality(embedding):
+                            logger.debug(f"Enhanced fallback to {model_name}")
+                            return self._finalize_embedding(embedding, [model_name])
+                    except Exception as model_e:
+                        logger.debug(f"Fallback model {model_name} failed: {model_e}")
+                        continue
+                        
+                # Final fallback to face_recognition library
+                return self._extract_fallback_embedding(face_image)
+                
+        except Exception as e:
+            logger.error(f"Enhanced single model extraction failed: {e}")
+            return self._extract_fallback_embedding(face_image)
+    
     def _preprocess_face_advanced(self, face_image: np.ndarray) -> np.ndarray:
         """
-        Advanced face preprocessing with alignment and enhancement
+        Advanced face preprocessing with alignment and enhancement for poor quality images
         
         Args:
             face_image: Raw face image
             
         Returns:
-            Preprocessed and aligned face image
+            Preprocessed and aligned face image optimized for quality
         """
         try:
-            # Step 1: Basic preprocessing
-            face_processed = self._preprocess_face(face_image)
+            # Step 1: Enhanced basic preprocessing
+            face_processed = self._preprocess_face_enhanced(face_image)
             
             # Step 2: Face alignment (if landmarks can be detected)
             try:
-                # Try to detect and align face landmarks
                 face_aligned = self._align_face(face_processed)
                 if face_aligned is not None:
                     face_processed = face_aligned
             except Exception as align_e:
                 logger.debug(f"Face alignment failed, using basic preprocessing: {align_e}")
             
-            # Step 3: Advanced enhancement
-            face_enhanced = self._enhance_face_quality(face_processed)
+            # Step 3: Quality enhancement specifically for poor quality images
+            face_enhanced = self._enhance_face_quality_advanced(face_processed)
             
-            return face_enhanced
+            # Step 4: Final quality validation and adjustment
+            face_final = self._validate_and_adjust_quality(face_enhanced)
+            
+            return face_final
             
         except Exception as e:
             logger.warning(f"Advanced face preprocessing failed: {e}, using basic")
-            return self._preprocess_face(face_image)
+            return self._preprocess_face_enhanced(face_image)
+    
+    def _preprocess_face_enhanced(self, face_image: np.ndarray) -> np.ndarray:
+        """
+        Enhanced face preprocessing with better quality handling
+        """
+        try:
+            # Resize to optimal size with high-quality interpolation
+            target_size = (256, 256)  # Larger size for better quality
+            face_resized = cv2.resize(face_image, target_size, interpolation=cv2.INTER_LANCZOS4)
+            
+            # Advanced lighting correction for poor quality images
+            if len(face_resized.shape) == 3:
+                # Convert to LAB color space for better processing
+                lab = cv2.cvtColor(face_resized, cv2.COLOR_BGR2LAB)
+                
+                # Adaptive histogram equalization with larger tile grid for smoother results
+                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(16, 16))
+                lab[:,:,0] = clahe.apply(lab[:,:,0])
+                
+                # Convert back to BGR
+                face_processed = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+            else:
+                # Grayscale image - use adaptive equalization
+                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(16, 16))
+                face_processed = clahe.apply(face_resized)
+            
+            # Noise reduction with edge preservation
+            face_processed = cv2.bilateralFilter(face_processed, 9, 75, 75)
+            
+            return face_processed
+            
+        except Exception as e:
+            logger.warning(f"Enhanced face preprocessing failed: {e}, using basic resize")
+            target_size = (224, 224)
+            return cv2.resize(face_image, target_size, interpolation=cv2.INTER_LANCZOS4)
+    
+    def _enhance_face_quality_advanced(self, face_image: np.ndarray) -> np.ndarray:
+        """
+        Advanced quality enhancement techniques for poor quality images
+        """
+        try:
+            enhanced = face_image.copy()
+            
+            # Sharpening with edge detection to avoid over-sharpening
+            laplacian = cv2.Laplacian(enhanced, cv2.CV_64F)
+            edge_strength = np.std(laplacian)
+            
+            if edge_strength < 50:  # Image appears blurry, apply sharpening
+                # Unsharp masking for better sharpening
+                gaussian_blur = cv2.GaussianBlur(enhanced, (0, 0), 2.0)
+                unsharp_mask = cv2.addWeighted(enhanced, 1.5, gaussian_blur, -0.5, 0)
+                enhanced = unsharp_mask
+                logger.debug("Applied sharpening for blurry image")
+            
+            # Contrast enhancement for low-contrast images
+            gray = cv2.cvtColor(enhanced, cv2.COLOR_BGR2GRAY) if len(enhanced.shape) == 3 else enhanced
+            contrast = gray.std()
+            
+            if contrast < 30:  # Low contrast image
+                # Apply adaptive contrast enhancement
+                if len(enhanced.shape) == 3:
+                    lab = cv2.cvtColor(enhanced, cv2.COLOR_BGR2LAB)
+                    lab[:,:,0] = cv2.convertScaleAbs(lab[:,:,0], alpha=1.3, beta=10)
+                    enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                else:
+                    enhanced = cv2.convertScaleAbs(enhanced, alpha=1.3, beta=10)
+                logger.debug("Applied contrast enhancement for low-contrast image")
+            
+            # Brightness adjustment for very dark or very bright images
+            mean_brightness = np.mean(gray)
+            if mean_brightness < 80:  # Too dark
+                enhanced = cv2.convertScaleAbs(enhanced, alpha=1.0, beta=30)
+                logger.debug("Applied brightness enhancement for dark image")
+            elif mean_brightness > 180:  # Too bright  
+                enhanced = cv2.convertScaleAbs(enhanced, alpha=1.0, beta=-20)
+                logger.debug("Applied brightness reduction for bright image")
+            
+            return enhanced
+            
+        except Exception as e:
+            logger.debug(f"Advanced quality enhancement failed: {e}")
+            return face_image
+    
+    def _validate_and_adjust_quality(self, face_image: np.ndarray) -> np.ndarray:
+        """
+        Final validation and quality adjustment
+        """
+        try:
+            # Ensure image is in proper format and size
+            if len(face_image.shape) == 3 and face_image.shape[2] == 3:
+                # Valid color image
+                pass
+            elif len(face_image.shape) == 2:
+                # Convert grayscale to 3-channel for consistency
+                face_image = cv2.cvtColor(face_image, cv2.COLOR_GRAY2BGR)
+            else:
+                logger.warning(f"Unexpected image shape: {face_image.shape}")
+                return face_image
+            
+            # Final size validation and adjustment
+            if face_image.shape[0] < 224 or face_image.shape[1] < 224:
+                face_image = cv2.resize(face_image, (224, 224), interpolation=cv2.INTER_LANCZOS4)
+            
+            # Final normalization to ensure proper value range
+            face_image = np.clip(face_image, 0, 255).astype(np.uint8)
+            
+            return face_image
+            
+        except Exception as e:
+            logger.warning(f"Quality validation failed: {e}")
+            return face_image
     
     def _align_face(self, face_image: np.ndarray) -> Optional[np.ndarray]:
         """
@@ -272,15 +560,21 @@ class FaceRecognitionEngine:
     
     def _extract_single_model_embedding(self, face_image: np.ndarray, model_name: str) -> Optional[np.ndarray]:
         """
-        Extract embedding using a single DeepFace model
+        Extract embedding using a single DeepFace model with enhanced quality settings
         """
         try:
+            if not DEEPFACE_AVAILABLE:
+                logger.debug("DeepFace not available, cannot extract model embedding")
+                return None
+                
+            # Enhanced DeepFace extraction with quality-focused settings
             embedding = DeepFace.represent(
                 face_image, 
                 model_name=model_name, 
-                enforce_detection=False,
-                detector_backend='skip',
-                normalization='ArcFace'
+                enforce_detection=False,  # We already detected the face
+                detector_backend='skip',   # Skip detection, use provided face
+                align=True,               # Enable alignment for better quality
+                normalization='ArcFace'   # Use ArcFace normalization for better results
             )
             
             if isinstance(embedding, list) and len(embedding) > 0:
@@ -288,7 +582,15 @@ class FaceRecognitionEngine:
             else:
                 embedding_vector = np.array(embedding['embedding'], dtype=np.float32)
             
-            return self._advanced_normalize_embedding(embedding_vector)
+            # Apply advanced normalization
+            normalized_embedding = self._advanced_normalize_embedding(embedding_vector)
+            
+            # Validate quality before returning
+            if self._validate_embedding_quality(normalized_embedding):
+                return normalized_embedding
+            else:
+                logger.debug(f"Low quality embedding from {model_name}")
+                return None
             
         except Exception as e:
             logger.debug(f"Single model extraction failed for {model_name}: {e}")

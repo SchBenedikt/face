@@ -329,25 +329,54 @@ class FaceSimilarityCalculator:
         except Exception as e:
             logger.error(f"Error calculating weighted similarity: {e}")
             return 0.0
-        euclidean_distance = float(np.linalg.norm(emb1 - emb2))
-        euclidean_similarity = max(0.0, 1.0 - euclidean_distance / 2.0)
-        metrics['euclidean_distance'] = euclidean_distance
-        metrics['euclidean_similarity'] = euclidean_similarity
-        
-        return metrics
+
+def validate_face_embedding(embedding: np.ndarray) -> Tuple[bool, str]:
+    """
+    Validate if a face embedding is of sufficient quality
     
-    def _calculate_enhanced_metrics(self, emb1: np.ndarray, emb2: np.ndarray) -> Dict[str, float]:
-        """Calculate enhanced similarity metrics"""
-        metrics = {}
+    Args:
+        embedding: Face embedding to validate
         
-        # Manhattan distance (L1 norm)
-        manhattan_distance = float(np.sum(np.abs(emb1 - emb2)))
-        manhattan_similarity = max(0.0, 1.0 - manhattan_distance / len(emb1))
-        metrics['manhattan_similarity'] = manhattan_similarity
+    Returns:
+        Tuple of (is_valid, reason)
+    """
+    try:
+        if embedding is None:
+            return False, "Embedding is None"
         
-        # Correlation coefficient
-        try:
-            correlation_matrix = np.corrcoef(emb1, emb2)
+        if len(embedding) == 0:
+            return False, "Embedding is empty"
+        
+        # Check for NaN or infinite values
+        if np.any(np.isnan(embedding)):
+            return False, "Embedding contains NaN values"
+        
+        if np.any(np.isinf(embedding)):
+            return False, "Embedding contains infinite values"
+        
+        # Check if embedding is not all zeros
+        if np.allclose(embedding, 0, atol=1e-10):
+            return False, "Embedding is all zeros"
+        
+        # Check embedding norm
+        norm = np.linalg.norm(embedding)
+        if norm < 1e-6:
+            return False, "Embedding has very small norm"
+        
+        # Check for reasonable value distribution
+        std_dev = np.std(embedding)
+        if std_dev < 1e-6:
+            return False, "Embedding has no variation (constant values)"
+        
+        # Check for reasonable dynamic range
+        value_range = np.max(embedding) - np.min(embedding)
+        if value_range < 1e-6:
+            return False, "Embedding has insufficient dynamic range"
+        
+        return True, "Valid embedding"
+        
+    except Exception as e:
+        return False, f"Validation error: {e}"
             correlation = correlation_matrix[0, 1]
             if not np.isnan(correlation):
                 correlation_similarity = (correlation + 1.0) / 2.0
