@@ -198,53 +198,95 @@ class FaceRecognitionEngine:
     
     def _enhance_image_for_detection(self, image: np.ndarray) -> np.ndarray:
         """
-        Enhance image quality for better face detection in low-quality images
+        Advanced image enhancement for superior face detection in low-quality uploaded images
         
         Args:
             image: Input image
             
         Returns:
-            Enhanced image for better face detection
+            Significantly enhanced image for better face detection
         """
         try:
             enhanced = image.copy()
             
-            # Convert to LAB color space for better processing
+            # Step 1: Upscale small images for better detection
+            height, width = enhanced.shape[:2]
+            if height < 480 or width < 480:
+                # Upscale using bicubic interpolation
+                scale_factor = max(1.5, 480 / min(height, width))
+                new_height, new_width = int(height * scale_factor), int(width * scale_factor)
+                enhanced = cv2.resize(enhanced, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+                logger.debug(f"Upscaled image from {width}x{height} to {new_width}x{new_height}")
+            
+            # Step 2: Advanced contrast and brightness enhancement
             if len(enhanced.shape) == 3:
+                # Convert to LAB color space for better processing
                 lab = cv2.cvtColor(enhanced, cv2.COLOR_RGB2LAB)
+                l_channel = lab[:, :, 0]
                 
-                # Apply adaptive histogram equalization to L channel
-                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-                lab[:,:,0] = clahe.apply(lab[:,:,0])
+                # Apply adaptive histogram equalization with higher clip limit
+                clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
+                l_channel = clahe.apply(l_channel)
                 
-                # Convert back to RGB
+                # Apply contrast stretching to improve dynamic range
+                p2, p98 = np.percentile(l_channel, [2, 98])
+                l_channel = np.clip((l_channel - p2) / (p98 - p2) * 255, 0, 255).astype(np.uint8)
+                
+                lab[:, :, 0] = l_channel
                 enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
                 
-                # Apply denoising
-                enhanced = cv2.bilateralFilter(enhanced, 9, 75, 75)
+                # Step 3: Advanced noise reduction while preserving edges
+                enhanced = cv2.fastNlMeansDenoisingColored(enhanced, None, 10, 10, 7, 21)
                 
-                # Sharpening filter for better edge detection
-                kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-                sharpened = cv2.filter2D(enhanced, -1, kernel)
-                enhanced = cv2.addWeighted(enhanced, 0.7, sharpened, 0.3, 0)
+                # Step 4: Advanced sharpening using unsharp masking
+                gaussian_blur = cv2.GaussianBlur(enhanced, (9, 9), 2.0)
+                unsharp_mask = cv2.addWeighted(enhanced, 1.8, gaussian_blur, -0.8, 0)
+                enhanced = unsharp_mask
+                
+                # Step 5: Final edge enhancement specifically for face detection
+                kernel = np.array([[-1, -1, -1], [-1, 10, -1], [-1, -1, -1]])
+                edge_enhanced = cv2.filter2D(enhanced, -1, kernel)
+                enhanced = cv2.addWeighted(enhanced, 0.75, edge_enhanced, 0.25, 0)
                 
             else:
-                # Grayscale processing
-                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+                # Enhanced grayscale processing
+                # Apply adaptive histogram equalization with higher clip limit
+                clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
                 enhanced = clahe.apply(enhanced)
                 
-                # Denoising
-                enhanced = cv2.medianBlur(enhanced, 5)
+                # Apply contrast stretching
+                p2, p98 = np.percentile(enhanced, [2, 98])
+                enhanced = np.clip((enhanced - p2) / (p98 - p2) * 255, 0, 255).astype(np.uint8)
                 
-                # Sharpening
-                kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-                enhanced = cv2.filter2D(enhanced, -1, kernel)
+                # Advanced noise reduction for grayscale
+                enhanced = cv2.fastNlMeansDenoising(enhanced, None, 10, 7, 21)
+                
+                # Sharpening using unsharp masking
+                gaussian_blur = cv2.GaussianBlur(enhanced, (9, 9), 2.0)
+                unsharp_mask = cv2.addWeighted(enhanced, 1.8, gaussian_blur, -0.8, 0)
+                enhanced = unsharp_mask
+            
+            # Step 6: Final gamma correction for better face visibility
+            gamma = 1.2  # Slightly increase gamma to brighten faces
+            lookup_table = np.array([((i / 255.0) ** (1.0 / gamma)) * 255 for i in np.arange(0, 256)]).astype(np.uint8)
+            enhanced = cv2.LUT(enhanced, lookup_table)
             
             return enhanced
             
         except Exception as e:
-            logger.debug(f"Image enhancement failed: {e}")
-            return image
+            logger.debug(f"Advanced image enhancement failed: {e}, using basic enhancement")
+            # Fallback to simpler enhancement
+            try:
+                if len(image.shape) == 3:
+                    lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+                    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+                    lab[:, :, 0] = clahe.apply(lab[:, :, 0])
+                    return cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+                else:
+                    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+                    return clahe.apply(image)
+            except:
+                return image
     
     def _detect_with_deepface_backend(self, image: np.ndarray, backend: str) -> List[Tuple[int, int, int, int]]:
         """
@@ -545,17 +587,17 @@ class FaceRecognitionEngine:
     
     def _preprocess_face_advanced(self, face_image: np.ndarray) -> np.ndarray:
         """
-        Advanced face preprocessing with alignment and enhancement
+        Advanced face preprocessing with high-quality enhancement for uploaded images
         
         Args:
             face_image: Raw face image
             
         Returns:
-            Preprocessed and aligned face image
+            High-quality preprocessed and aligned face image
         """
         try:
-            # Step 1: Basic preprocessing
-            face_processed = self._preprocess_face(face_image)
+            # Step 1: High-quality preprocessing with advanced enhancement
+            face_processed = self._preprocess_face_high_quality(face_image)
             
             # Step 2: Face alignment (if landmarks can be detected)
             try:
@@ -563,17 +605,18 @@ class FaceRecognitionEngine:
                 face_aligned = self._align_face(face_processed)
                 if face_aligned is not None:
                     face_processed = face_aligned
+                    logger.debug("Face alignment successful")
             except Exception as align_e:
-                logger.debug(f"Face alignment failed, using basic preprocessing: {align_e}")
+                logger.debug(f"Face alignment failed, using high-quality preprocessing: {align_e}")
             
-            # Step 3: Advanced enhancement
+            # Step 3: Final quality validation and enhancement
             face_enhanced = self._enhance_face_quality(face_processed)
             
             return face_enhanced
             
         except Exception as e:
-            logger.warning(f"Advanced face preprocessing failed: {e}, using basic")
-            return self._preprocess_face(face_image)
+            logger.warning(f"Advanced face preprocessing failed: {e}, falling back to high-quality")
+            return self._preprocess_face_high_quality(face_image)
     
     def _align_face(self, face_image: np.ndarray) -> Optional[np.ndarray]:
         """
@@ -753,7 +796,14 @@ class FaceRecognitionEngine:
                 # Grayscale image
                 face_processed = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)).apply(face_resized)
             
-            # Apply gentle gaussian blur to reduce noise
+            # Apply gentle noise reduction
+            face_processed = cv2.bilateralFilter(face_processed, 9, 75, 75)
+            
+            # Slight sharpening
+            kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+            face_processed = cv2.filter2D(face_processed, -1, kernel)
+            
+            # Final smoothing to reduce artifacts
             face_processed = cv2.GaussianBlur(face_processed, (3, 3), 0.5)
             
             return face_processed
@@ -761,38 +811,78 @@ class FaceRecognitionEngine:
         except Exception as e:
             logger.warning(f"Face preprocessing failed: {e}, using original")
             return face_image
+
+    def _preprocess_face_high_quality(self, face_image: np.ndarray) -> np.ndarray:
         """
-        Advanced face preprocessing for better embedding quality
+        Premium quality face preprocessing for uploaded images where quality is more important than speed
         
         Args:
             face_image: Raw face image
             
         Returns:
-            Preprocessed face image
+            High-quality preprocessed face image
         """
         try:
-            # Resize to optimal size for face recognition (224x224 for most models)
-            target_size = (224, 224)
-            face_resized = cv2.resize(face_image, target_size, interpolation=cv2.INTER_LANCZOS4)
+            original_face = face_image.copy()
             
-            # Apply histogram equalization for better lighting
-            if len(face_resized.shape) == 3:
-                # Convert to LAB color space for better equalization
-                lab = cv2.cvtColor(face_resized, cv2.COLOR_BGR2LAB)
-                lab[:,:,0] = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)).apply(lab[:,:,0])
-                face_processed = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+            # Step 1: Upscale if the face is small to preserve details
+            h, w = face_image.shape[:2]
+            if h < 160 or w < 160:
+                # Upscale using bicubic interpolation for small faces
+                scale_factor = max(2.0, 160 / min(h, w))
+                new_h, new_w = int(h * scale_factor), int(w * scale_factor)
+                face_image = cv2.resize(face_image, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+                logger.debug(f"Upscaled face from {w}x{h} to {new_w}x{new_h}")
+            
+            # Step 2: Advanced noise reduction
+            if len(face_image.shape) == 3:
+                # Multi-stage denoising for color images
+                face_image = cv2.fastNlMeansDenoisingColored(face_image, None, 10, 10, 7, 21)
             else:
-                # Grayscale image
-                face_processed = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)).apply(face_resized)
+                face_image = cv2.fastNlMeansDenoising(face_image, None, 10, 7, 21)
             
-            # Apply gentle gaussian blur to reduce noise
-            face_processed = cv2.GaussianBlur(face_processed, (3, 3), 0.5)
+            # Step 3: Advanced contrast enhancement
+            if len(face_image.shape) == 3:
+                # Convert to LAB for better color-aware enhancement
+                lab = cv2.cvtColor(face_image, cv2.COLOR_BGR2LAB)
+                l_channel = lab[:, :, 0]
+                
+                # Apply adaptive histogram equalization to L channel
+                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+                l_channel = clahe.apply(l_channel)
+                
+                # Additional contrast stretching
+                l_min, l_max = np.percentile(l_channel, [2, 98])
+                l_channel = np.clip((l_channel - l_min) / (l_max - l_min) * 255, 0, 255).astype(np.uint8)
+                
+                lab[:, :, 0] = l_channel
+                face_image = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+            else:
+                # Grayscale enhancement
+                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+                face_image = clahe.apply(face_image)
+                
+                # Additional contrast stretching
+                p2, p98 = np.percentile(face_image, [2, 98])
+                face_image = np.clip((face_image - p2) / (p98 - p2) * 255, 0, 255).astype(np.uint8)
             
-            return face_processed
+            # Step 4: Unsharp masking for better detail enhancement
+            gaussian_blur = cv2.GaussianBlur(face_image, (9, 9), 2.0)
+            unsharp_mask = cv2.addWeighted(face_image, 1.5, gaussian_blur, -0.5, 0)
+            face_image = unsharp_mask
+            
+            # Step 5: Final resize to target size with high-quality interpolation
+            target_size = (224, 224)
+            face_image = cv2.resize(face_image, target_size, interpolation=cv2.INTER_LANCZOS4)
+            
+            # Step 6: Final gentle smoothing to reduce artifacts
+            face_image = cv2.bilateralFilter(face_image, 5, 50, 50)
+            
+            return face_image
             
         except Exception as e:
-            logger.warning(f"Face preprocessing failed: {e}, using original")
-            return face_image
+            logger.warning(f"High-quality face preprocessing failed: {e}, falling back to standard")
+            return self._preprocess_face(original_face)
     
     def _advanced_normalize_embedding(self, embedding: np.ndarray) -> np.ndarray:
         """

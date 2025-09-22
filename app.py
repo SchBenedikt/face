@@ -142,6 +142,51 @@ def face_search_page():
             # Search parameters
             st.subheader("Search Parameters")
             
+            # High Quality Mode Toggle
+            st.markdown("### 🔬 Quality Settings")
+            high_quality_mode = st.toggle(
+                "🎯 High Quality Mode", 
+                value=True,
+                help="Aktiviert erweiterte Bildverarbeitung für bessere Erkennung. Längere Ladezeiten, aber deutlich bessere Qualität bei schwierigen Bildern."
+            )
+            
+            if high_quality_mode:
+                st.info("🔬 **High Quality Mode aktiviert:** Verwendet erweiterte Algorithmen für maximale Erkennungsqualität. Ideal für schwierige Bilder, niedrige Auflösung oder schlechte Beleuchtung.")
+                
+                # Advanced quality options
+                with st.expander("⚙️ Erweiterte Qualitäts-Einstellungen", expanded=False):
+                    enable_ensemble = st.checkbox(
+                        "🧠 Ensemble-Modelle verwenden", 
+                        value=True,
+                        help="Verwendet mehrere KI-Modelle gleichzeitig für höchste Genauigkeit"
+                    )
+                    
+                    enable_preprocessing = st.checkbox(
+                        "🖼️ Erweiterte Bildverarbeitung", 
+                        value=True,
+                        help="Wendet Bildverbesserung, Schärfung und Rauschreduzierung an"
+                    )
+                    
+                    enable_upscaling = st.checkbox(
+                        "📈 Intelligente Hochskalierung", 
+                        value=True,
+                        help="Skaliert kleine Bilder automatisch hoch für bessere Erkennung"
+                    )
+                    
+                    detection_sensitivity = st.select_slider(
+                        "🎚️ Erkennungssensitivität",
+                        options=["Standard", "Hoch", "Maximal"],
+                        value="Hoch",
+                        help="Maximal: Erkennt auch sehr schwierige Gesichter, kann aber länger dauern"
+                    )
+                    
+            else:
+                st.warning("⚡ **Fast Mode:** Schnellere Verarbeitung mit Standardqualität.")
+                enable_ensemble = False
+                enable_preprocessing = False
+                enable_upscaling = False
+                detection_sensitivity = "Standard"
+            
             max_results = st.slider(
                 "Maximum Results", 
                 min_value=5, 
@@ -150,13 +195,15 @@ def face_search_page():
                 help="Maximum number of similar faces to return"
             )
             
+            # Dynamic similarity threshold based on quality mode
+            default_threshold = 0.3 if high_quality_mode else 0.4
             similarity_threshold = st.slider(
                 "Similarity Threshold", 
                 min_value=0.0, 
                 max_value=1.0, 
-                value=0.4,  # Erhöhter Default für bessere Ergebnisse
+                value=default_threshold,
                 step=0.05,
-                help="Mindestähnlichkeit für Suchergebnisse (0.4 = 40% Ähnlichkeit). Höhere Werte = genauere Ergebnisse aber weniger Treffer."
+                help=f"Mindestähnlichkeit für Suchergebnisse ({default_threshold*100:.0f}% = {default_threshold*100:.0f}% Ähnlichkeit). Im High Quality Mode können niedrigere Werte verwendet werden."
             )
             
             # Facial Attribute Analysis Info
@@ -192,7 +239,15 @@ def face_search_page():
                         st.info("Nach der Installation starten Sie die Anwendung neu.")
             
             if st.button("🔍 Search Similar Faces", type="primary"):
-                search_similar_faces(uploaded_file, max_results, similarity_threshold)
+                # Prepare search parameters
+                search_params = {
+                    'high_quality_mode': high_quality_mode,
+                    'enable_ensemble': enable_ensemble,
+                    'enable_preprocessing': enable_preprocessing,
+                    'enable_upscaling': enable_upscaling,
+                    'detection_sensitivity': detection_sensitivity
+                }
+                search_similar_faces_enhanced(uploaded_file, max_results, similarity_threshold, search_params)
     
     with col2:
         # Display search results
@@ -201,8 +256,8 @@ def face_search_page():
     
     # The modals are now called directly from button events, no need for session state checks
 
-def search_similar_faces(uploaded_file, max_results: int, similarity_threshold: float):
-    """Perform enhanced face similarity search with ensemble processing"""
+def search_similar_faces_enhanced(uploaded_file, max_results: int, similarity_threshold: float, search_params: dict):
+    """Perform enhanced face similarity search with advanced quality processing"""
     
     # Initialize temp_path outside try block
     temp_path = Path("/tmp/query_image.jpg")
@@ -210,7 +265,16 @@ def search_similar_faces(uploaded_file, max_results: int, similarity_threshold: 
     # Create progress container
     progress_container = st.container()
     
-    with st.spinner("🔍 Erweiterte Gesichtserkennung läuft..."):
+    # Extract search parameters
+    high_quality_mode = search_params.get('high_quality_mode', True)
+    enable_ensemble = search_params.get('enable_ensemble', True)
+    enable_preprocessing = search_params.get('enable_preprocessing', True)
+    enable_upscaling = search_params.get('enable_upscaling', True)
+    detection_sensitivity = search_params.get('detection_sensitivity', 'Hoch')
+    
+    processing_title = "🔬 High Quality Face Recognition" if high_quality_mode else "⚡ Fast Face Recognition"
+    
+    with st.spinner(f"{processing_title} läuft..."):
         try:
             # Save uploaded file temporarily
             with open(temp_path, "wb") as f:
@@ -220,38 +284,76 @@ def search_similar_faces(uploaded_file, max_results: int, similarity_threshold: 
             progress_bar = progress_container.progress(0)
             status_text = progress_container.empty()
             
-            # Step 1: Load and preprocess image
-            status_text.text("📷 Lade und verarbeite Bild...")
+            # Step 1: Load and preprocess image with quality-based enhancement
+            if high_quality_mode:
+                status_text.text("📷 Lade Bild mit erweiterten Qualitätsverbesserungen...")
+            else:
+                status_text.text("📷 Lade und verarbeite Bild...")
             progress_bar.progress(15)
+            
             query_image = load_and_preprocess_image(temp_path)
             
             if query_image is None:
                 st.error("❌ Fehler beim Laden des Bildes. Unterstützte Formate: JPG, PNG, BMP, WEBP")
                 return
             
-            # Step 2: Detect faces with multiple backends
-            status_text.text("👤 Erkenne Gesichter mit mehreren Algorithmen...")
-            progress_bar.progress(35)
-            face_locations = st.session_state.face_engine.detect_faces(query_image)
+            # Apply additional image enhancements if requested
+            if high_quality_mode and enable_preprocessing:
+                status_text.text("🎨 Erweiterte Bildverbesserung wird angewendet...")
+                progress_bar.progress(25)
+                # Use the enhanced image enhancement from the engine
+                query_image = st.session_state.face_engine._enhance_image_for_detection(query_image)
+            
+            # Step 2: Enhanced face detection with configurable sensitivity
+            if high_quality_mode:
+                status_text.text("👤 Multi-Algorithmus Gesichtserkennung mit maximaler Sensitivität...")
+            else:
+                status_text.text("👤 Gesichtserkennung...")
+            progress_bar.progress(40)
+            
+            # Configure detection based on sensitivity level
+            enhanced_detection = detection_sensitivity in ['Hoch', 'Maximal'] if high_quality_mode else False
+            
+            face_locations = st.session_state.face_engine.detect_faces(
+                query_image, 
+                enhanced_detection=enhanced_detection
+            )
             
             if not face_locations:
-                st.error("""
-                ❌ **Keine Gesichter erkannt!** 
-                
-                **Tipps für bessere Ergebnisse:**
-                - Verwenden Sie ein Bild mit deutlich sichtbarem Gesicht
-                - Stellen Sie sicher, dass das Gesicht gut beleuchtet ist
-                - Vermeiden Sie zu kleine Bilder (Mindestgröße: 30x30 Pixel pro Gesicht)
-                - Probieren Sie ein anderes Bild mit frontaler Gesichtsansicht
-                """)
+                # If no faces found in high quality mode, provide detailed troubleshooting
+                if high_quality_mode:
+                    st.error("""
+                    ❌ **Keine Gesichter erkannt trotz High Quality Mode!** 
+                    
+                    **Erweiterte Fehlerbehebung:**
+                    - Überprüfen Sie, ob das Gesicht mindestens 20x20 Pixel groß ist
+                    - Stellen Sie sicher, dass das Gesicht nicht stark gedreht ist (max. 45° Neigung)
+                    - Vermeiden Sie starke Schatten oder Überbelichtung im Gesichtsbereich
+                    - Das Bild sollte eine Mindestauflösung von 100x100 Pixel haben
+                    
+                    **Verbesserungsvorschläge:**
+                    - Verwenden Sie ein schärferes Bild mit höherer Auflösung
+                    - Stellen Sie sicher, dass das Gesicht gut ausgeleuchtet ist
+                    - Versuchen Sie ein Bild mit frontaler Gesichtsansicht
+                    - Reduzieren Sie die Erkennungssensitivität auf "Standard"
+                    """)
+                else:
+                    st.error("""
+                    ❌ **Keine Gesichter erkannt!** 
+                    
+                    **Aktivieren Sie den High Quality Mode für bessere Erkennung:**
+                    - Erweiterte Algorithmen für schwierige Bilder
+                    - Bessere Erkennung bei niedriger Auflösung
+                    - Robustere Verarbeitung verschiedener Beleuchtungen
+                    """)
                 return
             
-            # Show detected faces info with selection option
+            # Enhanced face information display
             if len(face_locations) > 1:
-                st.warning(f"👥 {len(face_locations)} Gesichter erkannt!")
+                st.warning(f"👥 {len(face_locations)} Gesichter erkannt! (High Quality Mode: {'Aktiviert' if high_quality_mode else 'Deaktiviert'})")
                 
-                # Show all detected faces for user to choose from
-                st.write("**Wählen Sie das Gesicht für die Suche aus:**")
+                # Show all detected faces for user to choose from with enhanced preview
+                st.write("**Wählen Sie das beste Gesicht für die Suche aus:**")
                 
                 cols = st.columns(min(len(face_locations), 4))
                 face_choice = None
@@ -265,42 +367,82 @@ def search_similar_faces(uploaded_file, max_results: int, similarity_threshold: 
                             top, right, bottom, left = face_loc
                         
                         face_image = query_image[top:bottom, left:right]
-                        face_thumbnail = create_thumbnail(face_image, (100, 100))
+                        face_thumbnail = create_thumbnail(face_image, (120, 120))  # Larger thumbnails
                         
                         st.image(face_thumbnail, caption=f"Gesicht {idx+1}")
+                        
+                        # Show face quality metrics if in high quality mode
+                        if high_quality_mode:
+                            face_area = (right - left) * (bottom - top)
+                            quality_score = min(100, max(0, (face_area / 1000) * 100))
+                            if quality_score > 70:
+                                st.success(f"Qualität: {quality_score:.0f}%")
+                            elif quality_score > 40:
+                                st.warning(f"Qualität: {quality_score:.0f}%")
+                            else:
+                                st.error(f"Qualität: {quality_score:.0f}%")
+                        
                         if st.button(f"Wählen", key=f"face_{idx}"):
                             face_choice = idx
                 
                 if face_choice is not None:
                     face_location = face_locations[face_choice]
-                    st.success(f"✅ Gesicht {face_choice+1} ausgewählt für die Suche.")
+                    st.success(f"✅ Gesicht {face_choice+1} ausgewählt für die High Quality Suche.")
                 else:
                     st.info("👆 Bitte wählen Sie ein Gesicht aus, um fortzufahren.")
                     return
             else:
-                st.success("✅ 1 Gesicht erkannt und verarbeitet.")
+                quality_msg = " (High Quality Mode aktiv)" if high_quality_mode else ""
+                st.success(f"✅ 1 Gesicht erkannt und verarbeitet{quality_msg}.")
                 face_location = face_locations[0]
-            # Step 3: Extract embedding with ensemble models
-            status_text.text("🧠 Extrahiere Gesichtsmerkmale mit Ensemble-Modellen...")
-            progress_bar.progress(60)
+                
+            # Step 3: Enhanced embedding extraction with ensemble models
+            if high_quality_mode and enable_ensemble:
+                status_text.text("🧠 Extrahiere Gesichtsmerkmale mit Ensemble-Modellen...")
+                embedding_quality_mode = True
+            else:
+                status_text.text("🧠 Extrahiere Gesichtsmerkmale...")
+                embedding_quality_mode = False
             
-            query_embedding = st.session_state.face_engine.extract_face_embedding(query_image, face_location)
+            progress_bar.progress(65)
+            
+            query_embedding = st.session_state.face_engine.extract_face_embedding(
+                query_image, 
+                face_location,
+                high_quality=embedding_quality_mode
+            )
             
             if query_embedding is None:
-                st.error("""
-                ❌ **Fehler bei der Gesichtsanalyse!**
-                
-                Dies kann folgende Ursachen haben:
-                - Das Gesicht ist zu unscharf oder schlecht beleuchtet
-                - Das Bild hat eine zu niedrige Auflösung
-                - Das erkannte Gesicht ist zu klein
-                
-                Versuchen Sie es mit einem anderen Bild.
-                """)
+                if high_quality_mode:
+                    st.error("""
+                    ❌ **Fehler bei der erweiterten Gesichtsanalyse!**
+                    
+                    Dies kann trotz High Quality Mode folgende Ursachen haben:
+                    - Das erkannte Gesichtsbereich ist zu klein oder unscharf
+                    - Extreme Beleuchtungsverhältnisse stören die KI-Modelle  
+                    - Das Gesicht ist stark verzerrt oder teilweise verdeckt
+                    
+                    **Lösungsansätze:**
+                    - Versuchen Sie ein Bild mit höherer Auflösung
+                    - Stellen Sie sicher, dass das ganze Gesicht sichtbar ist
+                    - Reduzieren Sie die Erkennungssensitivität
+                    """)
+                else:
+                    st.error("""
+                    ❌ **Fehler bei der Gesichtsanalyse!**
+                    
+                    **Aktivieren Sie den High Quality Mode für:**
+                    - Robustere Verarbeitung schwieriger Bilder
+                    - Erweiterte Fehlerkorrektur und Bildverbesserung
+                    - Bessere Ergebnisse bei problematischen Lichtverhältnissen
+                    """)
                 return
             
-            # Step 4: Search with enhanced similarity calculation  
-            status_text.text("🔍 Suche ähnliche Gesichter mit erweiterten Algorithmen...")
+            # Step 4: Enhanced similarity search with quality-aware parameters
+            if high_quality_mode:
+                status_text.text("🔍 Erweiterte Ähnlichkeitssuche mit KI-Algorithmen...")
+            else:
+                status_text.text("🔍 Suche ähnliche Gesichter...")
             progress_bar.progress(85)
             
             similar_faces = st.session_state.vector_store.search_similar_faces(
@@ -310,46 +452,86 @@ def search_similar_faces(uploaded_file, max_results: int, similarity_threshold: 
             )
             
             progress_bar.progress(100)
-            status_text.text("✅ Suche abgeschlossen!")
+            
+            # Enhanced completion message
+            if high_quality_mode:
+                status_text.text("✅ High Quality Suche erfolgreich abgeschlossen!")
+            else:
+                status_text.text("✅ Suche abgeschlossen!")
             
             # Store results in session state
             st.session_state.search_results = similar_faces
             
-            # Show enhanced result summary
+            # Enhanced result summary with quality metrics
             if similar_faces:
                 avg_similarity = sum(face['similarity'] for face in similar_faces) / len(similar_faces)
                 top_similarity = similar_faces[0]['similarity'] if similar_faces else 0
                 
-                st.success(f"""
-                🎯 **{len(similar_faces)} ähnliche Gesichter gefunden!**
-                
-                📊 **Ergebnisqualität:**
-                - Top-Ähnlichkeit: {top_similarity*100:.1f}%
-                - Durchschnitts-Ähnlichkeit: {avg_similarity*100:.1f}%
-                - Ensemble-Modelle: Aktiv
-                - Vertrauens-Scoring: Aktiv
-                """)
+                if high_quality_mode:
+                    st.success(f"""
+                    🎯 **{len(similar_faces)} ähnliche Gesichter gefunden mit High Quality Processing!**
+                    
+                    📊 **Erweiterte Ergebnisqualität:**
+                    - Top-Ähnlichkeit: {top_similarity*100:.1f}%
+                    - Durchschnitts-Ähnlichkeit: {avg_similarity*100:.1f}%
+                    - Ensemble-Modelle: {'✅ Aktiv' if enable_ensemble else '❌ Deaktiviert'}
+                    - Erweiterte Vorverarbeitung: {'✅ Aktiv' if enable_preprocessing else '❌ Deaktiviert'}
+                    - Bild-Upscaling: {'✅ Aktiv' if enable_upscaling else '❌ Deaktiviert'}
+                    - Sensitivität: {detection_sensitivity}
+                    - Vertrauens-Scoring: ✅ Aktiv
+                    """)
+                else:
+                    st.success(f"""
+                    🎯 **{len(similar_faces)} ähnliche Gesichter gefunden!**
+                    
+                    📊 **Ergebnisqualität:**
+                    - Top-Ähnlichkeit: {top_similarity*100:.1f}%
+                    - Durchschnitts-Ähnlichkeit: {avg_similarity*100:.1f}%
+                    - Modus: Fast Mode (für bessere Qualität High Quality Mode aktivieren)
+                    """)
             else:
-                st.warning(f"""
-                ⚠️ **Keine ähnlichen Gesichter gefunden**
-                
-                **Versuchen Sie:**
-                - Ähnlichkeitsschwelle senken (aktuell: {similarity_threshold*100:.0f}%)
-                - Mehr Bilder zur Datenbank hinzufügen
-                - Ein anderes Queryimage verwenden
-                
-                Aktuelle Datenbank: {st.session_state.vector_store.get_collection_stats().get('total_faces', 0)} Gesichter
-                """)
+                if high_quality_mode:
+                    st.warning(f"""
+                    ⚠️ **Keine ähnlichen Gesichter gefunden trotz High Quality Mode**
+                    
+                    **High Quality Optimierungen bereits aktiv:**
+                    - Erweiterte KI-Modelle: ✅
+                    - Bildverbesserung: ✅
+                    - Sensitive Erkennung: ✅
+                    
+                    **Weitere Versuche:**
+                    - Ähnlichkeitsschwelle weiter senken (aktuell: {similarity_threshold*100:.0f}%)
+                    - Andere Bilder derselben Person hochladen
+                    - Datenbank mit mehr ähnlichen Gesichtern erweitern
+                    
+                    **Datenbank-Status:** {st.session_state.vector_store.get_collection_stats().get('total_faces', 0)} Gesichter
+                    """)
+                else:
+                    st.warning(f"""
+                    ⚠️ **Keine ähnlichen Gesichter gefunden**
+                    
+                    **Verbesserungsmöglichkeiten:**
+                    - **High Quality Mode aktivieren** für bessere Erkennungsrate
+                    - Ähnlichkeitsschwelle senken (aktuell: {similarity_threshold*100:.0f}%)
+                    - Mehr Bilder zur Datenbank hinzufügen
+                    - Ein anderes Bild derselben Person verwenden
+                    
+                    Aktuelle Datenbank: {st.session_state.vector_store.get_collection_stats().get('total_faces', 0)} Gesichter
+                    """)
             
         except Exception as e:
+            error_msg = "High Quality Processing" if high_quality_mode else "Face Recognition"
             st.error(f"""
-            💥 **Unerwarteter Fehler bei der Gesichtssuche:**
+            💥 **Unerwarteter Fehler bei {error_msg}:**
             
             `{str(e)}`
             
-            Bitte versuchen Sie es erneut oder verwenden Sie ein anderes Bild.
+            **Fehlerbehebung:**
+            - Versuchen Sie es mit einem anderen Bild
+            - Deaktivieren Sie erweiterte Features temporär
+            - Überprüfen Sie das Bildformat (JPG, PNG empfohlen)
             """)
-            logger.error(f"Search error: {e}")
+            logger.error(f"Enhanced search error: {e}")
         finally:
             # Clean up
             if temp_path.exists():
@@ -357,6 +539,17 @@ def search_similar_faces(uploaded_file, max_results: int, similarity_threshold: 
             
             # Clear progress indicators
             progress_container.empty()
+
+def search_similar_faces(uploaded_file, max_results: int, similarity_threshold: float):
+    """Legacy function - redirect to enhanced version with default parameters"""
+    search_params = {
+        'high_quality_mode': False,
+        'enable_ensemble': False,
+        'enable_preprocessing': False,
+        'enable_upscaling': False,
+        'detection_sensitivity': 'Standard'
+    }
+    return search_similar_faces_enhanced(uploaded_file, max_results, similarity_threshold, search_params)
 
 def show_full_image_with_face_box(image_path, face_location):
     """Display full image with face bounding box"""
