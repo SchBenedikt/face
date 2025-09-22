@@ -30,7 +30,7 @@ VECTOR_DB_PATH = str(DATA_DIR / "face_vectors.db")
 COLLECTION_NAME = "face_embeddings"
 SIMILARITY_THRESHOLD = 0.3  # Weitere Reduzierung für bessere Erkennung schwieriger Fälle
 
-# Face Recognition Quality Settings - Enhanced for low-quality images
+# Face Recognition Quality Settings - Enhanced for high-quality uploaded images
 FACE_EMBEDDING_MODEL = "Facenet512"  # Primary DeepFace model for highest quality
 FACE_EMBEDDING_MODELS = ["Facenet512", "ArcFace", "VGG-Face", "Facenet"]  # Ensemble models
 FACE_DETECTION_BACKENDS = ["opencv", "mtcnn", "retinaface"]  # Multiple detection backends
@@ -40,6 +40,18 @@ FACE_SIMILARITY_ALGORITHM = "enhanced"  # "basic", "enhanced" oder "premium" fü
 FACE_ENSEMBLE_WEIGHTING = True     # Use weighted ensemble of multiple models
 FACE_ALIGNMENT_ENABLED = True      # Enable face alignment for better embeddings
 FACE_ENHANCEMENT_ENABLED = True    # Enable image enhancement for better detection
+
+# High-Quality Mode Settings - Premium processing for uploaded images
+HIGH_QUALITY_MODE_ENABLED = True           # Enable high-quality processing mode
+HIGH_QUALITY_MIN_FACE_SIZE = (15, 15)      # Even smaller faces in high-quality mode
+HIGH_QUALITY_UPSCALE_FACTOR = 2.5          # Maximum upscaling for small images
+HIGH_QUALITY_DENOISE_STRENGTH = 10         # Advanced noise reduction strength
+HIGH_QUALITY_CONTRAST_ENHANCEMENT = True   # Enhanced contrast processing
+HIGH_QUALITY_SHARPENING_ENABLED = True     # Unsharp masking for better details
+HIGH_QUALITY_ENSEMBLE_WEIGHT_COSINE = 0.35      # Cosine similarity weight in ensemble
+HIGH_QUALITY_ENSEMBLE_WEIGHT_EUCLIDEAN = 0.20   # Euclidean similarity weight
+HIGH_QUALITY_ENSEMBLE_WEIGHT_CORRELATION = 0.15 # Correlation weight
+HIGH_QUALITY_DETECTION_SENSITIVITY = "Maximal"  # Default sensitivity for quality mode
 
 # Advanced similarity settings - Tuned for low-quality images
 SIMILARITY_THRESHOLD = 0.25  # Further lowered threshold for better recall with low-quality images

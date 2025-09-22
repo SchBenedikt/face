@@ -95,6 +95,184 @@ def load_and_preprocess_image(image_path: Union[str, Path]) -> Optional[np.ndarr
         logger.error(f"Critical error loading image {image_path}: {e}")
         return None
 
+def load_and_preprocess_image_high_quality(image_path: Union[str, Path]) -> Optional[np.ndarray]:
+    """
+    Load and preprocess an image with premium quality enhancements for uploaded images
+    
+    Args:
+        image_path: Path to the image file
+        
+    Returns:
+        High-quality preprocessed image as numpy array or None if failed
+    """
+    try:
+        image_path = Path(image_path)
+        
+        # Check if file exists and is not empty
+        if not image_path.exists():
+            logger.error(f"Image file does not exist: {image_path}")
+            return None
+        
+        if image_path.stat().st_size < 100:  # Less than 100 bytes is likely not a valid image
+            logger.error(f"Image file too small ({image_path.stat().st_size} bytes): {image_path}")
+            return None
+        
+        # Try multiple loading methods for maximum robustness
+        image = None
+        
+        # Method 1: Try PIL/Pillow first with enhanced error handling
+        try:
+            with Image.open(image_path) as pil_image:
+                # Convert to RGB if necessary
+                if pil_image.mode != 'RGB':
+                    if pil_image.mode == 'RGBA':
+                        # Handle transparency by creating white background
+                        background = Image.new('RGB', pil_image.size, (255, 255, 255))
+                        background.paste(pil_image, mask=pil_image.split()[-1])  # Use alpha channel as mask
+                        pil_image = background
+                    else:
+                        pil_image = pil_image.convert('RGB')
+                
+                # Convert PIL to numpy array (RGB format)
+                image = np.array(pil_image, dtype=np.uint8)
+                logger.debug(f"Loaded image via PIL: {image.shape}")
+                
+        except Exception as pil_error:
+            logger.debug(f"PIL loading failed: {pil_error}")
+        
+        # Method 2: Try OpenCV as fallback
+        if image is None:
+            try:
+                # Use OpenCV with IMREAD_COLOR to force 3-channel output
+                image_bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+                if image_bgr is not None:
+                    # Convert BGR to RGB
+                    image = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+                    logger.debug(f"Loaded image via OpenCV: {image.shape}")
+            except Exception as cv_error:
+                logger.debug(f"OpenCV loading failed: {cv_error}")
+        
+        if image is None:
+            logger.error(f"Failed to load image with all methods: {image_path}")
+            return None
+        
+        # Validate image dimensions
+        if len(image.shape) != 3 or image.shape[2] != 3:
+            logger.error(f"Invalid image dimensions: {image.shape} for {image_path}")
+            return None
+        
+        height, width = image.shape[:2]
+        
+        # Check minimum size requirements
+        if height < 32 or width < 32:
+            logger.debug(f"Image very small but processing anyway: {width}x{height} for {image_path}")
+        
+        # High-quality specific preprocessing
+        enhanced_image = _apply_high_quality_preprocessing(image, image_path)
+        
+        # Final validation
+        if enhanced_image.dtype != np.uint8:
+            enhanced_image = enhanced_image.astype(np.uint8)
+        
+        logger.debug(f"Successfully preprocessed high-quality image: {image_path} -> {enhanced_image.shape}")
+        return enhanced_image
+        
+    except Exception as e:
+        logger.error(f"Critical error loading high-quality image {image_path}: {e}")
+        return None
+
+def _apply_high_quality_preprocessing(image: np.ndarray, image_path: Path) -> np.ndarray:
+    """
+    Apply premium quality preprocessing to uploaded images
+    
+    Args:
+        image: Input image
+        image_path: Path for logging purposes
+        
+    Returns:
+        Enhanced image
+    """
+    try:
+        enhanced = image.copy()
+        original_height, original_width = enhanced.shape[:2]
+        
+        # Step 1: Intelligent upscaling for small images
+        if original_height < 400 or original_width < 400:
+            # Calculate optimal scale factor
+            target_min_size = 600  # Target minimum dimension
+            scale_factor = max(1.2, target_min_size / min(original_height, original_width))
+            
+            # Cap scale factor to avoid excessive memory usage
+            scale_factor = min(scale_factor, 3.0)
+            
+            new_height = int(original_height * scale_factor)
+            new_width = int(original_width * scale_factor)
+            
+            # Use high-quality bicubic interpolation
+            enhanced = cv2.resize(enhanced, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+            logger.debug(f"Upscaled image {image_path.name} from {original_width}x{original_height} to {new_width}x{new_height} (factor: {scale_factor:.2f})")
+        
+        # Step 2: Advanced denoising
+        try:
+            # Apply Non-local Means Denoising for color images
+            enhanced = cv2.fastNlMeansDenoisingColored(enhanced, None, 8, 8, 7, 21)
+            logger.debug(f"Applied advanced denoising to {image_path.name}")
+        except Exception as denoise_error:
+            logger.debug(f"Denoising failed for {image_path.name}: {denoise_error}")
+        
+        # Step 3: Enhanced contrast and brightness adjustment
+        try:
+            # Convert to LAB color space for better processing
+            lab = cv2.cvtColor(enhanced, cv2.COLOR_RGB2LAB)
+            l_channel = lab[:, :, 0]
+            
+            # Apply adaptive histogram equalization
+            clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+            l_channel = clahe.apply(l_channel)
+            
+            # Apply gentle contrast stretching
+            p2, p98 = np.percentile(l_channel, [3, 97])  # Use slightly more conservative percentiles
+            if p98 > p2:  # Avoid division by zero
+                l_channel = np.clip((l_channel - p2) / (p98 - p2) * 255, 0, 255).astype(np.uint8)
+            
+            lab[:, :, 0] = l_channel
+            enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+            logger.debug(f"Applied enhanced contrast adjustment to {image_path.name}")
+            
+        except Exception as contrast_error:
+            logger.debug(f"Contrast enhancement failed for {image_path.name}: {contrast_error}")
+        
+        # Step 4: Intelligent sharpening (unsharp masking)
+        try:
+            # Create Gaussian blur
+            blur_strength = 2.0 if min(enhanced.shape[:2]) > 500 else 1.5
+            gaussian_blur = cv2.GaussianBlur(enhanced, (9, 9), blur_strength)
+            
+            # Apply unsharp masking
+            sharpening_strength = 0.3  # Conservative sharpening to avoid artifacts
+            enhanced = cv2.addWeighted(enhanced, 1 + sharpening_strength, gaussian_blur, -sharpening_strength, 0)
+            logger.debug(f"Applied intelligent sharpening to {image_path.name}")
+            
+        except Exception as sharp_error:
+            logger.debug(f"Sharpening failed for {image_path.name}: {sharp_error}")
+        
+        # Step 5: Final quality validation and cleanup
+        try:
+            # Ensure values are in valid range
+            enhanced = np.clip(enhanced, 0, 255)
+            
+            # Apply gentle smoothing to reduce any processing artifacts
+            enhanced = cv2.bilateralFilter(enhanced, 3, 20, 20)
+            
+        except Exception as cleanup_error:
+            logger.debug(f"Final cleanup failed for {image_path.name}: {cleanup_error}")
+        
+        return enhanced.astype(np.uint8)
+        
+    except Exception as e:
+        logger.warning(f"High-quality preprocessing failed for {image_path}: {e}, using original")
+        return image
+
 def is_valid_image_file(file_path: Union[str, Path]) -> bool:
     """
     Check if file is a valid image file with enhanced validation

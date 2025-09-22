@@ -287,11 +287,13 @@ def search_similar_faces_enhanced(uploaded_file, max_results: int, similarity_th
             # Step 1: Load and preprocess image with quality-based enhancement
             if high_quality_mode:
                 status_text.text("📷 Lade Bild mit erweiterten Qualitätsverbesserungen...")
+                # Import the high-quality loading function
+                from utils import load_and_preprocess_image_high_quality
+                query_image = load_and_preprocess_image_high_quality(temp_path)
             else:
                 status_text.text("📷 Lade und verarbeite Bild...")
+                query_image = load_and_preprocess_image(temp_path)
             progress_bar.progress(15)
-            
-            query_image = load_and_preprocess_image(temp_path)
             
             if query_image is None:
                 st.error("❌ Fehler beim Laden des Bildes. Unterstützte Formate: JPG, PNG, BMP, WEBP")
@@ -348,7 +350,7 @@ def search_similar_faces_enhanced(uploaded_file, max_results: int, similarity_th
                     """)
                 return
             
-            # Enhanced face information display
+            # Enhanced face information display with quality assessment
             if len(face_locations) > 1:
                 st.warning(f"👥 {len(face_locations)} Gesichter erkannt! (High Quality Mode: {'Aktiviert' if high_quality_mode else 'Deaktiviert'})")
                 
@@ -357,6 +359,10 @@ def search_similar_faces_enhanced(uploaded_file, max_results: int, similarity_th
                 
                 cols = st.columns(min(len(face_locations), 4))
                 face_choice = None
+                
+                # Import quality assessor for high quality mode
+                if high_quality_mode:
+                    from face_quality import face_quality_assessor
                 
                 for idx, face_loc in enumerate(face_locations):
                     with cols[idx % 4]:
@@ -373,6 +379,38 @@ def search_similar_faces_enhanced(uploaded_file, max_results: int, similarity_th
                         
                         # Show face quality metrics if in high quality mode
                         if high_quality_mode:
+                            try:
+                                quality_metrics = face_quality_assessor.assess_face_quality(face_image)
+                                overall_quality = quality_metrics.get('overall_quality', 0.0)
+                                quality_category = quality_metrics.get('quality_category', 'poor')
+                                
+                                # Display quality with appropriate color coding
+                                if quality_category == 'excellent':
+                                    st.success(f"Qualität: Exzellent ({overall_quality*100:.0f}%)")
+                                elif quality_category == 'good':
+                                    st.success(f"Qualität: Gut ({overall_quality*100:.0f}%)")
+                                elif quality_category == 'fair':
+                                    st.warning(f"Qualität: Mäßig ({overall_quality*100:.0f}%)")
+                                else:
+                                    st.error(f"Qualität: Niedrig ({overall_quality*100:.0f}%)")
+                                
+                                # Show top recommendation
+                                recommendations = quality_metrics.get('recommendations', [])
+                                if recommendations:
+                                    st.caption(f"💡 {recommendations[0]}")
+                                    
+                            except Exception as quality_error:
+                                logger.debug(f"Quality assessment failed: {quality_error}")
+                                face_area = (right - left) * (bottom - top)
+                                quality_score = min(100, max(0, (face_area / 1000) * 100))
+                                if quality_score > 70:
+                                    st.success(f"Größe: {quality_score:.0f}%")
+                                elif quality_score > 40:
+                                    st.warning(f"Größe: {quality_score:.0f}%")
+                                else:
+                                    st.error(f"Größe: {quality_score:.0f}%")
+                        else:
+                            # Standard mode - basic size quality indicator
                             face_area = (right - left) * (bottom - top)
                             quality_score = min(100, max(0, (face_area / 1000) * 100))
                             if quality_score > 70:
@@ -395,6 +433,40 @@ def search_similar_faces_enhanced(uploaded_file, max_results: int, similarity_th
                 quality_msg = " (High Quality Mode aktiv)" if high_quality_mode else ""
                 st.success(f"✅ 1 Gesicht erkannt und verarbeitet{quality_msg}.")
                 face_location = face_locations[0]
+                
+                # Show quality assessment for single face in high quality mode
+                if high_quality_mode:
+                    try:
+                        from face_quality import face_quality_assessor
+                        top, right, bottom, left = face_location
+                        face_image = query_image[top:bottom, left:right]
+                        
+                        quality_metrics = face_quality_assessor.assess_face_quality(face_image)
+                        overall_quality = quality_metrics.get('overall_quality', 0.0)
+                        quality_category = quality_metrics.get('quality_category', 'poor')
+                        
+                        # Show quality assessment
+                        col1, col2 = st.columns([1, 2])
+                        with col1:
+                            if quality_category == 'excellent':
+                                st.success(f"🌟 Exzellente Qualität ({overall_quality*100:.0f}%)")
+                            elif quality_category == 'good':
+                                st.success(f"✅ Gute Qualität ({overall_quality*100:.0f}%)")
+                            elif quality_category == 'fair':
+                                st.warning(f"⚠️ Mäßige Qualität ({overall_quality*100:.0f}%)")
+                            else:
+                                st.error(f"❌ Niedrige Qualität ({overall_quality*100:.0f}%)")
+                        
+                        with col2:
+                            recommendations = quality_metrics.get('recommendations', [])
+                            if len(recommendations) > 1:
+                                with st.expander("💡 Qualitäts-Verbesserungen", expanded=False):
+                                    for rec in recommendations[:3]:  # Show top 3 recommendations
+                                        st.write(f"• {rec}")
+                            
+                    except Exception as quality_error:
+                        logger.debug(f"Single face quality assessment failed: {quality_error}")
+                        st.info("📊 Qualitätsanalyse: Aktiviert für optimale Ergebnisse")
                 
             # Step 3: Enhanced embedding extraction with ensemble models
             if high_quality_mode and enable_ensemble:
