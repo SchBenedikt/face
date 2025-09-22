@@ -15,22 +15,22 @@ SCRAPED_DIR = DATA_DIR / "scraped"
 for directory in [DATA_DIR, IMAGES_DIR, EMBEDDINGS_DIR, SCRAPED_DIR]:
     directory.mkdir(exist_ok=True)
 
-# Face recognition settings
-FACE_RECOGNITION_MODEL = "cnn"  # "hog" (schneller) oder "cnn" (genauer)
+# Face recognition settings - Optimized for low-quality image detection
+FACE_RECOGNITION_MODEL = "cnn"  # "hog" (schneller) oder "cnn" (genauer) - CNN für bessere Qualität
 FACE_RECOGNITION_TOLERANCE = 0.6
-MIN_FACE_SIZE = (30, 30)  # Kleinere Gesichter zulassen
+MIN_FACE_SIZE = (15, 15)  # Noch kleinere Gesichter zulassen für bessere Detektion
 MAX_FACE_SIZE = (None, None)  # Keine Begrenzung für Gesichtsgröße - maximale Qualität
 
 # Model comparison:
 # HOG: Schneller, weniger Ressourcen, gut für Echtzeit
 # CNN: Genauer, mehr Ressourcen, besser für Qualität
 
-# Vector database settings
+# Vector database settings - Enhanced for better low-quality detection
 VECTOR_DB_PATH = str(DATA_DIR / "face_vectors.db")
 COLLECTION_NAME = "face_embeddings"
-SIMILARITY_THRESHOLD = 0.4  # Verbesserte Threshold für bessere Gesichtserkennung (0.4 = 40% Ähnlichkeit)
+SIMILARITY_THRESHOLD = 0.3  # Weitere Reduzierung für bessere Erkennung schwieriger Fälle
 
-# Face Recognition Quality Settings - Enhanced for better accuracy
+# Face Recognition Quality Settings - Enhanced for low-quality images
 FACE_EMBEDDING_MODEL = "Facenet512"  # Primary DeepFace model for highest quality
 FACE_EMBEDDING_MODELS = ["Facenet512", "ArcFace", "VGG-Face", "Facenet"]  # Ensemble models
 FACE_DETECTION_BACKENDS = ["opencv", "mtcnn", "retinaface"]  # Multiple detection backends
@@ -39,9 +39,10 @@ FACE_QUALITY_VALIDATION = True     # Embedding-Qualität validieren
 FACE_SIMILARITY_ALGORITHM = "enhanced"  # "basic", "enhanced" oder "premium" für bessere Genauigkeit
 FACE_ENSEMBLE_WEIGHTING = True     # Use weighted ensemble of multiple models
 FACE_ALIGNMENT_ENABLED = True      # Enable face alignment for better embeddings
+FACE_ENHANCEMENT_ENABLED = True    # Enable image enhancement for better detection
 
-# Advanced similarity settings
-SIMILARITY_THRESHOLD = 0.35  # Lowered threshold for better recall with ensemble approach
+# Advanced similarity settings - Tuned for low-quality images
+SIMILARITY_THRESHOLD = 0.25  # Further lowered threshold for better recall with low-quality images
 ENSEMBLE_SIMILARITY_WEIGHTS = {
     'cosine': 0.5,
     'euclidean': 0.25, 
