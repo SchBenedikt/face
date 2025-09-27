@@ -1041,7 +1041,7 @@ def show_full_image_tab(image_path, face_location):
             
         st.image(image_with_box, caption=caption, width='stretch')
         
-        # Image info
+        # Image info  
         col1, col2, col3 = st.columns(3)
         
         with col1:
@@ -1056,6 +1056,46 @@ def show_full_image_tab(image_path, face_location):
                 st.metric("Gesicht erkannt", "✅ Ja")
             else:
                 st.metric("Gesicht erkannt", "❌ Nein")
+        
+        # Enhanced URL information from metadata
+        st.markdown("---")
+        st.subheader("🔗 Bild-URLs")
+        
+        # Get metadata for this image
+        from image_metadata_utils import get_image_metadata
+        metadata = get_image_metadata(str(image_path))
+        
+        if metadata:
+            # Display both URLs
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**📸 Direkte Bild-URL:**")
+                image_url = metadata.get('image_url', 'Nicht verfügbar')
+                if image_url and image_url != 'Nicht verfügbar':
+                    st.code(image_url, language=None)
+                    if st.button("🔗 Bild-URL öffnen", key="open_image_url"):
+                        st.markdown(f'<a href="{image_url}" target="_blank">Bild öffnen</a>', unsafe_allow_html=True)
+                else:
+                    st.text("Nicht verfügbar")
+            
+            with col2:
+                st.markdown("**🌐 Gefunden auf Seite:**")
+                source_page_url = metadata.get('source_page_url', 'Nicht verfügbar')
+                if source_page_url and source_page_url != 'Nicht verfügbar':
+                    st.code(source_page_url, language=None)
+                    if st.button("🔗 Seite öffnen", key="open_source_page"):
+                        st.markdown(f'<a href="{source_page_url}" target="_blank">Seite öffnen</a>', unsafe_allow_html=True)
+                else:
+                    st.text("Nicht verfügbar")
+            
+            # Additional metadata
+            if metadata.get('website'):
+                st.markdown(f"**🏠 Website:** {metadata['website']}")
+            if metadata.get('download_date'):
+                st.markdown(f"**📅 Heruntergeladen:** {metadata['download_date']}")
+        else:
+            st.info("ℹ️ Keine erweiterten Metadaten verfügbar")
     
     except Exception as e:
         st.error(f"❌ Fehler beim Anzeigen des Vollbildes: {str(e)}")
@@ -3725,7 +3765,7 @@ def display_scraped_images_enhanced():
                                 thumbnail = create_thumbnail(image, THUMBNAIL_SIZE)
                                 st.image(thumbnail, caption=image_path.name, width='stretch')
                             
-                            # Enhanced image info
+                            # Enhanced image info with metadata
                             st.caption(f"📁 {image_path.name}")
                             if image_path.stat().st_size:
                                 size_kb = image_path.stat().st_size / 1024
@@ -3734,6 +3774,22 @@ def display_scraped_images_enhanced():
                             # Show original dimensions
                             original_height, original_width = image.shape[:2]
                             st.caption(f"📐 {original_width}x{original_height} px")
+                            
+                            # Show enhanced metadata if available
+                            from image_metadata_utils import get_image_metadata
+                            metadata = get_image_metadata(str(image_path))
+                            if metadata:
+                                # Show source page URL in tooltip/expandable section
+                                source_page = metadata.get('source_page_url')
+                                if source_page:
+                                    with st.expander("🔗 URLs", expanded=False):
+                                        st.caption("**Gefunden auf:**")
+                                        st.caption(source_page[:50] + "..." if len(source_page) > 50 else source_page)
+                                        
+                                        image_url = metadata.get('image_url')
+                                        if image_url:
+                                            st.caption("**Direkte URL:**")
+                                            st.caption(image_url[:50] + "..." if len(image_url) > 50 else image_url)
                         else:
                             st.error(f"Could not load: {image_path.name}")
                     except Exception as e:

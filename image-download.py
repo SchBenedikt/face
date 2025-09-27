@@ -14,6 +14,8 @@ Vereint:
             if is_related_image_url(full_url):
                 if full_url not in found_images:
                     found_images.add(full_url)
+                    # Track which page this image was found on
+                    image_page_mapping[full_url] = url
                     if save_image_url_live(full_url):
                         print(f"    📄 {full_url} (Text-Link)")
                     else:
@@ -63,11 +65,12 @@ METADATA_FILE = "image_metadata.json"  # Speichert URL-Mapping
 
 # Globale Listen
 found_images = set()
-visited = set()
+visited = set()  
 errors = []
 image_metadata = {}  # Speichert URL -> lokaler Pfad Mapping
 queue = []  # Globale Queue für Worker
 saved_urls = set()  # Track bereits gespeicherte URLs
+image_page_mapping = {}  # Mapping von image_url -> source_page_url
 
 # Erweiterte Wortliste für Upload-Verzeichnisse (ALLE möglichen Begriffe)
 UPLOAD_KEYWORDS = [
@@ -307,7 +310,7 @@ async def worker(browser, sem):
 
 async def process_page(browser, url, depth):
     """Verarbeitet eine einzelne Seite"""
-    global found_images, visited, errors, queue
+    global found_images, visited, errors, queue, image_page_mapping
     
     if url in visited:
         return
@@ -321,6 +324,8 @@ async def process_page(browser, url, depth):
         if is_allowed_image(resp_url) and is_related_image_url(resp_url):
             if resp_url not in found_images:  # Noch nicht in dieser Session gefunden
                 found_images.add(resp_url)
+                # Track which page this image was found on
+                image_page_mapping[resp_url] = url
                 if save_image_url_live(resp_url):  # Nur ausgeben wenn wirklich neu gespeichert
                     print(f"    🖼️  {resp_url}")
                 else:
@@ -354,6 +359,8 @@ async def process_page(browser, url, depth):
                         if is_allowed_image(full_url) and is_related_image_url(full_url):
                             if full_url not in found_images:
                                 found_images.add(full_url)
+                                # Track which page this image was found on
+                                image_page_mapping[full_url] = url
                                 if save_image_url_live(full_url):
                                     print(f"    🖼️  {full_url}")
                                 else:
@@ -369,6 +376,8 @@ async def process_page(browser, url, depth):
                 if is_allowed_image(full_url) and is_related_image_url(full_url):
                     if full_url not in found_images:
                         found_images.add(full_url)
+                        # Track which page this image was found on
+                        image_page_mapping[full_url] = url
                         if save_image_url_live(full_url):
                             print(f"    🎨 {full_url} (CSS background)")
                         else:
@@ -806,7 +815,7 @@ def get_filename_from_url(url, website_name):
 
 async def download_image(session, url, download_dir, website_name):
     """Lädt ein einzelnes Bild herunter und speichert Metadaten"""
-    global image_metadata
+    global image_metadata, image_page_mapping
     
     try:
         filename = get_filename_from_url(url, website_name)
@@ -819,11 +828,20 @@ async def download_image(session, url, download_dir, website_name):
         if filepath.exists():
             # Metadaten trotzdem speichern falls noch nicht vorhanden
             if str(filepath) not in image_metadata:
+                source_page_url = image_page_mapping.get(url)
                 image_metadata[str(filepath)] = {
                     'source_url': url,
                     'website': website_name,
                     'download_date': time.strftime('%Y-%m-%d %H:%M:%S')
                 }
+                # Save enhanced metadata
+                add_image_metadata(
+                    local_path=str(filepath),
+                    image_url=url,
+                    source_page_url=source_page_url,
+                    website=website_name,
+                    download_date=time.strftime('%Y-%m-%d %H:%M:%S')
+                )
             return filepath
         
         async with session.get(url) as response:
@@ -838,10 +856,14 @@ async def download_image(session, url, download_dir, website_name):
                 with open(filepath, 'wb') as f:
                     f.write(content)
                 
-                # Metadaten mit Utilities speichern
+                # Get source page URL from mapping
+                source_page_url = image_page_mapping.get(url)
+                
+                # Enhanced metadata with both URLs
                 add_image_metadata(
                     local_path=str(filepath),
-                    source_url=url,
+                    image_url=url,
+                    source_page_url=source_page_url,
                     website=website_name,
                     download_date=time.strftime('%Y-%m-%d %H:%M:%S'),
                     file_size=len(content)
