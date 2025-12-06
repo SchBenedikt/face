@@ -498,16 +498,19 @@ def search_with_selected_face_enhanced(face_index: int):
                 adjusted_threshold = max(similarity_threshold - 0.1, 0.2)
                 adjusted_max_results = max_results * 2
             
-            # Search for similar faces
+            # Search for similar faces (local database)
             similar_faces = st.session_state.vector_store.search_similar_faces(
                 query_embedding, 
                 n_results=adjusted_max_results,
                 min_similarity=adjusted_threshold
             )
             
-            # Apply advanced filters
-            if similar_faces:
-                filtered_faces = apply_advanced_face_filters(similar_faces, search_params)
+            # Use local results only
+            all_results = similar_faces
+            
+            # Apply advanced filters to combined results
+            if all_results:
+                filtered_faces = apply_advanced_face_filters(all_results, search_params)
                 
                 # Sort results based on selected criteria
                 sorted_faces = sort_search_results(filtered_faces, search_params['sort_by'])
@@ -515,19 +518,18 @@ def search_with_selected_face_enhanced(face_index: int):
                 # Store results
                 st.session_state.search_results = sorted_faces
                 
-                # Show enhanced results summary
+                # Show results summary
                 if sorted_faces:
-                    original_count = len(similar_faces)
+                    original_count = len(all_results)
                     filtered_count = len(sorted_faces)
                     avg_similarity = sum(face['similarity'] for face in sorted_faces) / len(sorted_faces)
                     top_similarity = sorted_faces[0]['similarity'] if sorted_faces else 0
                     
                     st.success(f"""
-                    🎯 **Enhanced Search Results for Face {face_index + 1}**
+                    🎯 **Search Results for Face {face_index + 1}**
                     
-                    📊 **Quality Metrics:**
-                    - Original Results: {original_count}
-                    - After Quality Filtering: {filtered_count}
+                    📊 **Search Summary:**
+                    - Found: {filtered_count} faces (from {original_count} total)
                     - Top Similarity: {top_similarity*100:.1f}%
                     - Average Similarity: {avg_similarity*100:.1f}%
                     - Search Mode: {search_params['search_mode']}
@@ -544,12 +546,12 @@ def search_with_selected_face_enhanced(face_index: int):
                     - Reduce minimum face size filter
                     """)
             else:
-                st.warning(f"No similar faces found for Face {face_index + 1}")
+                st.warning(f"No similar faces found for Face {face_index + 1} in any database")
             
             st.rerun()
             
         except Exception as e:
-            st.error(f"❌ Fehler bei der erweiterten Suche: {str(e)}")
+            st.error(f"❌ Error in enhanced search: {str(e)}")
 
 def apply_advanced_face_filters(faces, search_params):
     """Apply advanced quality and size filters to search results"""
@@ -2046,37 +2048,121 @@ def display_search_results(results: List[Dict[str, Any]]):
     for i, face_data in enumerate(page_results):
         with cols[i % 4]:
             try:
-                # Load image
-                image_path = Path(face_data['metadata']['image_path'])
-                if image_path.exists():
-                    image = load_and_preprocess_image(image_path)
+                # Check if this is an external result
+                is_external = face_data.get('source') == 'external'
+                source_db = face_data.get('source_db', '')
+                
+                if is_external:
+                    # Handle external image (URL)
+                    image_url = face_data['image_path']  # This is actually a URL for external results
+                    ext_metadata = face_data.get('metadata', {})
+                    thumbnail_url = ext_metadata.get('thumbnail_url')
                     
-                    if image is not None:
-                        # Extract face region
-                        location = face_data['metadata'].get('location')
-                        if location:
-                            # Parse location string "top,right,bottom,left"
-                            if isinstance(location, str):
-                                coords = location.split(',')
-                                if len(coords) == 4:
-                                    top, right, bottom, left = map(int, coords)
-                                    face_image = image[top:bottom, left:right]
-                                    
-                                    # Create thumbnail
-                                    thumbnail = create_thumbnail(face_image, THUMBNAIL_SIZE)
-                                    
-                                    # Display with enhanced similarity information
-                                    st.image(thumbnail, width='stretch')
-                                    
-                                    # Enhanced similarity display with quality indicators
-                                    similarity_percentage = face_data['similarity'] * 100
-                                    confidence_score = face_data.get('confidence_score', similarity_percentage / 100) * 100
-                                    
-                                    # Calculate face quality metrics
-                                    face_width = right - left
-                                    face_height = bottom - top
-                                    face_size = min(face_width, face_height)
-                                    face_area = face_width * face_height
+                    # Display external image placeholder or thumbnail
+                    if thumbnail_url and thumbnail_url.startswith('http'):
+                        try:
+                            st.image(thumbnail_url, width='stretch')
+                        except:
+                            # Fallback to placeholder
+                            st.markdown("🖼️ **External Image**")
+                            st.info("Preview not available")
+                    else:
+                        # Show placeholder for external result
+                        st.markdown("🌐 **External Face Match**")
+                        st.info("Face analysis result")
+                    
+                    # External source indicator
+                    api_provider = ext_metadata.get('api_provider', 'External API')
+                    st.markdown(f"🔗 **{api_provider}**")
+                    
+                    # External metadata display
+                    if 'name' in ext_metadata:
+                        st.markdown(f"👤 **{ext_metadata['name']}**")
+                    
+                    if 'category' in ext_metadata:
+                        st.markdown(f"📂 {ext_metadata['category']}")
+                    
+                    if 'database_type' in ext_metadata:
+                        db_type = ext_metadata['database_type'].replace('_', ' ').title()
+                        st.markdown(f"🗃️ {db_type} Database")
+                    
+                    # Show detected attributes
+                    if 'detected_age' in ext_metadata:
+                        st.markdown(f"� Age: {ext_metadata['detected_age']}")
+                    
+                    if 'detected_gender' in ext_metadata:
+                        st.markdown(f"⚥ Gender: {ext_metadata['detected_gender']}")
+                    
+                    # Show emotion if available
+                    if 'emotion_analysis' in ext_metadata:
+                        emotion = ext_metadata['emotion_analysis']
+                        if emotion:
+                            top_emotion = max(emotion.items(), key=lambda x: x[1] if isinstance(x[1], (int, float)) else 0)
+                            st.markdown(f"� Emotion: {top_emotion[0]} ({top_emotion[1]:.0f}%)")
+                    
+                    # Similarity and confidence
+                    similarity_percentage = face_data['similarity'] * 100
+                    confidence = ext_metadata.get('confidence', face_data['similarity']) * 100
+                    
+                    # Color-coded similarity display for external results
+                    if similarity_percentage >= 70:
+                        st.success(f"**🎯 {similarity_percentage:.1f}%**")
+                    elif similarity_percentage >= 50:
+                        st.info(f"**✅ {similarity_percentage:.1f}%**")
+                    elif similarity_percentage >= 30:
+                        st.warning(f"**⚠️ {similarity_percentage:.1f}%**")
+                    else:
+                        st.error(f"**❓ {similarity_percentage:.1f}%**")
+                    
+                    st.caption(f"🔍 Confidence: {confidence:.1f}%")
+                    
+                    # Show similarity factors if available
+                    if 'similarity_factors' in ext_metadata:
+                        factors = ext_metadata['similarity_factors']
+                        if factors:
+                            with st.expander("📊 Match Details", expanded=False):
+                                for factor in factors:
+                                    st.write(f"• {factor}")
+                    
+                    # External link if available
+                    if ext_metadata.get('image_url') and ext_metadata['image_url'].startswith('http'):
+                        st.markdown(f"[🔗 View Source]({ext_metadata['image_url']})")
+                
+                else:
+                    # Handle local image (existing code)
+                    image_path = Path(face_data['metadata']['image_path'])
+                    if image_path.exists():
+                        image = load_and_preprocess_image(image_path)
+                        
+                        if image is not None:
+                            # Extract face region
+                            location = face_data['metadata'].get('location')
+                            if location:
+                                # Parse location string "top,right,bottom,left"
+                                if isinstance(location, str):
+                                    coords = location.split(',')
+                                    if len(coords) == 4:
+                                        top, right, bottom, left = map(int, coords)
+                                        face_image = image[top:bottom, left:right]
+                                        
+                                        # Create thumbnail
+                                        thumbnail = create_thumbnail(face_image, THUMBNAIL_SIZE)
+                                        
+                                        # Display with enhanced similarity information
+                                        st.image(thumbnail, width='stretch')
+                                        
+                                        # Local source indicator
+                                        st.markdown("💾 **Local Database**")
+                                        
+                                        # Enhanced similarity display with quality indicators
+                                        similarity_percentage = face_data['similarity'] * 100
+                                        confidence_score = face_data.get('confidence_score', similarity_percentage / 100) * 100
+                                        
+                                        # Calculate face quality metrics
+                                        face_width = right - left
+                                        face_height = bottom - top
+                                        face_size = min(face_width, face_height)
+                                        face_area = face_width * face_height
                                     
                                     # Quality indicators
                                     quality_indicators = []
@@ -2200,9 +2286,9 @@ def display_search_results(results: List[Dict[str, Any]]):
                             # Add full image view button
                             if st.button("🖼️ Ganzes Bild", key=f"full_img_no_loc_{i}", help="Ganzes Bild anzeigen"):
                                 show_full_image_with_face_box(image_path, None)
-                else:
-                    st.error("Image not found")
-                    
+                    else:
+                        st.error("Image not found")
+                        
             except Exception as e:
                 st.error(f"Error displaying result: {e}")
 
