@@ -27,15 +27,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 # Import our modules
-try:
-    # Try to use new improved engine with best AI models
-    from face_recognition_engine_new import FaceRecognitionEngine
-    logger.info("✅ Using improved Face Recognition Engine with best AI models")
-except ImportError:
-    # Fall back to old engine if new one is not available
-    from face_recognition_engine import FaceRecognitionEngine
-    logger.info("Using legacy Face Recognition Engine")
-
+from face_recognition_engine import FaceRecognitionEngine
 from vector_store import FaceVectorStore
 from old_image_scraper import AdvancedImageScraper, advanced_scraper
 from duplicate_detector import duplicate_detector
@@ -46,14 +38,6 @@ from config import (
     IMAGES_DIR, SCRAPED_DIR,
     FACE_RECOGNITION_MODEL
 )
-
-# Import new modular components (optional)
-try:
-    from models import FaceDetector, FaceRecognizer
-    from ui.components import display_search_results_grid, show_stats_metrics
-    logger.info("✅ New modular components available")
-except ImportError:
-    logger.info("Using legacy components only")
 
 # Page configuration
 st.set_page_config(
@@ -136,25 +120,6 @@ def main():
             st.metric("Unique Images", stats.get("unique_images", 0))
         else:
             st.warning("Database not initialized")
-        
-        st.markdown("---")
-        
-        # Show active AI models if available
-        try:
-            if hasattr(st.session_state.face_engine, 'get_model_info'):
-                st.subheader("🤖 Active AI Models")
-                model_info = st.session_state.face_engine.get_model_info()
-                
-                # Detection model
-                detection_info = model_info.get('detection', {})
-                st.info(f"**Detection:** {detection_info.get('backend', 'Unknown').upper()}")
-                
-                # Recognition model
-                recognition_info = model_info.get('recognition', {})
-                st.info(f"**Recognition:** {recognition_info.get('name', 'Unknown')}")
-                st.caption(f"✨ {recognition_info.get('accuracy', 'N/A')} - {model_info.get('embedding_dimension', 'N/A')}D")
-        except Exception as e:
-            logger.debug(f"Could not display model info: {e}")
     
     # Handle page changes and clear modal states when switching pages
     if 'active_page' not in st.session_state:

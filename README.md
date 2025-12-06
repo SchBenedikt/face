@@ -13,6 +13,22 @@
 
 </div>
 
+---
+
+## ⚠️ **IMPORTANT DISCLAIMER**
+
+**For Educational Purposes Only!** This project is intended solely for learning and educational purposes.
+
+- ❌ **DO NOT use for illegal purposes**
+- ❌ **DO NOT use for surveillance without consent**
+- ❌ **DO NOT violate privacy or rights of others**
+- ✅ **ONLY use with your own images or with explicit permission**
+- ⚖️ **Comply with all applicable privacy laws (GDPR, etc.)**
+
+**Use at your own risk.** The author assumes no liability for misuse, damages, or legal consequences arising from the use of this software.
+
+---
+
 ## 📚 Table of Contents
 
 - [🚀 Quick Start](#-quick-start)
