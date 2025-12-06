@@ -17,7 +17,7 @@ playwright==1.40.0
 beautifulsoup4==4.12.2
 requests==2.31.0
 
-polotly==6.3.0
+plotly==5.18.0
 asyncio==3.4.3
 aiofiles==23.2.1
 python-dotenv==1.0.1
@@ -25,6 +25,8 @@ tqdm==4.66.1
 
 torch==2.1.2           # Kompatibles Wheel vorab prüfen!
 torchvision==0.16.2    # Muss zur Torch-Version passen
-tensorflow==2.15.0     # Letzte Version ohne tf-keras Abhängigkeit
+tensorflow>=2.15.0     # TensorFlow für Deep Learning Modelle
+tf-keras>=2.15.0       # Erforderlich für tensorflow >= 2.16
+retina-face>=0.0.17    # State-of-the-art Face Detection (optional, aber empfohlen)
 matplotlib==3.8.4
 seaborn==0.13.2
