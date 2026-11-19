@@ -81,6 +81,15 @@ PAGES = [
     "⚙️ Settings",
 ]
 
+# These pages add faces during their own run. An empty-state notice rendered
+# before their upload/process action would still be visible afterwards and
+# contradict the success summary until the next rerun.
+DATA_ENTRY_PAGES = (
+    "📥 Image Upload & Processing",
+    "🧠 Batch Face Processing",
+    "🌐 Web Scraping",
+)
+
 
 def count_images(directory: Path, recursive: bool = False) -> int:
     """Count image files in a directory, optionally including subdirectories."""
@@ -300,19 +309,10 @@ def main():
 
     st.title("🔍 Face Recognition Search")
 
-    # A fresh install has no faces yet. Point the user at the two ways to add
-    # data instead of leaving the start page without any explanation.
-    try:
-        empty_state_stats = st.session_state.vector_store.get_collection_stats()
-    except Exception:  # noqa: BLE001 - the sidebar will still show its own error
-        empty_state_stats = {}
-    if "error" not in empty_state_stats and empty_state_stats.get("total_faces", 0) == 0:
-        st.info(
-            "📭 Noch keine Gesichter in der Datenbank. Lade unter "
-            "**📥 Image Upload & Processing** Bilder hoch oder starte unter "
-            "**🌐 Web Scraping** einen Import – danach erscheinen die Gesichter "
-            "in der Galerie."
-        )
+    # Messages from a processing run that deliberately triggered a rerun so the
+    # sidebar stats reflect the newly written faces.
+    for flash_kind, flash_message in st.session_state.pop("_flash_messages", []):
+        getattr(st, flash_kind)(flash_message)
 
     # Buttons deep in a page queue a navigation target; applying it before the
     # selectbox is instantiated is the supported way to move the sidebar.
@@ -358,7 +358,22 @@ def main():
         
         # Update active page
         st.session_state.active_page = page
-    
+
+    # A fresh install has no faces yet. Point the user at the two ways to add
+    # data, but not on the pages that add data themselves (see DATA_ENTRY_PAGES).
+    if page not in DATA_ENTRY_PAGES:
+        try:
+            empty_state_stats = st.session_state.vector_store.get_collection_stats()
+        except Exception:  # noqa: BLE001 - the sidebar will still show its own error
+            empty_state_stats = {}
+        if "error" not in empty_state_stats and empty_state_stats.get("total_faces", 0) == 0:
+            st.info(
+                "📭 Noch keine Gesichter in der Datenbank. Lade unter "
+                "**📥 Image Upload & Processing** Bilder hoch oder starte unter "
+                "**🌐 Web Scraping** einen Import – danach erscheinen die Gesichter "
+                "in der Galerie."
+            )
+
     # Check for modal displays - they will show as overlays, don't interrupt main page
     if 'info_face_id' in st.session_state and 'info_image_path' in st.session_state and 'info_face_location' in st.session_state:
         show_face_info_modal()
@@ -396,6 +411,11 @@ def main():
         database_stats_page()
     elif page == "⚙️ Settings":
         settings_page()
+
+    # A successful upload changes the sidebar stats, which were rendered before
+    # the page body ran. Refresh once the page function has returned.
+    if st.session_state.pop("_refresh_after_processing", False):
+        st.rerun()
 
 def face_search_page():
     """Face search functionality with multi-face selection"""
@@ -3176,8 +3196,10 @@ def process_existing_images(image_paths: List[Path]):
         status_text.text("Complete!")
         
         # Provide detailed summary
+        success_message = None
         if added_count > 0:
-            st.success(f"🎉 Successfully processed {len(image_paths)} images and added {added_count} face embeddings to the database!")
+            success_message = f"🎉 Successfully processed {len(image_paths)} images and added {added_count} face embeddings to the database!"
+            st.success(success_message)
         elif total_faces > 0:
             st.warning(f"⚠️ Found {total_faces} faces but failed to add them to database. Please check the database connection.")
         elif successful_images > 0:
@@ -3186,18 +3208,30 @@ def process_existing_images(image_paths: List[Path]):
             st.warning("❌ No images could be processed successfully. Please check the image files.")
         
         # Show detailed processing summary
-        st.info(f"**Processing Summary:**\n"
-               f"- Total images: {len(image_paths)}\n"
-               f"- Successfully processed: {successful_images}\n"
-               f"- Failed to process: {failed_images}\n"
-               f"- Total faces detected: {total_faces}\n"
-               f"- Images without faces: {images_without_faces}\n"
-               f"- Face embeddings written to database: {added_count}")
+        summary_message = (f"**Processing Summary:**\n"
+                           f"- Total images: {len(image_paths)}\n"
+                           f"- Successfully processed: {successful_images}\n"
+                           f"- Failed to process: {failed_images}\n"
+                           f"- Total faces detected: {total_faces}\n"
+                           f"- Images without faces: {images_without_faces}\n"
+                           f"- Face embeddings written to database: {added_count}")
+        st.info(summary_message)
             
     except Exception as e:
         st.error(f"Error processing images: {e}")
         import traceback
         st.code(traceback.format_exc())
+    else:
+        # The sidebar is rendered before the page content, so its stats still
+        # show the pre-processing count in this run. Queue the summary and a
+        # refresh; main triggers the rerun after the page function returns (a
+        # rerun raised here could be swallowed by callers' error handling).
+        if added_count > 0:
+            st.session_state["_flash_messages"] = [
+                ("success", success_message),
+                ("info", summary_message),
+            ]
+            st.session_state["_refresh_after_processing"] = True
 
 def web_scraping_page():
     """Web scraping page"""
