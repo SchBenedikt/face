@@ -9,6 +9,8 @@ import warnings
 # Suppress the pkg_resources deprecation warning
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API.*")
 import os
+import csv
+import io
 import streamlit as st
 import asyncio
 from urllib.parse import urlparse
@@ -191,6 +193,82 @@ def get_cached_all_persons():
 def invalidate_persons_cache():
     """Mark persons cache as dirty for refresh"""
     st.session_state.persons_cache_dirty = True
+
+
+def invalidate_gallery_cache():
+    """Drop the cached gallery rows after a write or delete."""
+    st.session_state.gallery_faces_cache = None
+
+
+def _get_gallery_faces(force_refresh: bool = False):
+    """Load all face rows once per session; filtering/sorting happens in memory."""
+    cached = st.session_state.get("gallery_faces_cache")
+    if force_refresh or cached is None:
+        with st.spinner("Lade Gesichter aus der Datenbank..."):
+            cached = st.session_state.vector_store.get_all_faces_metadata()
+        st.session_state.gallery_faces_cache = cached
+    return cached
+
+
+def _gallery_face_size(metadata):
+    """Return the smaller side of the stored face box, or None."""
+    box = parse_face_location((metadata or {}).get("location"))
+    if box is None:
+        return None
+    top, right, bottom, left = box
+    return min(right - left, bottom - top)
+
+
+def _filter_gallery_faces(faces, search_term: str, min_face_size: int):
+    """Filter by file name, full path, face id and minimum face size."""
+    term = (search_term or "").strip().lower()
+    filtered = []
+    for face in faces:
+        metadata = face.get("metadata") or {}
+        image_path = str(metadata.get("image_path") or "")
+        face_id = str(face.get("face_id") or metadata.get("face_id") or "")
+        if term and not (
+            term in face_id.lower()
+            or term in image_path.lower()
+            or term in Path(image_path).name.lower()
+        ):
+            continue
+        size = _gallery_face_size(metadata)
+        if min_face_size and (size is None or size < min_face_size):
+            continue
+        filtered.append(face)
+    return filtered
+
+
+def _sort_gallery_faces(faces, sort_by: str):
+    if sort_by == "Bild-Name":
+        return sorted(
+            faces, key=lambda face: Path(face.get("metadata", {}).get("image_path", "")).name.lower()
+        )
+    if sort_by == "Face-ID":
+        return sorted(faces, key=lambda face: face.get("face_id", ""))
+    return sorted(
+        faces,
+        key=lambda face: str(face.get("metadata", {}).get("added_at") or ""),
+        reverse=True,
+    )
+
+
+def faces_to_csv(faces) -> str:
+    """Serialize the gallery rows (not the embeddings) for download."""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["face_id", "image_path", "location", "person_name", "added_at"])
+    for face in faces:
+        metadata = face.get("metadata") or {}
+        writer.writerow([
+            face.get("face_id", ""),
+            metadata.get("image_path", ""),
+            metadata.get("location", ""),
+            metadata.get("full_name", ""),
+            metadata.get("added_at", ""),
+        ])
+    return buffer.getvalue()
 
 def main():
     """Main application function"""
@@ -1245,8 +1323,9 @@ def show_name_assignment_modal():
                     if result['total_assigned'] > 1:
                         st.success(f"🔄 {result['total_assigned']-1} ähnliche Gesichter (>80%) automatisch zugewiesen!")
                     
-                    # Invalidate persons cache for refresh
+                    # Invalidate cached names and gallery metadata
                     invalidate_persons_cache()
+                    invalidate_gallery_cache()
                     
                     # Clear session state and close dialog
                     _clear_name_assignment_session()
@@ -1336,8 +1415,9 @@ def show_name_assignment_modal():
                     if result['total_assigned'] > 1:
                         st.success(f"🔄 {result['total_assigned']-1} ähnliche Gesichter (>80%) automatisch zugewiesen!")
                     
-                    # Invalidate persons cache for refresh
+                    # Invalidate cached names and gallery metadata
                     invalidate_persons_cache()
+                    invalidate_gallery_cache()
                     
                     # Clear session state and close dialog
                     _clear_name_assignment_session()
@@ -1356,8 +1436,9 @@ def show_name_assignment_modal():
             if st.button("🗑️ Namen entfernen", width='stretch'):
                 if st.session_state.vector_store.remove_person_name(face_id):
                     st.success("✅ Name erfolgreich entfernt!")
-                    # Invalidate persons cache for refresh
+                    # Invalidate cached names and gallery metadata
                     invalidate_persons_cache()
+                    invalidate_gallery_cache()
                     _clear_name_assignment_session()
                     st.rerun()
                 else:
@@ -2419,6 +2500,7 @@ def process_with_fast_engine(directory_path, update_existing=False):
             processing_time = time.time() - start_time
             
             if result["success"]:
+                invalidate_gallery_cache()
                 st.success("🎉 Processing completed successfully!")
                 
                 # Results metrics
@@ -3097,6 +3179,7 @@ def process_existing_images(image_paths: List[Path]):
                     result["image_path"]
                 )
         invalidate_persons_cache()
+        invalidate_gallery_cache()
         
         progress_bar.progress(100)
         status_text.text("Complete!")
@@ -3316,6 +3399,8 @@ def _render_duplicate_set(directory: Path, hash_value: str, file_paths: List[Pat
             if store is not None:
                 removed_faces += store.delete_faces_by_image_path(str(deleted_path))
         duplicate_detector.cleanup_missing_files()
+        invalidate_persons_cache()
+        invalidate_gallery_cache()
 
         # Re-scan so the remaining sets and the counters reflect the disk state.
         st.session_state.duplicate_results[str(directory)] = (
@@ -3515,6 +3600,7 @@ def database_stats_page():
                     with st.spinner("Entferne verwaiste Datenbankeinträge..."):
                         removed = st.session_state.vector_store.prune_missing_faces()
                     invalidate_persons_cache()
+                    invalidate_gallery_cache()
                     st.success(f"✅ {removed} verwaiste Gesichts-Einträge entfernt.")
                     st.session_state.confirm_prune = False
                     st.rerun()
@@ -3527,6 +3613,7 @@ def database_stats_page():
                 if st.session_state.get("confirm_clear", False):
                     st.session_state.vector_store.clear_collection()
                     invalidate_persons_cache()
+                    invalidate_gallery_cache()
                     st.success("Database cleared!")
                     st.session_state.confirm_clear = False
                     st.rerun()
@@ -3673,11 +3760,15 @@ def face_gallery_page():
     st.header("👥 Face Gallery")
     st.markdown("Durchsuchen Sie alle Gesichter in der Datenbank")
     
-    # Get all faces from database
+    # One cached read makes search, size filtering and sorting consistent.
     try:
-        stats = st.session_state.vector_store.get_collection_stats()
-        total_faces = stats.get("total_faces", 0)
-        unique_images = stats.get("unique_images", 0)
+        all_faces = _get_gallery_faces()
+        total_faces = len(all_faces)
+        unique_images = len({
+            face.get("metadata", {}).get("image_path")
+            for face in all_faces
+            if face.get("metadata", {}).get("image_path")
+        })
         
         if total_faces == 0:
             st.info("Noch keine Gesichter in der Datenbank. Laden Sie Bilder hoch oder scrapen Sie Websites, um Gesichter hinzuzufügen.")
@@ -3727,14 +3818,23 @@ def face_gallery_page():
             st.markdown("**Filter-Optionen:**")
             min_face_size = st.slider("Min. Gesichtsgröße (px):", 30, 200, 50)
         
-        # Apply filters to results if search term is provided
-        filtered_total = total_faces
-        search_active = bool(search_term.strip())
-        
-        if search_active:
-            with st.spinner("Durchsuche Gesichter..."):
-                # This would need to be implemented in vector_store
-                st.info(f"🔍 Suche nach: '{search_term}' - Erweiterte Suchfunktion wird implementiert...")
+        # Apply search, size filter and sorting to the cached rows.
+        filter_signature = (search_term, min_face_size, sort_by)
+        if st.session_state.get("gallery_filter_signature") != filter_signature:
+            st.session_state.gallery_filter_signature = filter_signature
+            st.session_state.gallery_page = 0
+
+        filtered_faces = _sort_gallery_faces(
+            _filter_gallery_faces(all_faces, search_term, min_face_size), sort_by
+        )
+        filtered_total = len(filtered_faces)
+
+        if filtered_total == 0:
+            if search_term.strip():
+                st.warning(f"Keine Gesichter gefunden für '{search_term}'.")
+            else:
+                st.info("Keine Gesichter entsprechen der eingestellten Mindestgröße.")
+            return
         
         # Pagination controls
         st.markdown("---")
@@ -3742,8 +3842,9 @@ def face_gallery_page():
         if 'gallery_page' not in st.session_state:
             st.session_state.gallery_page = 0
         
-        current_page = st.session_state.gallery_page
         total_pages = max(1, (filtered_total - 1) // faces_per_page + 1)
+        current_page = min(max(0, st.session_state.gallery_page), total_pages - 1)
+        st.session_state.gallery_page = current_page
         
         # Page info and navigation in one row
         nav_col1, nav_col2, nav_col3, nav_col4, nav_col5 = st.columns([1, 1, 2, 1, 1])
@@ -3779,7 +3880,8 @@ def face_gallery_page():
         
         with nav_col5:
             if st.button("🔄 Aktualisieren"):
-                st.cache_data.clear()
+                invalidate_gallery_cache()
+                st.session_state.gallery_page = 0
                 st.rerun()
         
         st.markdown("---")
@@ -3796,7 +3898,8 @@ def face_gallery_page():
         with st.spinner(f"Lade {limit} Gesichter..."):
             # Get face data from database with improved robust pagination
             try:
-                results = st.session_state.vector_store.get_faces_paginated(offset=offset, limit=limit)
+                page_faces = filtered_faces[offset:offset + limit]
+                results = {"metadatas": [face["metadata"] for face in page_faces]}
                 
                 if results['metadatas'] and len(results['metadatas']) > 0:
                     st.subheader(f"📋 Zeige {len(results['metadatas'])} Gesichter (Seite {current_page + 1})")
@@ -3825,8 +3928,14 @@ def face_gallery_page():
                     col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
                     
                     with col1:
-                        if st.button("📤 Alle Gesichter exportieren"):
-                            export_all_faces()
+                        st.download_button(
+                            "📤 Gesichter als CSV exportieren",
+                            data=faces_to_csv(all_faces),
+                            file_name="faces.csv",
+                            mime="text/csv",
+                            key="download_faces_csv",
+                            use_container_width=True,
+                        )
                     
                     with col2:
                         # Batch delete current page faces
@@ -3884,7 +3993,7 @@ def face_gallery_page():
                             
                     with col4:
                         if st.button("🔄 Gallery aktualisieren"):
-                            st.cache_data.clear()
+                            invalidate_gallery_cache()
                             # Reset to first page to avoid pagination errors
                             st.session_state.gallery_page = 0
                             st.rerun()
@@ -3974,11 +4083,6 @@ def display_faces_in_grid(metadatas, show_metadata=True):
                     metadata = metadatas[idx]
                     display_face_from_metadata(metadata, show_metadata)
 
-def export_all_faces():
-    """Export all faces to a zip file"""
-    st.info("Export-Funktion wird implementiert...")
-    # TODO: Implement face export functionality
-
 def delete_face_from_gallery(face_id: str) -> bool:
     """Delete a face from the gallery and vector store"""
     try:
@@ -3989,6 +4093,8 @@ def delete_face_from_gallery(face_id: str) -> bool:
                 st.session_state.deleted_faces_session = 0
             st.session_state.deleted_faces_session += 1
             
+            invalidate_gallery_cache()
+            invalidate_persons_cache()
             logger.info(f"Successfully deleted face {face_id} from gallery")
             return True
         else:
@@ -4631,8 +4737,9 @@ def name_gallery_page():
                             
                             if removed_count > 0:
                                 st.success(f"✅ Name von {removed_count} Gesichtern entfernt!")
-                                # Invalidate persons cache for refresh
+                                # Invalidate cached names and gallery metadata
                                 invalidate_persons_cache()
+                                invalidate_gallery_cache()
                                 st.rerun()
                             else:
                                 st.error("❌ Fehler beim Entfernen der Namen")

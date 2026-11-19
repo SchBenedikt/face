@@ -685,6 +685,40 @@ class FaceVectorStore:
             logger.error(f"Error clearing collection: {e}")
             return False
     
+    def get_all_faces_metadata(self) -> List[Dict[str, Any]]:
+        """Return every face as ``{"face_id", "metadata"}`` with one scan.
+
+        The gallery used to paginate in the database, which made filtering and
+        sorting impossible: it can only sort and slice what it has loaded. A
+        single chunked read is then cached by the UI, so a page change does not
+        touch the database again.
+        """
+        faces: List[Dict[str, Any]] = []
+        try:
+            total = self.collection.count()
+            offset = 0
+            chunk_size = 2000
+            while offset < total:
+                chunk = self.collection.get(
+                    limit=min(chunk_size, total - offset),
+                    offset=offset,
+                    include=['metadatas'],
+                )
+                ids = chunk.get("ids") or []
+                for index, metadata in enumerate(chunk.get("metadatas") or []):
+                    if not metadata:
+                        continue
+                    face_id = metadata.get("face_id") or (ids[index] if index < len(ids) else "")
+                    if not face_id:
+                        continue
+                    faces.append({"face_id": str(face_id), "metadata": dict(metadata)})
+                offset += chunk_size
+            logger.info(f"Loaded metadata for {len(faces)} faces")
+            return faces
+        except Exception as e:
+            logger.error(f"Error loading all face metadata: {e}")
+            return faces
+
     def get_faces_paginated(self, offset: int = 0, limit: int = 50) -> Dict[str, Any]:
         """
         Robust paginated retrieval of faces with error handling
