@@ -1764,7 +1764,9 @@ def show_name_assignment_tab(face_id, image_path, face_location):
                     
                     if result['total_assigned'] > 1:
                         st.success(f"🔄 {result['total_assigned']-1} ähnliche Gesichter automatisch zugewiesen!")
-                    
+
+                    invalidate_persons_cache()
+                    invalidate_gallery_cache()
                     st.balloons()
                 else:
                     st.error("❌ Fehler beim Zuweisen des Namens")
@@ -1815,7 +1817,9 @@ def show_name_assignment_tab(face_id, image_path, face_location):
                     
                     if result['total_assigned'] > 1:
                         st.success(f"🔄 {result['total_assigned']-1} ähnliche Gesichter automatisch zugewiesen!")
-                    
+
+                    invalidate_persons_cache()
+                    invalidate_gallery_cache()
                     st.balloons()
                 else:
                     st.error("❌ Fehler beim Speichern der Person")
@@ -4794,6 +4798,8 @@ def name_gallery_page():
                                 # Remove person name from this specific face
                                 if st.session_state.vector_store.remove_person_name(face_id):
                                     st.success(f"✅ Foto erfolgreich von {selected_person_name} entfernt!")
+                                    invalidate_persons_cache()
+                                    invalidate_gallery_cache()
                                     # Refresh the view
                                     st.rerun()
                                 else:
