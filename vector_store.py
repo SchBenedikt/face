@@ -17,6 +17,11 @@ from datetime import datetime
 import uuid
 
 from config import VECTOR_DB_PATH, COLLECTION_NAME, SIMILARITY_THRESHOLD
+from similarity import (
+    cosine_from_l2_distance,
+    normalise_embedding,
+    similarity_from_l2_distance,
+)
 
 # Additional telemetry suppression after imports
 try:
@@ -164,302 +169,126 @@ class FaceVectorStore:
         min_similarity: float = SIMILARITY_THRESHOLD
     ) -> List[Dict[str, Any]]:
         """
-        Intelligent face search with enhanced grouping to reduce false positives
-        
-        Args:
-            query_embedding: Query face embedding (should be normalized)
-            n_results: Maximum number of results to return
-            min_similarity: Minimum similarity threshold (0-1 scale)
-            
-        Returns:
-            List of similar faces with enhanced grouping and reduced false positives
+        Find faces similar to a query embedding.
+
+        Embeddings are stored unit-normalised, so ChromaDB's L2 distance maps
+        directly onto cosine similarity. Only the nearest candidates are
+        requested and no embeddings are transferred back, which keeps a search
+        in the low milliseconds instead of several seconds.
         """
         try:
-            # Ensure query embedding is properly normalized
-            query_norm = np.linalg.norm(query_embedding)
-            if query_norm > 0:
-                query_embedding_normalized = query_embedding / query_norm
-            else:
-                query_embedding_normalized = query_embedding
+            query_list = normalise_embedding(query_embedding)
+            if not np.any(query_list):
                 logger.warning("Query embedding has zero norm")
-                
-            # Convert embedding to list for ChromaDB
-            query_list = query_embedding_normalized.tolist()
-            
-            # Phase 1: Initial comprehensive search with larger scope
-            search_n = min(n_results * 50, 20000)  # Much larger search for better analysis
-            
+                return []
+
+            try:
+                collection_size = self.collection.count()
+            except Exception:
+                collection_size = 0
+            if collection_size == 0:
+                return []
+
+            # Trade a little recall for a lot of speed: the old code asked for
+            # up to 20,000 neighbours including their embeddings.
+            search_n = int(min(max(n_results * 3, 50), 500, collection_size))
+
             results = self.collection.query(
-                query_embeddings=[query_list],
+                query_embeddings=[query_list.tolist()],
                 n_results=search_n,
-                include=['embeddings', 'metadatas', 'distances']
+                include=['metadatas', 'distances'],
             )
-            
-            # Process results and group by similarity tiers
-            similar_faces = []
-            high_confidence_matches = []  # 85%+ matches
-            medium_confidence_matches = []  # 75%-84% matches
-            
-            if results['ids'] and len(results['ids'][0]) > 0:
-                for i, face_id in enumerate(results['ids'][0]):
-                    try:
-                        distance = results['distances'][0][i]
-                        stored_embedding = np.array(results['embeddings'][0][i], dtype=np.float32)
-                        
-                        # Calculate comprehensive similarity metrics
-                        similarity_metrics = self._calculate_enhanced_similarity(
-                            query_embedding_normalized, 
-                            stored_embedding
-                        )
-                        
-                        # Use the primary similarity score for filtering and ranking
-                        primary_similarity = similarity_metrics['primary_similarity']
-                        
-                        # Apply similarity threshold filter
-                        if primary_similarity >= min_similarity:
-                            face_data = {
-                                'face_id': face_id,
-                                'similarity': primary_similarity,
-                                'similarity_percentage': primary_similarity * 100,
-                                'cosine_similarity': similarity_metrics['cosine_similarity'],
-                                'euclidean_distance': distance,
-                                'euclidean_similarity': similarity_metrics.get('euclidean_similarity', 0.0),
-                                'correlation_similarity': similarity_metrics.get('correlation_similarity', 0.0),
-                                'confidence_score': self._calculate_confidence_score(similarity_metrics),
-                                'metadata': results['metadatas'][0][i],
-                                'similarity_metrics': similarity_metrics
-                            }
-                            
-                            # Group by confidence tiers
-                            if primary_similarity >= 0.85:
-                                high_confidence_matches.append(face_data)
-                            elif primary_similarity >= 0.75:
-                                medium_confidence_matches.append(face_data)
-                            else:
-                                similar_faces.append(face_data)
-                            
-                    except Exception as e:
-                        logger.warning(f"Error processing result {i}: {e}")
+
+            ids = results.get('ids') or [[]]
+            distances = results.get('distances') or [[]]
+            metadatas = results.get('metadatas') or [[]]
+
+            similar_faces: List[Dict[str, Any]] = []
+            for index, face_id in enumerate(ids[0]):
+                try:
+                    distance = float(distances[0][index])
+                    similarity = similarity_from_l2_distance(distance)
+                    if similarity < min_similarity:
                         continue
-            
-            # Phase 2: Intelligent result compilation
-            final_results = []
-            
-            # If we have high confidence matches, prioritize them and search for more similar faces
-            if high_confidence_matches:
-                # Sort high confidence matches
-                high_confidence_matches.sort(key=lambda x: x['confidence_score'], reverse=True)
-                
-                # Add all high confidence matches (they're very likely correct)
-                final_results.extend(high_confidence_matches)
-                
-                # If we still need more results and have high confidence, 
-                # search around those embeddings for additional similar faces
-                if len(final_results) < n_results and high_confidence_matches:
-                    additional_faces = self._search_around_high_confidence_matches(
-                        high_confidence_matches[:3],  # Use top 3 high confidence matches
-                        query_embedding_normalized, 
-                        min_similarity,
-                        n_results - len(final_results)
-                    )
-                    # Remove duplicates and add unique faces
-                    existing_ids = {face['face_id'] for face in final_results}
-                    for face in additional_faces:
-                        if face['face_id'] not in existing_ids:
-                            final_results.append(face)
-                            existing_ids.add(face['face_id'])
-            
-            # Fill remaining slots with medium confidence matches if needed
-            if len(final_results) < n_results:
-                medium_confidence_matches.sort(key=lambda x: x['confidence_score'], reverse=True)
-                remaining_slots = n_results - len(final_results)
-                
-                existing_ids = {face['face_id'] for face in final_results}
-                for face in medium_confidence_matches[:remaining_slots * 2]:  # Consider more candidates
-                    if face['face_id'] not in existing_ids and len(final_results) < n_results:
-                        final_results.append(face)
-                        existing_ids.add(face['face_id'])
-            
-            # Final sorting by confidence score
-            final_results.sort(key=lambda x: x['confidence_score'], reverse=True)
-            final_results = final_results[:n_results]
-            
-            # Log search results
-            if final_results:
-                high_count = len(high_confidence_matches)
-                medium_count = len([f for f in final_results if 0.75 <= f['similarity'] < 0.85])
-                top_result = final_results[0]
-                logger.info(f"Found {len(final_results)} similar faces - Top: {top_result['similarity_percentage']:.1f}% (High: {high_count}, Medium: {medium_count})")
-            else:
-                logger.info(f"No similar faces found above threshold {min_similarity:.3f}")
-            
-            return final_results
-            
+
+                    similar_faces.append({
+                        'face_id': face_id,
+                        'similarity': similarity,
+                        'similarity_percentage': similarity * 100,
+                        'cosine_similarity': cosine_from_l2_distance(distance),
+                        'euclidean_distance': distance,
+                        'confidence_score': similarity,
+                        'metadata': metadatas[0][index] or {},
+                        'similarity_metrics': {
+                            'cosine_similarity': cosine_from_l2_distance(distance),
+                            'euclidean_distance': distance,
+                            'primary_similarity': similarity,
+                        },
+                    })
+                except Exception as e:
+                    logger.debug(f"Skipping malformed search hit: {e}")
+                    continue
+
+            similar_faces.sort(key=lambda face: face['similarity'], reverse=True)
+            top_score = similar_faces[0]['similarity_percentage'] if similar_faces else 0.0
+            logger.info(
+                f"Found {len(similar_faces)} similar faces above {min_similarity:.2f} "
+                f"(top: {top_score:.1f}%)"
+            )
+            return similar_faces[:n_results]
+
         except Exception as e:
             logger.error(f"Error searching similar faces: {e}")
             return []
-
-    def _search_around_high_confidence_matches(self, high_confidence_faces, query_embedding, min_similarity, max_results):
-        """Search for additional faces similar to high-confidence matches"""
-        additional_faces = []
-        
-        for ref_face in high_confidence_faces[:2]:  # Use top 2 reference faces
-            try:
-                ref_embedding = ref_face['similarity_metrics'].get('normalized_embedding2')
-                if ref_embedding is not None:
-                    # Search using the reference face embedding
-                    ref_results = self.collection.query(
-                        query_embeddings=[ref_embedding.tolist()],
-                        n_results=min(50, max_results * 3),
-                        include=['embeddings', 'metadatas', 'distances']
-                    )
-                    
-                    if ref_results['ids'] and len(ref_results['ids'][0]) > 0:
-                        for i, face_id in enumerate(ref_results['ids'][0]):
-                            if len(additional_faces) >= max_results:
-                                break
-                                
-                            stored_embedding = np.array(ref_results['embeddings'][0][i], dtype=np.float32)
-                            
-                            # Check similarity to original query
-                            similarity_metrics = self._calculate_enhanced_similarity(
-                                query_embedding, stored_embedding
-                            )
-                            
-                            primary_similarity = similarity_metrics['primary_similarity']
-                            
-                            if primary_similarity >= min_similarity:
-                                face_data = {
-                                    'face_id': face_id,
-                                    'similarity': primary_similarity,
-                                    'similarity_percentage': primary_similarity * 100,
-                                    'cosine_similarity': similarity_metrics['cosine_similarity'],
-                                    'euclidean_distance': ref_results['distances'][0][i],
-                                    'euclidean_similarity': similarity_metrics.get('euclidean_similarity', 0.0),
-                                    'correlation_similarity': similarity_metrics.get('correlation_similarity', 0.0),
-                                    'confidence_score': self._calculate_confidence_score(similarity_metrics),
-                                    'metadata': ref_results['metadatas'][0][i],
-                                    'similarity_metrics': similarity_metrics
-                                }
-                                additional_faces.append(face_data)
-            except Exception as e:
-                logger.warning(f"Error in secondary search: {e}")
-                continue
-        
-        # Sort by confidence and return
-        additional_faces.sort(key=lambda x: x['confidence_score'], reverse=True)
-        return additional_faces[:max_results]
-    
     def _calculate_enhanced_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> Dict[str, float]:
         """
-        Calculate comprehensive similarity metrics using ensemble approach
-        
-        Args:
-            embedding1: First embedding (query, should be normalized)
-            embedding2: Second embedding (from database)
-            
-        Returns:
-            Dictionary containing various similarity metrics with ensemble scoring
+        Calculate similarity metrics for two embeddings.
+
+        ``primary_similarity`` is the raw cosine similarity clipped to 0..1.
+        Earlier versions pushed cosine through a piecewise curve that lifted
+        unrelated faces to roughly 0.55, so a threshold of 0.4 matched almost
+        everything. The additional metrics are kept because existing callers and
+        tests read them, but they no longer influence ranking.
         """
         try:
-            # Normalize both embeddings to ensure consistent comparison
-            norm1 = np.linalg.norm(embedding1)
-            norm2 = np.linalg.norm(embedding2)
-            
-            if norm1 == 0 or norm2 == 0:
-                logger.warning("One of the embeddings has zero norm")
+            left = normalise_embedding(embedding1)
+            right = normalise_embedding(embedding2)
+            if not np.any(left) or not np.any(right):
                 return self._get_zero_similarity_metrics()
-                
-            embedding1_normalized = embedding1 / norm1
-            embedding2_normalized = embedding2 / norm2
-            
-            metrics = {}
-            
-            # 1. Cosine similarity (most reliable for normalized embeddings)
-            cosine_similarity = np.dot(embedding1_normalized, embedding2_normalized)
-            cosine_similarity = float(np.clip(cosine_similarity, -1.0, 1.0))
-            metrics['cosine_similarity'] = cosine_similarity
-            
-            # 2. Euclidean distance and derived similarity
-            euclidean_distance = float(np.linalg.norm(embedding1_normalized - embedding2_normalized))
-            # For unit vectors, euclidean distance ranges from 0 (identical) to 2 (opposite)
+
+            cosine = float(np.clip(np.dot(left, right), -1.0, 1.0))
+            euclidean_distance = float(np.linalg.norm(left - right))
             euclidean_similarity = max(0.0, 1.0 - (euclidean_distance / 2.0))
-            metrics['euclidean_distance'] = euclidean_distance
-            metrics['euclidean_similarity'] = euclidean_similarity
-            
-            # 3. Dot product similarity (similar to cosine for normalized vectors)
-            dot_product = float(np.dot(embedding1_normalized, embedding2_normalized))
-            metrics['dot_product'] = dot_product
-            
-            # 4. Correlation similarity
+            manhattan_distance = float(np.sum(np.abs(left - right)))
+            manhattan_similarity = max(0.0, 1.0 - (manhattan_distance / (2.0 * len(left))))
+
             try:
-                correlation = float(np.corrcoef(embedding1_normalized, embedding2_normalized)[0, 1])
+                correlation = float(np.corrcoef(left, right)[0, 1])
                 if np.isnan(correlation):
                     correlation = 0.0
-                metrics['correlation_similarity'] = correlation
-            except:
-                metrics['correlation_similarity'] = 0.0
-            
-            # 5. Angular distance (converted from cosine similarity)
-            try:
-                angular_distance = np.arccos(np.clip(cosine_similarity, -1.0, 1.0)) / np.pi
-                angular_similarity = 1.0 - angular_distance
-                metrics['angular_similarity'] = float(angular_similarity)
-            except:
-                metrics['angular_similarity'] = 0.0
-            
-            # 6. Manhattan (L1) similarity
-            try:
-                manhattan_distance = float(np.sum(np.abs(embedding1_normalized - embedding2_normalized)))
-                manhattan_similarity = max(0.0, 1.0 - (manhattan_distance / (2.0 * len(embedding1_normalized))))
-                metrics['manhattan_similarity'] = manhattan_similarity
-            except:
-                metrics['manhattan_similarity'] = 0.0
-            
-            # 7. ENSEMBLE PRIMARY SIMILARITY - Weighted combination of best metrics
-            # Based on research: cosine similarity is most reliable for face embeddings
-            weights = {
-                'cosine': 0.5,        # Primary weight on cosine similarity
-                'euclidean': 0.25,    # Secondary weight on euclidean 
-                'correlation': 0.15,  # Tertiary weight on correlation
-                'angular': 0.1        # Minor weight on angular
+            except Exception:
+                correlation = 0.0
+
+            angular_similarity = 1.0 - float(np.arccos(cosine)) / np.pi
+            primary_similarity = max(0.0, cosine)
+
+            return {
+                'cosine_similarity': cosine,
+                'euclidean_distance': euclidean_distance,
+                'euclidean_similarity': euclidean_similarity,
+                'dot_product': cosine,
+                'correlation_similarity': correlation,
+                'angular_similarity': angular_similarity,
+                'manhattan_similarity': manhattan_similarity,
+                'primary_similarity': primary_similarity,
+                'ensemble_score': primary_similarity,
+                'normalized_embedding1': left,
+                'normalized_embedding2': right,
             }
-            
-            # Normalize similarities to 0-1 range for combination
-            cosine_norm = (cosine_similarity + 1.0) / 2.0  # From [-1,1] to [0,1]
-            euclidean_norm = euclidean_similarity  # Already [0,1]
-            correlation_norm = (metrics['correlation_similarity'] + 1.0) / 2.0  # From [-1,1] to [0,1]
-            angular_norm = metrics['angular_similarity']  # Already [0,1]
-            
-            # Calculate ensemble score
-            ensemble_score = (
-                weights['cosine'] * cosine_norm +
-                weights['euclidean'] * euclidean_norm +
-                weights['correlation'] * correlation_norm +
-                weights['angular'] * angular_norm
-            )
-            
-            # Apply face-specific threshold mapping
-            if ensemble_score >= 0.65:  # High confidence threshold
-                primary_similarity = 0.7 + (ensemble_score - 0.65) * 0.857  # Scale to [0.7, 1.0]
-            elif ensemble_score >= 0.45:  # Medium confidence threshold  
-                primary_similarity = 0.4 + (ensemble_score - 0.45) * 1.5  # Scale to [0.4, 0.7]
-            else:  # Low confidence
-                primary_similarity = ensemble_score * 0.889  # Scale to [0, 0.4]
-            
-            metrics['primary_similarity'] = float(np.clip(primary_similarity, 0.0, 1.0))
-            metrics['ensemble_score'] = float(ensemble_score)
-            
-            # Store normalized embeddings for secondary searches
-            metrics['normalized_embedding1'] = embedding1_normalized
-            metrics['normalized_embedding2'] = embedding2_normalized
-            
-            return metrics
-            
+
         except Exception as e:
             logger.error(f"Error calculating enhanced similarity: {e}")
             return self._get_zero_similarity_metrics()
-    
     def _get_zero_similarity_metrics(self) -> Dict[str, float]:
         """Return zero similarity metrics for error cases"""
         return {
@@ -476,46 +305,17 @@ class FaceVectorStore:
     
     def _calculate_confidence_score(self, similarity_metrics: Dict[str, float]) -> float:
         """
-        Calculate enhanced confidence score using ensemble metrics
-        
-        Args:
-            similarity_metrics: Dictionary of similarity metrics
-            
-        Returns:
-            Confidence score (0-1) with ensemble weighting
+        Return the confidence for a match.
+
+        With honest cosine scoring the similarity *is* the confidence. The
+        method remains for API compatibility with existing callers and tests.
         """
         try:
-            primary_sim = similarity_metrics.get('primary_similarity', 0.0)
-            ensemble_score = similarity_metrics.get('ensemble_score', 0.0)
-            cosine_sim = similarity_metrics.get('cosine_similarity', 0.0)
-            correlation_sim = similarity_metrics.get('correlation_similarity', 0.0)
-            
-            # Enhanced confidence calculation using multiple metrics
-            base_confidence = (
-                primary_sim * 0.4 +          # Primary similarity (40%)
-                ensemble_score * 0.3 +       # Ensemble score (30%)
-                ((cosine_sim + 1.0) / 2.0) * 0.2 +  # Normalized cosine (20%)
-                ((correlation_sim + 1.0) / 2.0) * 0.1   # Normalized correlation (10%)
-            )
-            
-            # Apply confidence boost for very high similarities
-            if cosine_sim > 0.7 and primary_sim > 0.6:
-                base_confidence = min(1.0, base_confidence * 1.15)  # 15% boost
-            elif cosine_sim > 0.5 and primary_sim > 0.5:
-                base_confidence = min(1.0, base_confidence * 1.05)  # 5% boost
-            
-            # Apply penalty for inconsistent metrics (reliability check)
-            metric_values = [primary_sim, ensemble_score, (cosine_sim + 1.0) / 2.0]
-            metric_std = float(np.std(metric_values))
-            if metric_std > 0.2:  # High variance indicates inconsistent metrics
-                base_confidence *= 0.9  # 10% penalty
-            
-            return float(max(0.0, min(1.0, base_confidence)))
-            
+            similarity = float(similarity_metrics.get('primary_similarity', 0.0))
+            return float(max(0.0, min(1.0, similarity)))
         except Exception as e:
             logger.error(f"Error calculating confidence score: {e}")
             return 0.0
-    
     def _calculate_cosine_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
         """
         Calculate cosine similarity between two embeddings
