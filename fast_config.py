@@ -1,19 +1,17 @@
 """
 Fast Configuration for Face Recognition - Optimized for Speed
 """
-import os
-from pathlib import Path
-
-# Base paths
-BASE_DIR = Path(__file__).parent
-DATA_DIR = BASE_DIR / "data"
-IMAGES_DIR = DATA_DIR / "images"
-EMBEDDINGS_DIR = DATA_DIR / "embeddings"
-SCRAPED_DIR = DATA_DIR / "scraped"
-
-# Create directories if they don't exist
-for directory in [DATA_DIR, IMAGES_DIR, EMBEDDINGS_DIR, SCRAPED_DIR]:
-    directory.mkdir(exist_ok=True)
+# Paths must follow the same FACE_DATA_DIR-aware configuration as the app.
+# Keeping a second, hardcoded data tree here left an unused <repo>/data behind
+# whenever the batch processor was imported with a custom data directory.
+from config import (
+    DATA_DIR,
+    EMBEDDINGS_DIR,
+    IMAGES_DIR,
+    SCRAPED_DIR,
+    VECTOR_DB_PATH,
+    COLLECTION_NAME,
+)
 
 # SPEED OPTIMIZED Face recognition settings
 FACE_RECOGNITION_MODEL = "hog"  # Much faster than CNN, good enough accuracy
@@ -21,9 +19,6 @@ FACE_RECOGNITION_TOLERANCE = 0.5  # Slightly more lenient for speed
 MIN_FACE_SIZE = (40, 40)  # Larger minimum to skip tiny faces (faster)
 MAX_FACE_SIZE = (None, None)
 
-# Vector database settings
-VECTOR_DB_PATH = str(DATA_DIR / "face_vectors.db")
-COLLECTION_NAME = "face_embeddings"
 SIMILARITY_THRESHOLD = 0.4
 
 # FAST Face Recognition Quality Settings - Single model for speed

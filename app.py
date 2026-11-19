@@ -2489,9 +2489,11 @@ def process_with_fast_engine(directory_path, update_existing=False):
         
         # Callback functions for progress updates
         def update_progress(percent):
-            # Ensure percent is a regular Python int/float, not numpy type
-            progress_bar.progress(float(percent))
-            progress_text.text(f"Processing: {percent}%")
+            # Ensure percent is a regular Python int/float, not numpy type.
+            # fast_process reports 0-100, while st.progress expects 0.0-1.0.
+            percent = max(0.0, min(100.0, float(percent)))
+            progress_bar.progress(percent / 100.0)
+            progress_text.text(f"Processing: {int(percent)}%")
         
         def update_status(message):
             status_text.info(message)
@@ -2512,6 +2514,7 @@ def process_with_fast_engine(directory_path, update_existing=False):
             
             if result["success"]:
                 invalidate_gallery_cache()
+                invalidate_persons_cache()
                 st.success("🎉 Processing completed successfully!")
                 
                 # Results metrics
@@ -2569,6 +2572,21 @@ def process_with_fast_engine(directory_path, update_existing=False):
                     if st.button("📊 Analyze Results", width='stretch'):
                         st.session_state.pending_page = "🔍 Face Search"
                         st.rerun()
+
+                # The sidebar was rendered before this batch ran. Queue a
+                # short summary and let main rerun after the page returns so
+                # its face counts and the gallery reflect the new rows.
+                if result.get("faces_added", 0) > 0:
+                    st.session_state["_flash_messages"] = [
+                        ("success", "🎉 Batch processing completed successfully!"),
+                        (
+                            "info",
+                            f"**Batch Summary:** {result.get('processed', 0)} images "
+                            f"processed, {result.get('faces_added', 0)} faces added, "
+                            f"{result.get('errors', 0)} errors.",
+                        ),
+                    ]
+                    st.session_state["_refresh_after_processing"] = True
             
             else:
                 st.error(f"❌ Processing failed: {result.get('message', 'Unknown error')}")
