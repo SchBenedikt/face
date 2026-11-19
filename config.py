@@ -6,14 +6,19 @@ from pathlib import Path
 
 # Base paths
 BASE_DIR = Path(__file__).parent
-DATA_DIR = BASE_DIR / "data"
+# FACE_DATA_DIR lets tests (and multi-instance setups) keep user data outside
+# the code directory without changing the defaults.
+DATA_DIR = Path(os.environ.get("FACE_DATA_DIR", BASE_DIR / "data")).expanduser()
 IMAGES_DIR = DATA_DIR / "images"
 EMBEDDINGS_DIR = DATA_DIR / "embeddings"
 SCRAPED_DIR = DATA_DIR / "scraped"
 
 # Create directories if they don't exist
 for directory in [DATA_DIR, IMAGES_DIR, EMBEDDINGS_DIR, SCRAPED_DIR]:
-    directory.mkdir(exist_ok=True)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"Warnung: Verzeichnis {directory} konnte nicht angelegt werden: {exc}")
 
 # Face recognition settings
 FACE_RECOGNITION_MODEL = "cnn"  # "hog" (schneller) oder "cnn" (genauer)

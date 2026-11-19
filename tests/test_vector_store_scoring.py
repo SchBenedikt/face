@@ -4,15 +4,20 @@ import types
 import numpy as np
 import pytest
 
-# vector_store imports chromadb at module level. Stub it so the pure scoring
-# logic can be tested without pulling in the real (heavy) dependency.
-chromadb_stub = types.ModuleType("chromadb")
-chromadb_stub.PersistentClient = lambda *args, **kwargs: None
-sys.modules.setdefault("chromadb", chromadb_stub)
+# vector_store imports chromadb at module level. Use the real package when it
+# is installed (the UI tests seed a real database) and fall back to a stub only
+# when it is genuinely missing.
+try:
+    import chromadb  # noqa: F401
+    import chromadb.config  # noqa: F401
+except Exception:  # noqa: BLE001
+    chromadb_stub = types.ModuleType("chromadb")
+    chromadb_stub.PersistentClient = lambda *args, **kwargs: None
+    sys.modules.setdefault("chromadb", chromadb_stub)
 
-config_stub = types.ModuleType("chromadb.config")
-config_stub.Settings = lambda *args, **kwargs: None
-sys.modules.setdefault("chromadb.config", config_stub)
+    config_stub = types.ModuleType("chromadb.config")
+    config_stub.Settings = lambda *args, **kwargs: None
+    sys.modules.setdefault("chromadb.config", config_stub)
 
 from vector_store import FaceVectorStore  # noqa: E402
 

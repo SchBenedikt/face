@@ -7,6 +7,7 @@
 
 # Web UI
 streamlit>=1.49,<2
+pyarrow>=14,<17        # st.table braucht pyarrow; <17 bleibt mit numpy 1.x kompatibel
 opencv-python==4.8.0.74
 pillow==10.0.1
 numpy==1.24.4          # oder falls nötig 1.21.6
