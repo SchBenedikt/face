@@ -208,3 +208,107 @@ def test_search_rejects_unreadable_upload(seeded_data):
 
     errors = [str(element.value) for element in at.error]
     assert any("kein lesbares Bild" in value for value in errors), errors
+
+
+@pytest.fixture
+def duplicate_pair(seeded_data):
+    """A byte-identical copy of a seeded image with its own database row."""
+    import shutil
+
+    import numpy as np
+
+    from config import IMAGES_DIR
+    from vector_store import FaceVectorStore
+
+    source = sorted(IMAGES_DIR.glob("person_*.jpg"))[0]
+    copy = IMAGES_DIR / "person_0_kopie.jpg"
+    shutil.copyfile(source, copy)
+
+    store = FaceVectorStore()
+    vector = np.zeros(512, dtype=np.float32)
+    vector[0] = 1.0
+    store.add_face_embedding("face_duplicate_copy", vector, {
+        "face_id": "face_duplicate_copy",
+        "image_path": str(copy),
+        "location": "40,160,160,40",
+        "embedding_dimension": 512,
+        "added_at": "2026-01-01T00:00:00",
+    })
+
+    try:
+        yield source, copy, store
+    finally:
+        copy.unlink(missing_ok=True)
+        store.delete_face("face_duplicate_copy")
+        store.invalidate_stats_cache()
+
+
+def test_duplicate_manager_deletes_copy_and_its_database_rows(duplicate_pair):
+    source, copy, store = duplicate_pair
+
+    at = _app()
+    at.run()
+    _goto(at, "🔧 Duplicate Manager")
+    next(button for button in at.button if "Find Duplicates in images" in button.label).click().run()
+    _assert_no_exception(at)
+
+    radios = [element for element in at.radio if "Datei behalten" in getattr(element, "label", "")]
+    assert radios, "no keep-selection was rendered for the duplicate set"
+    radios[0].set_value(str(source))
+    next(button for button in at.button if "Andere löschen" in button.label).click().run()
+    _assert_no_exception(at)
+
+    assert source.exists(), "the kept file must survive"
+    assert not copy.exists(), "the other file must be deleted from disk"
+    remaining = store.collection.get(where={"image_path": str(copy)}, include=[])["ids"]
+    assert remaining == [], "database rows of the deleted file must be removed"
+    assert any("gelöscht" in str(message.value) for message in at.success)
+
+
+@pytest.fixture
+def isolated_settings_file():
+    from settings_store import settings_path
+
+    path = settings_path()
+    backup = path.read_bytes() if path.exists() else None
+    path.unlink(missing_ok=True)
+    yield path
+    if backup is None:
+        path.unlink(missing_ok=True)
+    else:
+        path.write_bytes(backup)
+
+
+def test_settings_save_persists_and_is_used_by_the_search(seeded_data, isolated_settings_file):
+    at = _app()
+    at.run()
+    _goto(at, "⚙️ Settings")
+
+    at.slider[0].set_value(0.9)
+    at.number_input[0].set_value(7)
+    at.number_input[1].set_value(16)
+    next(button for button in at.button if "Einstellungen speichern" in button.label).click().run()
+    _assert_no_exception(at)
+
+    assert any("gespeichert" in str(message.value) for message in at.success)
+    from settings_store import load_settings
+
+    assert load_settings() == {
+        "similarity_threshold": 0.9,
+        "max_results": 7,
+        "batch_size": 16,
+    }
+
+    # A fresh AppTest is a new session: the values must come from disk.
+    image_path = Path(seeded_data["metadatas"][0]["image_path"])
+    restarted = _app()
+    restarted.run()
+    _goto(restarted, "🔍 Face Search")
+    restarted.file_uploader[0].set_value(("bild.jpg", image_path.read_bytes(), "image/jpeg"))
+    restarted.run()
+    _assert_no_exception(restarted)
+
+    max_results_slider = next(slider for slider in restarted.slider if "Maximum Results" in slider.label)
+    threshold_slider = next(slider for slider in restarted.slider if "Similarity Threshold" in slider.label)
+    assert max_results_slider.value == 7
+    assert threshold_slider.value == pytest.approx(0.9)

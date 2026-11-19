@@ -275,17 +275,23 @@ def process_images_streamlit(update_existing=False, progress_callback=None, stat
             if total_images == 0:
                 return {"success": True, "message": "All images already processed!", "faces_added": 0}
         
-        # Process in batches
+        # Process in batches; the batch size is editable on the Settings page.
+        try:
+            from settings_store import load_settings
+            batch_size = int(load_settings()["batch_size"])
+        except Exception:  # noqa: BLE001 - fall back to the static config
+            batch_size = BATCH_SIZE
+
         total_faces = 0
         total_processed = 0
         total_errors = 0
         start_time = time.time()
         
-        num_batches = (total_images - 1) // BATCH_SIZE + 1
+        num_batches = (total_images - 1) // batch_size + 1
         
         for batch_num in range(num_batches):
-            start_idx = batch_num * BATCH_SIZE
-            end_idx = min(start_idx + BATCH_SIZE, total_images)
+            start_idx = batch_num * batch_size
+            end_idx = min(start_idx + batch_size, total_images)
             batch_files = image_files[start_idx:end_idx]
             
             if progress_callback:

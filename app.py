@@ -52,12 +52,13 @@ except Exception as exc:  # noqa: BLE001
         "pip install aiohttp playwright beautifulsoup4", exc
     )
 
-from duplicate_detector import duplicate_detector
+from duplicate_detector import delete_duplicate_files, duplicate_detector
 from utils import (
     load_and_preprocess_image, create_thumbnail, get_image_files, parse_face_location
 )
 from ui_cache import face_thumbnail
 from async_utils import run_coroutine
+from settings_store import load_settings, save_settings, settings_path
 from config import (
     PAGE_TITLE, PAGE_ICON, LAYOUT, 
     RESULTS_PER_PAGE, THUMBNAIL_SIZE,
@@ -327,7 +328,9 @@ def face_search_page():
                 st.error(f"❌ {image_error}")
                 st.stop()
             st.image(query_image, caption="Query Image", width='stretch')
-            
+
+            query_settings = load_settings()
+
             # Enhanced Search Parameters
             st.subheader("🎯 Enhanced Search Parameters")
             
@@ -336,9 +339,9 @@ def face_search_page():
             with col_a:
                 max_results = st.slider(
                     "Maximum Results", 
-                    min_value=5, 
+                    min_value=1, 
                     max_value=200, 
-                    value=50,
+                    value=int(query_settings["max_results"]),
                     help="Maximum number of similar faces to return"
                 )
                 
@@ -346,7 +349,7 @@ def face_search_page():
                     "Similarity Threshold", 
                     min_value=0.0, 
                     max_value=1.0, 
-                    value=0.4,
+                    value=float(query_settings["similarity_threshold"]),
                     step=0.05,
                     help="Mindestähnlichkeit für Suchergebnisse (0.4 = 40% Ähnlichkeit). Höhere Werte = genauere Ergebnisse aber weniger Treffer."
                 )
@@ -3266,10 +3269,73 @@ def display_scraped_images():
     else:
         st.info("No scraped images found. Use the scraping tab to download images from websites.")
 
+def _render_duplicate_set(directory: Path, hash_value: str, file_paths: List[Path], index: int) -> None:
+    """Show one duplicate set and let the user keep exactly one file."""
+    st.write(f"**Duplicate Set {index + 1}** ({len(file_paths)} files):")
+
+    labels = {str(path): Path(path).name for path in file_paths}
+    keep = st.radio(
+        "Datei behalten:",
+        options=list(labels.keys()),
+        format_func=lambda value: labels[value],
+        key=f"keep_{hash_value}",
+    )
+
+    columns = st.columns(min(len(file_paths), 4))
+    for position, file_path in enumerate(file_paths):
+        with columns[position % 4]:
+            try:
+                thumbnail = face_thumbnail(Path(file_path), None, (120, 120))
+                if thumbnail is not None:
+                    st.image(thumbnail, width='stretch')
+                st.caption(Path(file_path).name)
+                size_kb = Path(file_path).stat().st_size / 1024
+                st.caption(f"{size_kb:.1f} KB")
+            except Exception as exc:  # noqa: BLE001 - one broken file must not stop the page
+                st.error(f"Error: {exc}")
+
+    if st.button("🗑️ Andere löschen", key=f"delete_{hash_value}"):
+        result = delete_duplicate_files(file_paths, keep)
+
+        store = st.session_state.get("vector_store")
+        removed_faces = 0
+        for deleted_path in result["deleted"]:
+            if store is not None:
+                removed_faces += store.delete_faces_by_image_path(str(deleted_path))
+        duplicate_detector.cleanup_missing_files()
+
+        # Re-scan so the remaining sets and the counters reflect the disk state.
+        st.session_state.duplicate_results[str(directory)] = (
+            duplicate_detector.find_duplicates_in_directory(directory)
+        )
+
+        messages = []
+        if result["deleted"]:
+            names = ", ".join(path.name for path in result["deleted"])
+            messages.append(
+                f"✅ {len(result['deleted'])} Datei(en) gelöscht ({names}), "
+                f"{removed_faces} DB-Einträge entfernt."
+            )
+        if result["missing"]:
+            names = ", ".join(path.name for path in result["missing"])
+            messages.append(f"ℹ️ Bereits nicht mehr vorhanden: {names}")
+        if result["errors"]:
+            messages.append("⚠️ " + "; ".join(result["errors"]))
+        if not messages:
+            messages.append("ℹ️ Es wurde nichts gelöscht.")
+
+        st.session_state.duplicate_flash = messages
+        st.rerun()
+
+
 def duplicate_manager_page():
     """Duplicate detection and management page"""
     
     st.header("🗂️ Duplicate Manager")
+
+    st.session_state.setdefault("duplicate_results", {})
+    for message in st.session_state.pop("duplicate_flash", []) or []:
+        st.success(message)
     
     st.markdown("**Intelligente Duplikat-Erkennung:** Erkennt identische Bilder auch wenn sie umbenannt wurden")
     
@@ -3287,13 +3353,24 @@ def duplicate_manager_page():
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.button(f"🔍 Find Duplicates in {directory.name}", key=f"find_dups_{directory.name}"):
-                        find_duplicates_in_directory(directory)
+                        with st.spinner(f"Scanning {directory.name} for duplicates..."):
+                            st.session_state.duplicate_results[str(directory)] = (
+                                duplicate_detector.find_duplicates_in_directory(directory)
+                            )
                 
                 with col2:
                     content_hash = st.checkbox(f"Content-based detection", 
                                              key=f"content_{directory.name}",
                                              value=True,
                                              help="Erkennt identische Bilder auch wenn sie umbenannt wurden")
+
+                found_sets = st.session_state.duplicate_results.get(str(directory)) or {}
+                if found_sets:
+                    st.error(f"🔍 Found {len(found_sets)} sets of duplicate images:")
+                    for index, (hash_value, file_paths) in enumerate(sorted(found_sets.items())):
+                        _render_duplicate_set(directory, hash_value, file_paths, index)
+                elif str(directory) in st.session_state.duplicate_results:
+                    st.success("No duplicates found! All images are unique.")
     
     with tab2:
         st.subheader("Hash-Datenbank Statistiken")
@@ -3436,7 +3513,58 @@ def settings_page():
     """Settings and configuration page"""
     
     st.header("⚙️ Settings")
-    
+
+    flash = st.session_state.pop("settings_flash", None)
+    if flash:
+        st.success(flash)
+
+    current_settings = load_settings()
+
+    st.subheader("Bearbeitbare Einstellungen")
+    st.caption(f"Gespeichert in: {settings_path()}")
+
+    with st.form("settings_form"):
+        similarity_threshold = st.slider(
+            "Similarity Threshold",
+            min_value=0.0,
+            max_value=1.0,
+            value=float(current_settings["similarity_threshold"]),
+            step=0.05,
+            help="Mindestähnlichkeit für Suchergebnisse (0 = alles, 1 = identisch)",
+        )
+        max_results = st.number_input(
+            "Max Results",
+            min_value=1,
+            max_value=200,
+            value=int(current_settings["max_results"]),
+            step=1,
+            help="Maximale Anzahl Treffer pro Suche",
+        )
+        batch_size = st.number_input(
+            "Batch Size",
+            min_value=1,
+            max_value=256,
+            value=int(current_settings["batch_size"]),
+            step=1,
+            help="Bilder pro Batch bei der Stapelverarbeitung",
+        )
+        submitted = st.form_submit_button("💾 Einstellungen speichern", type="primary")
+
+    if submitted:
+        saved, errors = save_settings({
+            "similarity_threshold": similarity_threshold,
+            "max_results": max_results,
+            "batch_size": batch_size,
+        })
+        if saved:
+            st.session_state.settings_flash = f"✅ Einstellungen gespeichert: {settings_path()}"
+            st.rerun()
+        else:
+            details = "; ".join(f"{name}: {message}" for name, message in errors.items())
+            st.error(f"❌ Ungültige Werte, nichts gespeichert – {details}")
+
+    st.divider()
+
     st.subheader("Face Detection Model Settings")
     
     # Model selection
@@ -3473,9 +3601,9 @@ def settings_page():
         st.write("**Vector Database:** ChromaDB")
     
     with col2:
-        st.write("**Similarity Threshold:** 0.7")
-        st.write("**Max Results:** 50")
-        st.write("**Batch Size:** 32")
+        st.write(f"**Similarity Threshold:** {current_settings['similarity_threshold']:.2f}")
+        st.write(f"**Max Results:** {current_settings['max_results']}")
+        st.write(f"**Batch Size:** {current_settings['batch_size']}")
     
     st.markdown("---")
     

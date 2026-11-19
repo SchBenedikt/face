@@ -434,6 +434,37 @@ class FaceVectorStore:
             logger.error(f"Error deleting face {face_id}: {e}")
             return False
     
+    def delete_faces_by_image_path(self, image_path: str) -> int:
+        """Delete every face whose metadata points at ``image_path``.
+
+        Returns the number of removed embeddings. The statistics cache is
+        invalidated so counters do not keep the old values.
+        """
+        try:
+            existing = self.collection.get(
+                where={"image_path": str(image_path)},
+                include=[],
+            )
+            ids = list(existing.get("ids") or [])
+            if ids:
+                self.collection.delete(ids=ids)
+                logger.info(f"Deleted {len(ids)} face(s) for image {image_path}")
+            self.invalidate_stats_cache()
+            return len(ids)
+        except Exception as e:
+            logger.error(f"Error deleting faces for {image_path}: {e}")
+            return 0
+
+    def invalidate_stats_cache(self) -> None:
+        """Drop the in-memory and on-disk statistics cache."""
+        self._stats_cache = None
+        self._last_face_count = None
+        self._cache_timestamp = None
+        try:
+            self._stats_cache_file().unlink(missing_ok=True)
+        except OSError as exc:
+            logger.debug(f"Could not remove stats cache: {exc}")
+
     def _stats_cache_file(self) -> Path:
         """Location of the on-disk statistics cache (next to the vector DB)."""
         return Path(self.db_path).parent / ".stats_cache.json"

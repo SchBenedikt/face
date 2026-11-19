@@ -187,5 +187,40 @@ class SimpleDuplicateDetector:
         """For compatibility - database is already saved"""
         pass
 
+def delete_duplicate_files(file_paths, keep_path):
+    """Delete every file of a duplicate set except ``keep_path``.
+
+    Returns ``{"deleted": [Path], "missing": [Path], "errors": [str]}`` so the
+    caller can clean up database rows and report what happened. Nothing is
+    raised: a file that is already gone is reported as ``missing``.
+    """
+    keep = Path(keep_path)
+    paths = [Path(path) for path in file_paths]
+    result = {"deleted": [], "missing": [], "errors": []}
+
+    if keep not in paths:
+        result["errors"].append(f"{keep.name} gehört nicht zum Duplikat-Set")
+        return result
+    if len(paths) < 2:
+        result["errors"].append(
+            "Ein Duplikat-Set braucht mindestens zwei Dateien - es wurde nichts gelöscht"
+        )
+        return result
+
+    for path in paths:
+        if path == keep:
+            continue
+        if not path.exists():
+            result["missing"].append(path)
+            continue
+        try:
+            path.unlink()
+            result["deleted"].append(path)
+        except OSError as exc:
+            result["errors"].append(f"{path.name}: {exc}")
+
+    return result
+
+
 # Create singleton instance
 duplicate_detector = SimpleDuplicateDetector()
