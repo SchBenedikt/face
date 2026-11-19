@@ -26,3 +26,21 @@ def test_find_duplicates_inside_subdirectories(tmp_path):
     assert len(duplicates) == 1, duplicates
     names = {path.name for path in next(iter(duplicates.values()))}
     assert names == {"foto.jpg", "foto_kopie.jpg"}
+
+
+def test_quick_scan_matches_name_and_size_but_not_content(tmp_path):
+    root = tmp_path / "images"
+    first = root / "a" / "foto.jpg"
+    second = root / "b" / "foto.jpg"
+    first.parent.mkdir(parents=True)
+    second.parent.mkdir(parents=True)
+    first.write_bytes(b"aaaa")
+    second.write_bytes(b"bbbb")  # same name and size, different bytes
+
+    detector = SimpleDuplicateDetector(db_path=str(tmp_path / "duplicates.db"))
+
+    quick = detector.find_duplicates_in_directory(root, use_content_hash=False)
+    full = detector.find_duplicates_in_directory(root, use_content_hash=True)
+
+    assert len(quick) == 1, quick
+    assert full == {}, full

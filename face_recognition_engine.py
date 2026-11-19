@@ -33,6 +33,7 @@ from config import (
     MIN_FACE_SIZE,
     IMAGES_DIR, EMBEDDINGS_DIR, BATCH_SIZE, MAX_WORKERS
 )
+from settings_store import load_settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -67,9 +68,23 @@ class FaceRecognitionEngine:
         ])
         
         self.primary_model = self.models[0]
+        self.detection_model = FACE_RECOGNITION_MODEL
+        try:
+            saved_model = str(load_settings().get("detection_model", FACE_RECOGNITION_MODEL)).lower()
+            if saved_model in ("hog", "cnn"):
+                self.detection_model = saved_model
+        except Exception as exc:  # noqa: BLE001 - a broken settings file must not block startup
+            logger.warning(f"Could not load detection model setting: {exc}")
         self.detection_backends = getattr(config, 'FACE_DETECTION_BACKENDS', ["opencv", "mtcnn", "retinaface"])
         self.model_cache = {}  # Cache for model loading
         self.ensemble_enabled = getattr(config, 'FACE_ENSEMBLE_WEIGHTING', True)
+
+    def set_detection_model(self, model: str) -> None:
+        """Apply a saved detector choice to this engine instance."""
+        model = str(model).strip().lower()
+        if model not in ("hog", "cnn"):
+            raise ValueError("detection model must be 'hog' or 'cnn'")
+        self.detection_model = model
         
     def detect_faces(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:
         """
@@ -92,7 +107,7 @@ class FaceRecognitionEngine:
                 face_locations = face_recognition.face_locations(
                     image, 
                     number_of_times_to_upsample=0,  # Reduced for speed (was 1)
-                    model=FACE_RECOGNITION_MODEL
+                    model=self.detection_model
                 )
                 if face_locations:
                     logger.debug(f"face_recognition detected {len(face_locations)} faces")

@@ -64,11 +64,22 @@ from settings_store import load_settings, save_settings, settings_path
 from config import (
     PAGE_TITLE, PAGE_ICON, LAYOUT, 
     RESULTS_PER_PAGE, THUMBNAIL_SIZE,
-    IMAGES_DIR, SCRAPED_DIR,
-    FACE_RECOGNITION_MODEL
+    IMAGES_DIR, SCRAPED_DIR
 )
 
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+
+PAGES = [
+    "🔍 Face Search",
+    "📥 Image Upload & Processing",
+    "🧠 Batch Face Processing",
+    "🌐 Web Scraping",
+    "👥 Face Gallery",
+    "🏷️ Name Gallery",
+    "🔧 Duplicate Manager",
+    "📊 Database Statistics",
+    "⚙️ Settings",
+]
 
 
 def count_images(directory: Path, recursive: bool = False) -> int:
@@ -288,26 +299,20 @@ def main():
         st.stop()
 
     st.title("🔍 Face Recognition Search")
+
+    # Buttons deep in a page queue a navigation target; applying it before the
+    # selectbox is instantiated is the supported way to move the sidebar.
+    if "pending_page" in st.session_state:
+        st.session_state.nav_page = st.session_state.pop("pending_page")
+    if "nav_page" not in st.session_state:
+        st.session_state.nav_page = PAGES[0]
     
     
     # Sidebar
     with st.sidebar:
         st.header("⚙️ Navigation")
         
-        page = st.selectbox(
-            "Choose a page:",
-            [
-                "🔍 Face Search",
-                "📥 Image Upload & Processing", 
-                "🧠 Batch Face Processing",
-                "🌐 Web Scraping",
-                "👥 Face Gallery",
-                "🏷️ Name Gallery",
-                "🔧 Duplicate Manager",
-                "📊 Database Statistics",
-                "⚙️ Settings"
-            ]
-        )
+        page = st.selectbox("Choose a page:", PAGES, key="nav_page")
         
         st.markdown("---")
         
@@ -432,12 +437,12 @@ def face_search_page():
                     help="Mindestähnlichkeit für Suchergebnisse (0.4 = 40% Ähnlichkeit). Höhere Werte = genauere Ergebnisse aber weniger Treffer."
                 )
                 
-                # Image Quality Filter
+                # Similarity filter (the old labels called this "quality")
                 quality_filter = st.selectbox(
-                    "🖼️ Image Quality Filter",
-                    ["All Quality", "High Quality Only", "Medium+ Quality", "Remove Poor Quality"],
+                    "🎯 Similarity Filter",
+                    ["All Matches", "Strong Matches (≥70%)", "Medium+ Matches (≥40%)", "Weak Matches (≥30%)"],
                     index=2,
-                    help="Filter results by image quality to improve accuracy"
+                    help="Blendet Treffer unterhalb der gewählten Ähnlichkeit aus"
                 )
             
             with col_b:
@@ -461,43 +466,18 @@ def face_search_page():
                 # Result Sorting
                 sort_by = st.selectbox(
                     "📊 Sort Results By",
-                    ["Similarity Score", "Image Quality", "Face Size", "Date Added", "File Name"],
+                    ["Similarity Score", "Face Size", "Date Added", "File Name"],
                     index=0,
                     help="Order search results by different criteria"
                 )
             
             # Advanced Filters
             with st.expander("🔧 Advanced Filters", expanded=False):
-                col_adv1, col_adv2 = st.columns(2)
-                
-                with col_adv1:
-                    confidence_threshold = st.slider(
-                        "Confidence Threshold",
-                        min_value=0.0,
-                        max_value=1.0,
-                        value=0.8,
-                        step=0.05,
-                        help="Minimum confidence in face detection (higher = more reliable faces)"
-                    )
-                    
-                    exclude_blurry = st.checkbox(
-                        "Exclude Blurry Images",
-                        value=True,
-                        help="Filter out blurry or low-quality images"
-                    )
-                
-                with col_adv2:
-                    aspect_ratio_filter = st.checkbox(
-                        "Filter Extreme Aspect Ratios",
-                        value=True,
-                        help="Remove faces with unusual width/height ratios (often false positives)"
-                    )
-                    
-                    brightness_filter = st.checkbox(
-                        "Filter Dark/Overexposed Images",
-                        value=False,
-                        help="Remove images with poor lighting conditions"
-                    )
+                aspect_ratio_filter = st.checkbox(
+                    "Filter Extreme Aspect Ratios",
+                    value=True,
+                    help="Remove faces with unusual width/height ratios (often false positives)"
+                )
             
             # Facial Attribute Analysis Info
             with st.expander("🧬 Facial Attribute Analysis", expanded=False):
@@ -538,10 +518,7 @@ def face_search_page():
                 st.session_state.min_face_size = min_face_size
                 st.session_state.search_mode = search_mode
                 st.session_state.sort_by = sort_by
-                st.session_state.confidence_threshold = confidence_threshold
-                st.session_state.exclude_blurry = exclude_blurry
                 st.session_state.aspect_ratio_filter = aspect_ratio_filter
-                st.session_state.brightness_filter = brightness_filter
                 
                 analyze_uploaded_image_for_faces(uploaded_file, max_results, similarity_threshold)
     
@@ -695,14 +672,11 @@ def search_with_selected_face_enhanced(face_index: int):
     
     # Get advanced search parameters from session state
     search_params = {
-        'quality_filter': st.session_state.get('quality_filter', 'Medium+ Quality'),
+        'quality_filter': st.session_state.get('quality_filter', 'Medium+ Matches (≥40%)'),
         'min_face_size': st.session_state.get('min_face_size', 50),
         'search_mode': st.session_state.get('search_mode', 'Balanced'),
         'sort_by': st.session_state.get('sort_by', 'Similarity Score'),
-        'confidence_threshold': st.session_state.get('confidence_threshold', 0.8),
-        'exclude_blurry': st.session_state.get('exclude_blurry', True),
         'aspect_ratio_filter': st.session_state.get('aspect_ratio_filter', True),
-        'brightness_filter': st.session_state.get('brightness_filter', False)
     }
     
     selected_face_location = face_locations[face_index]
@@ -807,19 +781,16 @@ def apply_advanced_face_filters(faces, search_params):
                     if aspect_ratio < 0.5 or aspect_ratio > 2.0:  # Skip extremely wide/tall faces
                         continue
             
-            # Confidence filter (if available in metadata)
-            confidence = metadata.get('confidence', 1.0)
-            if confidence < search_params['confidence_threshold']:
-                continue
-            
-            # Quality-based filtering
-            if search_params['quality_filter'] == "High Quality Only":
-                # Only include faces with high similarity and good size
+            # Similarity-based filtering; the labels used to promise image
+            # quality, but only the similarity score is available here.
+            if search_params['quality_filter'] == "Strong Matches (≥70%)":
                 if face['similarity'] < 0.7 or face_size < 80:
                     continue
-            elif search_params['quality_filter'] == "Remove Poor Quality":
-                # Remove obviously poor quality results
-                if face['similarity'] < 0.3 or face_size < 30:
+            elif search_params['quality_filter'] == "Medium+ Matches (≥40%)":
+                if face['similarity'] < 0.4 or face_size < 30:
+                    continue
+            elif search_params['quality_filter'] == "Weak Matches (≥30%)":
+                if face['similarity'] < 0.3:
                     continue
             
             filtered_faces.append(face)
@@ -2153,10 +2124,10 @@ def display_search_results(results: List[Dict[str, Any]]):
         
         with col_f2:
             quality_level = st.selectbox(
-                "Quality Level",
-                ["All", "Medium+", "High Only"],
+                "Similarity Level",
+                ["All", "Medium+ (≥40%)", "High (≥70%)"],
                 index=0,
-                help="Filter by estimated quality"
+                help="Blendet Treffer unterhalb der gewählten Ähnlichkeit aus"
             )
             
             show_named_only = st.checkbox(
@@ -2193,10 +2164,10 @@ def display_search_results(results: List[Dict[str, Any]]):
         except:
             pass
         
-        # Quality filter
-        if quality_level == "High Only" and result['similarity'] < 0.7:
+        # Similarity filter (the old label called it quality)
+        if quality_level == "High (≥70%)" and result['similarity'] < 0.7:
             continue
-        elif quality_level == "Medium+" and result['similarity'] < 0.4:
+        elif quality_level == "Medium+ (≥40%)" and result['similarity'] < 0.4:
             continue
         
         # Named faces filter
@@ -2212,7 +2183,7 @@ def display_search_results(results: List[Dict[str, Any]]):
         filtered_results = sorted(filtered_results, key=lambda x: x['similarity'], reverse=True)
     elif sort_order == "Similarity ↑":
         filtered_results = sorted(filtered_results, key=lambda x: x['similarity'])
-    elif sort_order == "Size ↓":
+    elif sort_order in ("Size ↓", "Size ↑"):
         def get_size(x):
             try:
                 coords = x.get('metadata', {}).get('location', '0,0,0,0').split(',')
@@ -2220,9 +2191,11 @@ def display_search_results(results: List[Dict[str, Any]]):
                     top, right, bottom, left = map(int, coords)
                     return (right - left) * (bottom - top)
                 return 0
-            except:
+            except (TypeError, ValueError):
                 return 0
-        filtered_results = sorted(filtered_results, key=get_size, reverse=True)
+        filtered_results = sorted(
+            filtered_results, key=get_size, reverse=(sort_order == "Size ↓")
+        )
     elif sort_order == "Name A-Z":
         filtered_results = sorted(filtered_results, key=lambda x: x.get('metadata', {}).get('full_name', 'zzz'))
     
@@ -2551,12 +2524,12 @@ def process_with_fast_engine(directory_path, update_existing=False):
                 
                 with col1:
                     if st.button("🔍 View Face Gallery", width='stretch'):
-                        st.session_state.page = "Face Gallery"
+                        st.session_state.pending_page = "👥 Face Gallery"
                         st.rerun()
                 
                 with col2:
                     if st.button("📊 Analyze Results", width='stretch'):
-                        st.session_state.page = "Face Search"
+                        st.session_state.pending_page = "🔍 Face Search"
                         st.rerun()
             
             else:
@@ -3448,19 +3421,29 @@ def duplicate_manager_page():
             if directory.exists():
                 st.write(f"**{directory.name}**: {len(get_image_files(directory, validate=False))} images")
                 
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button(f"🔍 Find Duplicates in {directory.name}", key=f"find_dups_{directory.name}"):
-                        with st.spinner(f"Scanning {directory.name} for duplicates..."):
-                            st.session_state.duplicate_results[str(directory)] = (
-                                duplicate_detector.find_duplicates_in_directory(directory)
+                mode_key = f"duplicate_mode_{directory.name}"
+                st.session_state.setdefault(mode_key, True)
+                use_content_hash = st.checkbox(
+                    "Inhaltsvergleich (SHA-256)",
+                    value=st.session_state[mode_key],
+                    key=f"content_{directory.name}",
+                    help=(
+                        "An: Dateien werden byte-genau verglichen (findet auch "
+                        "umbenannte Kopien). Aus: schneller Vergleich über Name "
+                        "und Dateigröße."
+                    ),
+                )
+                if st.session_state[mode_key] != use_content_hash:
+                    st.session_state[mode_key] = use_content_hash
+                    st.session_state.duplicate_results.pop(str(directory), None)
+
+                if st.button(f"🔍 Find Duplicates in {directory.name}", key=f"find_dups_{directory.name}"):
+                    with st.spinner(f"Scanning {directory.name} for duplicates..."):
+                        st.session_state.duplicate_results[str(directory)] = (
+                            duplicate_detector.find_duplicates_in_directory(
+                                directory, use_content_hash=use_content_hash
                             )
-                
-                with col2:
-                    content_hash = st.checkbox(f"Content-based detection", 
-                                             key=f"content_{directory.name}",
-                                             value=True,
-                                             help="Erkennt identische Bilder auch wenn sie umbenannt wurden")
+                        )
 
                 found_sets = st.session_state.duplicate_results.get(str(directory)) or {}
                 if found_sets:
@@ -3663,6 +3646,12 @@ def settings_page():
             step=1,
             help="Bilder pro Batch bei der Stapelverarbeitung",
         )
+        detection_model = st.selectbox(
+            "Face Detection Model:",
+            options=["hog", "cnn"],
+            index=1 if current_settings["detection_model"] == "cnn" else 0,
+            help="HOG: schneller | CNN: genauer. Wirkt, wenn face_recognition installiert ist.",
+        )
         submitted = st.form_submit_button("💾 Einstellungen speichern", type="primary")
 
     if submitted:
@@ -3670,8 +3659,12 @@ def settings_page():
             "similarity_threshold": similarity_threshold,
             "max_results": max_results,
             "batch_size": batch_size,
+            "detection_model": detection_model,
         })
         if saved:
+            engine = st.session_state.get("face_engine")
+            if engine is not None:
+                engine.set_detection_model(detection_model)
             st.session_state.settings_flash = f"✅ Einstellungen gespeichert: {settings_path()}"
             st.rerun()
         else:
@@ -3681,18 +3674,21 @@ def settings_page():
     st.divider()
 
     st.subheader("Face Detection Model Settings")
-    
-    # Model selection
-    detection_model = st.selectbox(
-        "Face Detection Model:",
-        options=["hog", "cnn"],
-        index=1 if FACE_RECOGNITION_MODEL == "cnn" else 0,
-        help="HOG: Schneller, weniger genau | CNN: Langsamer, aber genauer"
-    )
-    
-    if detection_model != FACE_RECOGNITION_MODEL:
-        st.info(f"Model wird geändert von {FACE_RECOGNITION_MODEL} zu {detection_model}")
-        st.warning("⚠️ Diese Änderung erfordert einen Neustart der App")
+
+    active_model = current_settings["detection_model"]
+    st.write(f"**Aktiv:** {active_model.upper()}")
+    try:
+        import face_recognition as _face_recognition  # noqa: F401
+        st.caption(
+            "Die Auswahl wird sofort an face_recognition weitergegeben und "
+            "ist nach einem Neustart weiterhin aktiv."
+        )
+    except Exception:  # noqa: BLE001 - optional package
+        st.info(
+            "face_recognition ist nicht installiert. Die App nutzt deshalb den "
+            "OpenCV-Fallback; die gespeicherte Auswahl greift, sobald das "
+            "optionale Paket installiert ist."
+        )
     
     # Model comparison table
     st.subheader("Model Vergleich")
@@ -3712,7 +3708,7 @@ def settings_page():
     
     with col1:
         st.write("**Embedding Model:** DeepFace Facenet512")
-        st.write(f"**Detection Model:** {FACE_RECOGNITION_MODEL.upper()} {'✅ (Genauer)' if FACE_RECOGNITION_MODEL == 'cnn' else '⚡ (Schneller)'}")
+        st.write(f"**Detection Model:** {current_settings['detection_model'].upper()} {'✅ (Genauer)' if current_settings['detection_model'] == 'cnn' else '⚡ (Schneller)'}")
         st.write("**Vector Database:** ChromaDB")
     
     with col2:

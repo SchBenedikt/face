@@ -297,6 +297,7 @@ def test_settings_save_persists_and_is_used_by_the_search(seeded_data, isolated_
         "similarity_threshold": 0.9,
         "max_results": 7,
         "batch_size": 16,
+        "detection_model": "cnn",
     }
 
     # A fresh AppTest is a new session: the values must come from disk.
@@ -312,3 +313,34 @@ def test_settings_save_persists_and_is_used_by_the_search(seeded_data, isolated_
     threshold_slider = next(slider for slider in restarted.slider if "Similarity Threshold" in slider.label)
     assert max_results_slider.value == 7
     assert threshold_slider.value == pytest.approx(0.9)
+
+
+def test_pending_navigation_switches_the_sidebar_page(seeded_data):
+    at = _app()
+    at.run()
+
+    at.session_state["pending_page"] = "👥 Face Gallery"
+    at.run()
+
+    _assert_no_exception(at)
+    assert any("Face Gallery" in header.value for header in at.header), [
+        header.value for header in at.header
+    ]
+
+
+def test_settings_can_change_the_detection_model(seeded_data, isolated_settings_file):
+    at = _app()
+    at.run()
+    _goto(at, "⚙️ Settings")
+
+    model_select = next(
+        element for element in at.selectbox if "Face Detection Model" in element.label
+    )
+    model_select.set_value("hog")
+    next(button for button in at.button if "Einstellungen speichern" in button.label).click().run()
+    _assert_no_exception(at)
+
+    from settings_store import load_settings
+
+    assert any("gespeichert" in str(message.value) for message in at.success)
+    assert load_settings()["detection_model"] == "hog"

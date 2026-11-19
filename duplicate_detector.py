@@ -4,7 +4,7 @@ Simple duplicate detector for image files
 import hashlib
 import sqlite3
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Any, Dict, List, Set
 import logging
 
 logger = logging.getLogger(__name__)
@@ -91,8 +91,14 @@ class SimpleDuplicateDetector:
         except Exception as e:
             logger.error(f"Error adding hash for {file_path}: {e}")
     
-    def find_duplicates_in_directory(self, directory: Path, use_content_hash: bool = True) -> Dict[str, List[Path]]:
-        """Find duplicate files in directory"""
+    def find_duplicates_in_directory(self, directory: Path, use_content_hash: bool = True) -> Dict[Any, List[Path]]:
+        """Find duplicate files in directory.
+
+        With ``use_content_hash=False`` files are grouped by lower-case name and
+        size without reading their bytes. That is much faster and catches the
+        common renamed-copy case, but equal-sized different images can collide;
+        the default content hash avoids that.
+        """
         duplicates = {}
         hash_to_files = {}
         
@@ -111,19 +117,25 @@ class SimpleDuplicateDetector:
                     path for path in directory.rglob(pattern) if path.is_file()
                 )
 
-        # Calculate hashes and group files
+        # Group files either by a content hash or by a cheap name+size key.
         for file_path in sorted(image_files):
-            if file_path.is_file():
-                file_hash = self.calculate_file_hash(file_path)
-                if file_hash:
-                    if file_hash not in hash_to_files:
-                        hash_to_files[file_hash] = []
-                    hash_to_files[file_hash].append(file_path)
+            if not file_path.is_file():
+                continue
+            if use_content_hash:
+                group_key = self.calculate_file_hash(file_path)
+            else:
+                try:
+                    group_key = (file_path.name.casefold(), file_path.stat().st_size)
+                except OSError as exc:
+                    logger.warning(f"Could not stat {file_path}: {exc}")
+                    group_key = ""
+            if group_key:
+                hash_to_files.setdefault(group_key, []).append(file_path)
         
-        # Find duplicates (hashes with multiple files)
-        for file_hash, file_list in hash_to_files.items():
+        # Find duplicates (keys with multiple files)
+        for group_key, file_list in hash_to_files.items():
             if len(file_list) > 1:
-                duplicates[file_hash] = file_list
+                duplicates[group_key] = file_list
         
         return duplicates
     

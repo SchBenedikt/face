@@ -20,6 +20,13 @@ SCHEMA: Dict[str, Tuple[Any, type, float, float]] = {
     "similarity_threshold": (float(config.SIMILARITY_THRESHOLD), float, 0.0, 1.0),
     "max_results": (50, int, 1, 200),
     "batch_size": (int(config.BATCH_SIZE), int, 1, 256),
+    "detection_model": (
+        str(getattr(config, "FACE_RECOGNITION_MODEL", "cnn")), str, 0, 0
+    ),
+}
+
+CHOICES: Dict[str, Tuple[str, ...]] = {
+    "detection_model": ("hog", "cnn"),
 }
 
 
@@ -36,6 +43,12 @@ def _coerce(name: str, raw: Any) -> Any:
     default, kind, minimum, maximum = SCHEMA[name]
     if isinstance(raw, bool):
         raise ValueError("Wahrheitswerte sind hier nicht erlaubt")
+    if kind is str:
+        value = str(raw).strip().lower()
+        allowed = CHOICES.get(name)
+        if allowed and value not in allowed:
+            raise ValueError(f"muss einer von {', '.join(allowed)} sein")
+        return value
     if kind is float:
         value = float(str(raw).strip().replace(",", "."))
     else:

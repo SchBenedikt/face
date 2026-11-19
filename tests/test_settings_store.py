@@ -43,6 +43,7 @@ def test_saved_values_survive_a_reload(isolated_settings):
         "similarity_threshold": 0.85,
         "max_results": 7,
         "batch_size": 16,
+        "detection_model": "cnn",
     }
 
 
