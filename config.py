@@ -6,6 +6,15 @@ from pathlib import Path
 
 # Base paths
 BASE_DIR = Path(__file__).parent
+
+# Optional .env in the project root. Real environment variables take
+# precedence, and a missing/unreadable file simply leaves the defaults intact.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / ".env")
+except Exception:  # noqa: BLE001 - optional convenience, never a startup blocker
+    pass
+
 # FACE_DATA_DIR lets tests (and multi-instance setups) keep user data outside
 # the code directory without changing the defaults.
 DATA_DIR = Path(os.environ.get("FACE_DATA_DIR", BASE_DIR / "data")).expanduser()

@@ -35,8 +35,16 @@ logs/
 
 # Databases (exclude from repository)
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
+
+# Generated exports and runtime artifacts
+duplicates.db
+bilder_alles.txt
+*.backup
 
 # Data directories (user data)
 data/
