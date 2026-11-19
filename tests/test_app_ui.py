@@ -195,3 +195,16 @@ def test_run_coroutine_cancels_pending_tasks():
 
     assert run_coroutine(coroutine_with_background_task()) == "done"
     assert state.get("cancelled") is True
+
+
+def test_search_rejects_unreadable_upload(seeded_data):
+    """An empty upload must yield a message instead of a PIL traceback."""
+    at = _app()
+    at.run()
+    _goto(at, "🔍 Face Search")
+    at.file_uploader[0].set_value(("leer.jpg", b"", "image/jpeg"))
+    at.run()
+    _assert_no_exception(at)
+
+    errors = [str(element.value) for element in at.error]
+    assert any("kein lesbares Bild" in value for value in errors), errors

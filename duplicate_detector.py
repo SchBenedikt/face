@@ -99,16 +99,20 @@ class SimpleDuplicateDetector:
         if not directory.exists():
             return duplicates
         
-        # Get all image files
+        # Get all image files, including subdirectories: scraped images are
+        # stored per domain (scraped/<domain>/foto.jpg), so a top-level glob
+        # silently reported "no duplicates" for them.
         image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tiff'}
-        image_files = []
-        
+        image_files = set()
+
         for ext in image_extensions:
-            image_files.extend(directory.glob(f"*{ext}"))
-            image_files.extend(directory.glob(f"*{ext.upper()}"))
-        
+            for pattern in (f"*{ext}", f"*{ext.upper()}"):
+                image_files.update(
+                    path for path in directory.rglob(pattern) if path.is_file()
+                )
+
         # Calculate hashes and group files
-        for file_path in image_files:
+        for file_path in sorted(image_files):
             if file_path.is_file():
                 file_hash = self.calculate_file_hash(file_path)
                 if file_hash:

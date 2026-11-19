@@ -322,7 +322,10 @@ def face_search_page():
     with col1:
         if uploaded_file is not None:
             # Display uploaded image
-            query_image = Image.open(uploaded_file)
+            query_image, image_error = load_query_image(uploaded_file)
+            if image_error:
+                st.error(f"❌ {image_error}")
+                st.stop()
             st.image(query_image, caption="Query Image", width='stretch')
             
             # Enhanced Search Parameters
@@ -484,6 +487,30 @@ def face_search_page():
                 st.rerun()
         
         display_search_results(st.session_state.search_results)
+
+def load_query_image(uploaded_file):
+    """Decode an uploaded image and return ``(image, error_message)``.
+
+    ``Image.open`` only reads the header, so empty or truncated files either
+    fail immediately or later in ``st.image``. Both cases are turned into a
+    readable message instead of a traceback.
+    """
+    try:
+        try:
+            uploaded_file.seek(0)
+        except (AttributeError, OSError):
+            pass
+        image = Image.open(uploaded_file)
+        image.load()  # force a full decode so truncated files fail here
+        return image.convert("RGB"), None
+    except Exception as exc:  # noqa: BLE001 - any decode failure means "invalid"
+        logger.warning(f"Could not decode uploaded image: {exc}")
+        return None, (
+            "Die hochgeladene Datei ist kein lesbares Bild. Bitte eine gültige "
+            "JPG-, PNG-, BMP- oder WEBP-Datei wählen (die Datei ist "
+            "möglicherweise leer oder beschädigt)."
+        )
+
 
 def analyze_uploaded_image_for_faces(uploaded_file, max_results: int, similarity_threshold: float):
     """Analyze uploaded image and detect all faces"""
