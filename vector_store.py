@@ -101,12 +101,13 @@ class FaceVectorStore:
                 "embedding_dimension": len(embedding)
             }
             
-            # Add to collection
-            self.collection.add(
+            # Add or replace the row; re-adding a face must not fail.
+            self.collection.upsert(
                 embeddings=[embedding_list],
                 metadatas=[full_metadata],
                 ids=[face_id]
             )
+            self.invalidate_stats_cache()
             
             return True
             
@@ -120,16 +121,14 @@ class FaceVectorStore:
         embeddings: List[np.ndarray], 
         metadatas: List[Dict[str, Any]]
     ) -> int:
-        """
-        Add multiple face embeddings in batch
-        
-        Args:
-            face_ids: List of face identifiers
-            embeddings: List of face embeddings
-            metadatas: List of metadata dictionaries
-            
-        Returns:
-            Number of successfully added embeddings
+        """Write a batch of faces, replacing earlier rows for the same images.
+
+        ``upsert`` makes a second run update the existing ids instead of
+        failing. Rows that still point at the same image path but have a
+        different id (written by the old stem-based scheme) are removed, so a
+        reprocessed image never appears twice.
+
+        Returns the number of written embeddings, or 0 on failure.
         """
         try:
             if len(face_ids) != len(embeddings) or len(face_ids) != len(metadatas):
@@ -148,18 +147,89 @@ class FaceVectorStore:
                 }
                 full_metadatas.append(full_metadata)
             
-            # Add to collection
-            self.collection.add(
+            # Add or update the new rows first. Only delete stale rows after a
+            # successful write, so a failed reprocess keeps the old data.
+            self.collection.upsert(
                 embeddings=embedding_lists,
                 metadatas=full_metadatas,
                 ids=face_ids
             )
+
+            image_paths = {
+                str(metadata.get("image_path"))
+                for metadata in metadatas
+                if metadata.get("image_path")
+            }
+            self._delete_stale_faces_for_images(image_paths, set(face_ids))
+            self.invalidate_stats_cache()
             
-            logger.info(f"Added {len(face_ids)} face embeddings to vector store")
+            logger.info(f"Wrote {len(face_ids)} face embeddings to vector store")
             return len(face_ids)
             
         except Exception as e:
             logger.error(f"Error adding batch embeddings: {e}")
+            return 0
+
+    def _delete_stale_faces_for_images(
+        self, image_paths, keep_ids: set
+    ) -> int:
+        """Remove rows for ``image_paths`` that are not part of ``keep_ids``."""
+        removed = 0
+        for image_path in sorted(image_paths):
+            try:
+                existing = self.collection.get(
+                    where={"image_path": str(image_path)},
+                    include=[],
+                )
+                stale = [
+                    face_id
+                    for face_id in (existing.get("ids") or [])
+                    if face_id not in keep_ids
+                ]
+                if stale:
+                    self.collection.delete(ids=stale)
+                    removed += len(stale)
+            except Exception as exc:  # noqa: BLE001 - cleanup must not fail the write
+                logger.warning(f"Could not clean old faces for {image_path}: {exc}")
+        return removed
+
+    def prune_missing_faces(self) -> int:
+        """Delete embeddings whose source image no longer exists.
+
+        Returns the number of removed rows. This makes the database usable
+        again after files were removed outside the app, without touching rows
+        that still have a valid image.
+        """
+        try:
+            total = self.collection.count()
+            if total == 0:
+                return 0
+
+            stale: List[str] = []
+            offset = 0
+            chunk_size = 2000
+            while offset < total:
+                chunk = self.collection.get(
+                    limit=min(chunk_size, total - offset),
+                    offset=offset,
+                    include=['metadatas'],
+                )
+                ids = chunk.get("ids") or []
+                for index, metadata in enumerate(chunk.get("metadatas") or []):
+                    image_path = (metadata or {}).get("image_path")
+                    if not image_path or not Path(str(image_path)).is_file():
+                        if index < len(ids):
+                            stale.append(ids[index])
+                offset += chunk_size
+
+            for start in range(0, len(stale), 500):
+                self.collection.delete(ids=stale[start:start + 500])
+
+            self.invalidate_stats_cache()
+            logger.info(f"Pruned {len(stale)} face(s) with missing image files")
+            return len(stale)
+        except Exception as e:
+            logger.error(f"Error pruning missing faces: {e}")
             return 0
     
     def search_similar_faces(
@@ -427,6 +497,7 @@ class FaceVectorStore:
         """
         try:
             self.collection.delete(ids=[face_id])
+            self.invalidate_stats_cache()
             logger.info(f"Deleted face {face_id}")
             return True
             
@@ -576,7 +647,7 @@ class FaceVectorStore:
     def _check_cache_reset_marker(self):
         """Check if cache should be reset due to cleanup operations"""
         try:
-            cache_reset_file = Path("data/.cache_reset_marker")
+            cache_reset_file = Path(self.db_path).parent / ".cache_reset_marker"
             if cache_reset_file.exists():
                 logger.info("Cache reset marker found - clearing stats cache")
                 self._stats_cache = None
@@ -605,6 +676,7 @@ class FaceVectorStore:
                 name=self.collection_name,
                 metadata={"description": "Face embeddings for similarity search"}
             )
+            self.invalidate_stats_cache()
             
             logger.info(f"Cleared collection {self.collection_name}")
             return True

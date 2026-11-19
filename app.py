@@ -3054,6 +3054,7 @@ def process_existing_images(image_paths: List[Path]):
         successful_images = 0
         failed_images = 0
         total_faces = 0
+        images_without_faces = 0
         
         for result in results:
             if "error" not in result:
@@ -3073,18 +3074,29 @@ def process_existing_images(image_paths: List[Path]):
                             "location": location_str,
                             "face_id": face_data["face_id"]
                         })
+                else:
+                    images_without_faces += 1
             else:
                 failed_images += 1
         
         progress_bar.progress(75)
         status_text.text("Adding to vector database...")
         
-        # Add to vector store
+        # Add to vector store. Existing rows for these paths are replaced, so
+        # processing the same image again does not duplicate it.
         added_count = 0
         if face_ids:
             added_count = st.session_state.vector_store.add_face_embeddings_batch(
                 face_ids, embeddings, metadatas
             )
+
+        # An image that no longer contains a face should not keep old rows.
+        for result in results:
+            if "error" not in result and result.get("face_count", 0) == 0:
+                st.session_state.vector_store.delete_faces_by_image_path(
+                    result["image_path"]
+                )
+        invalidate_persons_cache()
         
         progress_bar.progress(100)
         status_text.text("Complete!")
@@ -3105,7 +3117,8 @@ def process_existing_images(image_paths: List[Path]):
                f"- Successfully processed: {successful_images}\n"
                f"- Failed to process: {failed_images}\n"
                f"- Total faces detected: {total_faces}\n"
-               f"- Face embeddings added to database: {added_count}")
+               f"- Images without faces: {images_without_faces}\n"
+               f"- Face embeddings written to database: {added_count}")
             
     except Exception as e:
         st.error(f"Error processing images: {e}")
@@ -3489,16 +3502,31 @@ def database_stats_page():
         # Actions
         st.subheader("Database Actions")
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             if st.button("🔄 Refresh Stats"):
+                st.session_state.vector_store.get_collection_stats(force_refresh=True)
                 st.rerun()
         
         with col2:
+            if st.button("🧹 Fehlende Bilder entfernen", help="Datenbankeinträge löschen, deren Bilddatei nicht mehr existiert"):
+                if st.session_state.get("confirm_prune", False):
+                    with st.spinner("Entferne verwaiste Datenbankeinträge..."):
+                        removed = st.session_state.vector_store.prune_missing_faces()
+                    invalidate_persons_cache()
+                    st.success(f"✅ {removed} verwaiste Gesichts-Einträge entfernt.")
+                    st.session_state.confirm_prune = False
+                    st.rerun()
+                else:
+                    st.session_state.confirm_prune = True
+                    st.warning("⚠️ Nochmals klicken, um Einträge ohne Bilddatei zu löschen.")
+        
+        with col3:
             if st.button("⚠️ Clear Database", type="secondary"):
                 if st.session_state.get("confirm_clear", False):
                     st.session_state.vector_store.clear_collection()
+                    invalidate_persons_cache()
                     st.success("Database cleared!")
                     st.session_state.confirm_clear = False
                     st.rerun()

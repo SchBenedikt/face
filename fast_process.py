@@ -3,8 +3,6 @@
 Fast Batch Face Processing Script
 Optimized for maximum speed with decent accuracy
 """
-import face_recognition_models
-import face_recognition
 import sys
 import time
 import logging
@@ -34,6 +32,29 @@ def get_image_files_fast(directory: Path) -> List[Path]:
         image_files.extend(directory.rglob(f"*{ext.upper()}"))
     return image_files
 
+
+def _normalised_path(path) -> str:
+    return str(Path(path).expanduser().resolve())
+
+
+def processed_image_paths(vector_store) -> set:
+    """Return the source paths that already have rows in the vector store."""
+    processed = set()
+    try:
+        existing_data = vector_store.collection.get(include=['metadatas'])
+        for metadata in existing_data.get('metadatas') or []:
+            image_path = (metadata or {}).get('image_path')
+            if image_path:
+                processed.add(_normalised_path(image_path))
+    except Exception as exc:  # noqa: BLE001 - processing can start without this check
+        logger.warning(f"Could not read already processed images: {exc}")
+    return processed
+
+
+def filter_unprocessed_images(image_files: List[Path], processed_paths: set) -> List[Path]:
+    """Keep files whose full path is new; equal file names in other folders stay."""
+    return [path for path in image_files if _normalised_path(path) not in processed_paths]
+
 def process_images_fast(update_existing=False):
     """Fast batch processing with minimal overhead"""
     
@@ -58,23 +79,13 @@ def process_images_fast(update_existing=False):
     face_engine = FaceRecognitionEngine()
     vector_store = FaceVectorStore()
     
-    # Filter already processed images if not updating
+        # Filter already processed images if not updating. Compare full paths:
+    # equal file names in different folders are different images.
     if not update_existing:
         print("🔍 Checking for already processed images...")
-        processed_images = set()
-        try:
-            # Get all existing metadatas to find processed images
-            existing_data = vector_store.collection.get()
-            if existing_data and existing_data.get('metadatas'):
-                for metadata in existing_data['metadatas']:
-                    if 'image_path' in metadata:
-                        processed_images.add(Path(metadata['image_path']).name)
-        except Exception as e:
-            print(f"⚠️ Could not check existing images: {e}")
-        
-        # Filter out processed images
+        processed_images = processed_image_paths(vector_store)
         original_count = len(image_files)
-        image_files = [img for img in image_files if img.name not in processed_images]
+        image_files = filter_unprocessed_images(image_files, processed_images)
         skipped = original_count - len(image_files)
         
         if skipped > 0:
@@ -96,7 +107,7 @@ def process_images_fast(update_existing=False):
     # Process in batches
     total_faces = 0
     total_processed = 0
-    total_deleted = 0
+    total_no_faces = 0
     total_errors = 0
     start_time = time.time()
     
@@ -151,48 +162,21 @@ def process_images_fast(update_existing=False):
                 
             else:
                 total_processed += 1
-                # No faces detected: delete the image file to remove it completely
-                image_path_str = result.get('image_path')
-                try:
-                    img_path = Path(image_path_str) if image_path_str else None
-                    if img_path and not img_path.exists():
-                        # Try to resolve relative to IMAGES_DIR
-                        img_path = IMAGES_DIR / (Path(image_path_str).name if image_path_str else '')
-                    if img_path and img_path.exists():
-                        img_path.unlink()
-                        total_deleted += 1
-                        print(f"  🗑️ {image_name} → No faces detected — image deleted")
-                    else:
-                        print(f"  ⚠️ {image_name} → No faces detected (file not found to delete)")
-                except Exception as e:
-                    print(f"  ⚠️ {image_name} → No faces detected (failed to delete): {e}")
+                total_no_faces += 1
+                print(f"  ℹ️ {image_name} → No faces detected (file kept)")
         
-        # Add to database
+        # Add to database. add_face_embeddings_batch replaces existing rows for
+        # the same image, so update mode no longer scans the whole collection.
         if face_ids:
-            if update_existing:
-                # In update mode, delete existing faces for this image first
-                for result in results:
-                    if "error" not in result:
-                        image_path = result["image_path"]
-                        # Find and delete existing faces from this image
-                        try:
-                            existing_data = vector_store.collection.get()
-                            if existing_data and existing_data.get('metadatas'):
-                                faces_to_delete = []
-                                for i, metadata in enumerate(existing_data['metadatas']):
-                                    if metadata.get('image_path') == image_path:
-                                        if i < len(existing_data.get('ids', [])):
-                                            faces_to_delete.append(existing_data['ids'][i])
-                                
-                                if faces_to_delete:
-                                    vector_store.collection.delete(ids=faces_to_delete)
-                                    print(f"  🗑️ Deleted {len(faces_to_delete)} existing faces from {Path(image_path).name}")
-                        except Exception as e:
-                            print(f"  ⚠️ Could not delete existing faces: {e}")
-            
             added_count = vector_store.add_face_embeddings_batch(face_ids, embeddings, metadatas)
             total_faces += added_count
-            print(f"  💾 Added {added_count} faces to database")
+            print(f"  💾 Wrote {added_count} faces to database")
+
+        if update_existing:
+            # An image that lost all its faces must also lose its old rows.
+            for result in results:
+                if "error" not in result and result.get("face_count", 0) == 0:
+                    vector_store.delete_faces_by_image_path(result["image_path"])
         
         # Batch timing
         batch_time = time.time() - batch_start
@@ -210,7 +194,7 @@ def process_images_fast(update_existing=False):
     print(f"📊 Total Images: {total_images}")
     print(f"✅ Successfully Processed: {total_processed}")
     print(f"👥 Total Faces Found: {total_faces}")
-    print(f"🗑️ Images deleted (no faces): {total_deleted}")
+    print(f"ℹ️ Images without faces kept: {total_no_faces}")
     print(f"❌ Errors: {total_errors}")
     print(f"⏱️ Total Time: {total_time:.1f}s")
     print(f"🚀 Average per Image: {avg_time_per_image:.1f}s")
@@ -250,22 +234,12 @@ def process_images_streamlit(update_existing=False, progress_callback=None, stat
         if status_callback:
             status_callback(f"🔍 Found {total_images} images to process")
         
-        # Filter already processed images if not updating
+        # Filter already processed images if not updating. Compare full paths:
+        # equal file names in different folders are different images.
         if not update_existing:
-            processed_images = set()
-            try:
-                existing_data = vector_store.collection.get()
-                if existing_data and existing_data.get('metadatas'):
-                    for metadata in existing_data['metadatas']:
-                        if 'image_path' in metadata:
-                            processed_images.add(Path(metadata['image_path']).name)
-            except Exception as e:
-                if status_callback:
-                    status_callback(f"⚠️ Could not check existing images: {e}")
-            
-            # Filter out processed images
+            processed_images = processed_image_paths(vector_store)
             original_count = len(image_files)
-            image_files = [img for img in image_files if img.name not in processed_images]
+            image_files = filter_unprocessed_images(image_files, processed_images)
             skipped = original_count - len(image_files)
             
             if skipped > 0 and status_callback:
@@ -284,6 +258,7 @@ def process_images_streamlit(update_existing=False, progress_callback=None, stat
 
         total_faces = 0
         total_processed = 0
+        total_no_faces = 0
         total_errors = 0
         start_time = time.time()
         
@@ -335,30 +310,17 @@ def process_images_streamlit(update_existing=False, progress_callback=None, stat
                     total_errors += 1
                 else:
                     total_processed += 1
+                    total_no_faces += 1
             
-            # Add to database
+            # Add to database; the vector store replaces rows for the same path.
             if face_ids:
-                if update_existing:
-                    # Delete existing faces for processed images
-                    for result in results:
-                        if "error" not in result:
-                            image_path = result["image_path"]
-                            try:
-                                existing_data = vector_store.collection.get()
-                                if existing_data and existing_data.get('metadatas'):
-                                    faces_to_delete = []
-                                    for i, metadata in enumerate(existing_data['metadatas']):
-                                        if metadata.get('image_path') == image_path:
-                                            if i < len(existing_data.get('ids', [])):
-                                                faces_to_delete.append(existing_data['ids'][i])
-                                    
-                                    if faces_to_delete:
-                                        vector_store.collection.delete(ids=faces_to_delete)
-                            except Exception:
-                                pass  # Continue processing even if deletion fails
-                
                 added_count = vector_store.add_face_embeddings_batch(face_ids, embeddings, metadatas)
                 total_faces += added_count
+
+            if update_existing:
+                for result in results:
+                    if "error" not in result and result.get("face_count", 0) == 0:
+                        vector_store.delete_faces_by_image_path(result["image_path"])
         
         # Final statistics
         total_time = time.time() - start_time
@@ -368,6 +330,7 @@ def process_images_streamlit(update_existing=False, progress_callback=None, stat
             "total_images": len(image_files),
             "processed": total_processed,
             "faces_added": total_faces,
+            "no_faces": total_no_faces,
             "errors": total_errors,
             "processing_time": total_time,
             "update_mode": update_existing

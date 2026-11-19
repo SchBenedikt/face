@@ -10,6 +10,7 @@ import warnings
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API.*")
 
 import cv2
+import hashlib
 import numpy as np
 try:  # optional: needs dlib, which is not part of the default runtime
     import face_recognition
@@ -35,6 +36,19 @@ from config import (
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def build_face_id(image_path: Path | str, face_index: int) -> str:
+    """Return a stable id that is unique per file path and face position.
+
+    The old scheme used only the file stem, so ``a/foto.jpg`` and
+    ``b/foto.jpg`` produced the same ids. Besides mixing unrelated faces up,
+    that made a second run collide with the rows written by the first one.
+    """
+    resolved = str(Path(image_path).expanduser().resolve())
+    digest = hashlib.sha1(resolved.encode("utf-8")).hexdigest()[:16]
+    return f"face_{digest}_{face_index}"
+
 
 class FaceRecognitionEngine:
     """
@@ -590,7 +604,7 @@ class FaceRecognitionEngine:
                     
                     if embedding is not None:
                         faces_data.append({
-                            "face_id": f"{image_path.stem}_face_{i}",
+                            "face_id": build_face_id(image_path, i),
                             "location": face_location,
                             "embedding": embedding,
                             "embedding_size": len(embedding)
