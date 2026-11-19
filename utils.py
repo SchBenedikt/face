@@ -1,10 +1,11 @@
 """
 Utility functions for image processing and face recognition
 """
+import io
 import os
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 from pathlib import Path
 from typing import List, Tuple, Optional, Union
 import logging
@@ -207,12 +208,14 @@ def create_thumbnail(image: np.ndarray, size: Tuple[int, int] = (200, 200)) -> n
     # Convert back to numpy array
     return np.array(pil_image)
 
-def get_image_files(directory: Union[str, Path]) -> List[Path]:
+def get_image_files(directory: Union[str, Path], validate: bool = True) -> List[Path]:
     """
     Get all image files from a directory
     
     Args:
         directory: Directory to search
+        validate: Decode every file to verify it (slow). Pass False for plain
+            file counts in the UI, where the extension check is enough.
         
     Returns:
         List of image file paths
@@ -226,7 +229,7 @@ def get_image_files(directory: Union[str, Path]) -> List[Path]:
     
     for file_path in directory.rglob('*'):
         if file_path.is_file() and file_path.suffix.lower() in valid_extensions:
-            if is_valid_image_file(file_path):
+            if not validate or is_valid_image_file(file_path):
                 image_files.append(file_path)
                 
     return sorted(image_files)
@@ -278,3 +281,130 @@ def calculate_image_hash(image: np.ndarray) -> str:
     # Calculate hash
     image_bytes = small_image.tobytes()
     return hashlib.md5(image_bytes).hexdigest()
+
+def normalise_box_size(size: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
+    """Accept ``240`` or ``(240, 240)`` and return a (width, height) tuple."""
+    if isinstance(size, (int, float)):
+        return (max(1, int(size)), max(1, int(size)))
+    try:
+        width, height = size
+        return (max(1, int(width)), max(1, int(height)))
+    except (TypeError, ValueError):
+        return (240, 240)
+
+def parse_face_location(location) -> Optional[Tuple[int, int, int, int]]:
+    """
+    Normalise a stored face location to ``(top, right, bottom, left)``.
+
+    ChromaDB metadata only keeps scalars, so locations are stored as the string
+    ``"top,right,bottom,left"``. Older entries may still hold tuples, lists or
+    dicts, so all of those shapes are accepted here.
+    """
+    if location is None:
+        return None
+
+    if isinstance(location, dict):
+        try:
+            return (
+                int(location['top']),
+                int(location['right']),
+                int(location['bottom']),
+                int(location['left']),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    if isinstance(location, str):
+        parts = [part.strip() for part in location.split(',')]
+        if len(parts) != 4:
+            return None
+        try:
+            top, right, bottom, left = (int(float(part)) for part in parts)
+        except ValueError:
+            return None
+        return (top, right, bottom, left)
+
+    try:
+        top, right, bottom, left = location
+        return (int(top), int(right), int(bottom), int(left))
+    except (TypeError, ValueError):
+        return None
+
+def clamp_face_box(
+    box: Tuple[int, int, int, int],
+    width: int,
+    height: int,
+    padding: int = 0,
+) -> Tuple[int, int, int, int]:
+    """Add padding to a face box and clamp it to the image bounds."""
+    top, right, bottom, left = box
+    top = max(0, min(height - 1, top - padding))
+    left = max(0, min(width - 1, left - padding))
+    bottom = min(height, bottom + padding)
+    right = min(width, right + padding)
+    bottom = max(top + 1, bottom)
+    right = max(left + 1, right)
+    return (top, right, bottom, left)
+
+def _open_rgb(image_path: Union[str, Path]) -> Optional[Image.Image]:
+    """Open an image, honour EXIF orientation and convert it to RGB."""
+    try:
+        with Image.open(image_path) as pil_image:
+            return ImageOps.exif_transpose(pil_image).convert('RGB')
+    except Exception as e:
+        logger.debug(f"Could not open image {image_path}: {e}")
+        return None
+
+def _encode_jpeg(pil_image: Image.Image, quality: int = 88) -> bytes:
+    buffer = io.BytesIO()
+    pil_image.save(buffer, format='JPEG', quality=quality, optimize=False)
+    return buffer.getvalue()
+
+def encode_image_thumbnail(
+    image_path: Union[str, Path],
+    size: Union[int, Tuple[int, int]] = (240, 240),
+    quality: int = 88,
+) -> Optional[bytes]:
+    """
+    Return a small JPEG thumbnail of an image as bytes.
+
+    Bytes (not numpy arrays) are returned so the UI can cache thumbnails
+    cheaply and Streamlit does not have to re-encode the picture every rerun.
+    """
+    pil_image = _open_rgb(image_path)
+    if pil_image is None:
+        return None
+    try:
+        pil_image.thumbnail(normalise_box_size(size), Image.Resampling.LANCZOS)
+        return _encode_jpeg(pil_image, quality)
+    except Exception as e:
+        logger.debug(f"Thumbnail encoding failed for {image_path}: {e}")
+        return None
+
+def encode_face_thumbnail(
+    image_path: Union[str, Path],
+    location,
+    size: Union[int, Tuple[int, int]] = (240, 240),
+    padding: int = 10,
+    quality: int = 88,
+) -> Optional[bytes]:
+    """Crop a face from an image and return it as a small JPEG thumbnail."""
+    box = parse_face_location(location)
+    if box is None:
+        return encode_image_thumbnail(image_path, size, quality)
+
+    pil_image = _open_rgb(image_path)
+    if pil_image is None:
+        return None
+    try:
+        top, right, bottom, left = clamp_face_box(
+            box, pil_image.width, pil_image.height, padding
+        )
+        if right <= left or bottom <= top:
+            return None
+        crop = pil_image.crop((left, top, right, bottom))
+        crop.thumbnail(normalise_box_size(size), Image.Resampling.LANCZOS)
+        return _encode_jpeg(crop, quality)
+    except Exception as e:
+        logger.debug(f"Face thumbnail encoding failed for {image_path}: {e}")
+        return None

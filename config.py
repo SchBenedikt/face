@@ -76,5 +76,5 @@ MAX_WORKERS = 4
 EMBEDDING_DIMENSION = 128
 
 # UI settings
-RESULTS_PER_PAGE = 500  # Zeige viele Bilder auf einmal an
-THUMBNAIL_SIZE = (400, 400)  # Größere Thumbnails für bessere Gesichtserkennung
+RESULTS_PER_PAGE = 100  # 100 pro Seite rendert schnell, ohne 500 Bilder je Rerun
+THUMBNAIL_SIZE = (240, 240)  # 240px reichen für die Übersicht und sind viel schneller
