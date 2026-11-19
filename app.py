@@ -16,8 +16,6 @@ import cv2
 from PIL import Image
 from pathlib import Path
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 from typing import List, Dict, Any
 import time
 import logging
