@@ -79,7 +79,7 @@ def process_images_fast(update_existing=False):
     face_engine = FaceRecognitionEngine()
     vector_store = FaceVectorStore()
     
-        # Filter already processed images if not updating. Compare full paths:
+    # Filter already processed images if not updating. Compare full paths:
     # equal file names in different folders are different images.
     if not update_existing:
         print("🔍 Checking for already processed images...")
