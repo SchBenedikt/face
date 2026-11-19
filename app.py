@@ -300,6 +300,20 @@ def main():
 
     st.title("🔍 Face Recognition Search")
 
+    # A fresh install has no faces yet. Point the user at the two ways to add
+    # data instead of leaving the start page without any explanation.
+    try:
+        empty_state_stats = st.session_state.vector_store.get_collection_stats()
+    except Exception:  # noqa: BLE001 - the sidebar will still show its own error
+        empty_state_stats = {}
+    if "error" not in empty_state_stats and empty_state_stats.get("total_faces", 0) == 0:
+        st.info(
+            "📭 Noch keine Gesichter in der Datenbank. Lade unter "
+            "**📥 Image Upload & Processing** Bilder hoch oder starte unter "
+            "**🌐 Web Scraping** einen Import – danach erscheinen die Gesichter "
+            "in der Galerie."
+        )
+
     # Buttons deep in a page queue a navigation target; applying it before the
     # selectbox is instantiated is the supported way to move the sidebar.
     if "pending_page" in st.session_state:
