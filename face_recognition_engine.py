@@ -679,7 +679,7 @@ class FaceRecognitionEngine:
             # Create embeddings data structure
             embeddings_data = {
                 "metadata": {
-                    "model_name": self.model_name,
+                    "model_name": self.primary_model,
                     "total_images": len(results),
                     "valid_images": len(valid_results),
                     "total_faces": sum(r["face_count"] for r in valid_results)
