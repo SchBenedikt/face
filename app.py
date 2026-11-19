@@ -11,6 +11,7 @@ warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API
 import os
 import streamlit as st
 import asyncio
+from urllib.parse import urlparse
 import numpy as np
 import cv2
 from PIL import Image
@@ -56,12 +57,88 @@ from utils import (
     load_and_preprocess_image, create_thumbnail, get_image_files, parse_face_location
 )
 from ui_cache import face_thumbnail
+from async_utils import run_coroutine
 from config import (
     PAGE_TITLE, PAGE_ICON, LAYOUT, 
     RESULTS_PER_PAGE, THUMBNAIL_SIZE,
     IMAGES_DIR, SCRAPED_DIR,
     FACE_RECOGNITION_MODEL
 )
+
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+
+
+def count_images(directory: Path, recursive: bool = False) -> int:
+    """Count image files in a directory, optionally including subdirectories."""
+    directory = Path(directory)
+    if not directory.exists():
+        return 0
+
+    found = set()
+    for suffix in IMAGE_SUFFIXES:
+        for pattern in (f"*{suffix}", f"*{suffix.upper()}"):
+            globber = directory.rglob if recursive else directory.glob
+            found.update(path for path in globber(pattern) if path.is_file())
+    return len(found)
+
+
+def discover_image_directories() -> List[Any]:
+    """Return the (label, path) pairs the batch processor can work on.
+
+    Uses the configured data directory instead of a hardcoded ``data/`` path,
+    so FACE_DATA_DIR and custom layouts are honoured.
+    """
+    available: List[Any] = []
+
+    images_count = count_images(IMAGES_DIR)
+    if images_count:
+        available.append((f"🖼️ Images ({images_count} images)", str(IMAGES_DIR)))
+
+    if Path(IMAGES_DIR).exists():
+        downloaded = [
+            directory
+            for directory in Path(IMAGES_DIR).iterdir()
+            if directory.is_dir() and directory.name.startswith("downloaded_images")
+        ]
+        for directory in sorted(downloaded, key=lambda item: item.stat().st_mtime, reverse=True):
+            count = count_images(directory)
+            if not count:
+                continue
+            stamp = datetime.fromtimestamp(directory.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+            available.append((f"📥 {directory.name} ({count} images, {stamp})", str(directory)))
+
+    scraped_count = count_images(SCRAPED_DIR, recursive=True)
+    if scraped_count:
+        available.append((f"🕷️ Scraped Images ({scraped_count} images)", str(SCRAPED_DIR)))
+
+    return available
+
+
+def parse_scrape_urls(raw: str) -> tuple:
+    """Split pasted lines into (valid, invalid) URLs.
+
+    Bare domains are upgraded to https://; anything without a plausible host is
+    reported back instead of being handed to the scraper.
+    """
+    valid: List[str] = []
+    invalid: List[str] = []
+
+    for line in raw.splitlines():
+        candidate = line.strip()
+        if not candidate:
+            continue
+        with_scheme = candidate if "://" in candidate else f"https://{candidate}"
+        parsed = urlparse(with_scheme)
+        host = parsed.netloc.split("@")[-1].split(":")[0]
+        if parsed.scheme in ("http", "https") and "." in host and " " not in host:
+            valid.append(with_scheme)
+        else:
+            invalid.append(candidate)
+
+    return valid, invalid
+
+
+
 
 # Page configuration
 st.set_page_config(
@@ -2218,26 +2295,7 @@ def batch_face_processing_page():
         st.subheader("📁 Directory Selection")
         
         # Auto-detect available directories with image counts
-        available_dirs = []
-        
-        # Check for downloaded images directories
-        images_base = Path("data/images")
-        if images_base.exists():
-            downloaded_dirs = [d for d in images_base.iterdir() 
-                             if d.is_dir() and d.name.startswith("downloaded_images")]
-            
-            for d in sorted(downloaded_dirs, key=lambda x: x.stat().st_mtime, reverse=True):
-                image_count = len(list(d.glob("*.jpg")) + list(d.glob("*.png")) + list(d.glob("*.jpeg")))
-                if image_count > 0:
-                    time_str = datetime.fromtimestamp(d.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-                    available_dirs.append((f"📥 {d.name} ({image_count} images, {time_str})", str(d)))
-        
-        # Check scraped directory
-        scraped_dir = Path("data/scraped")
-        if scraped_dir.exists():
-            scraped_count = len(list(scraped_dir.glob("*.jpg")) + list(scraped_dir.glob("*.png")) + list(scraped_dir.glob("*.jpeg")))
-            if scraped_count > 0:
-                available_dirs.append((f"🕷️ Scraped Images ({scraped_count} images)", str(scraped_dir)))
+        available_dirs = discover_image_directories()
         
         if not available_dirs:
             st.warning("📂 No image directories found. Please download or scrape images first.")
@@ -3075,11 +3133,22 @@ def web_scraping_page():
         st.info("🔍 **Duplikat-Erkennung aktiviert:** Bereits vorhandene Bilder werden automatisch übersprungen")
         
         if st.button("🕷️ Start Scraping", type="primary"):
-            if urls_input.strip():
-                urls = [url.strip() for url in urls_input.split('\n') if url.strip()]
-                scrape_websites(urls, max_images, auto_process)
-            else:
+            urls, invalid_urls = parse_scrape_urls(urls_input)
+            if invalid_urls:
+                listed = ", ".join(f"`{value}`" for value in invalid_urls)
+                st.error(
+                    f"Ungültige URL(s): {listed}. Bitte vollständige Adressen wie "
+                    "https://example.com eingeben."
+                )
+            elif not urls:
                 st.error("Please enter at least one URL")
+            elif st.session_state.image_scraper is None:
+                st.error(
+                    "Web-Scraping ist nicht verfügbar: old_image_scraper konnte "
+                    "nicht geladen werden (siehe Abhängigkeiten oben)."
+                )
+            else:
+                scrape_websites(urls, max_images, auto_process)
     
     with tab2:
         display_scraped_images()
@@ -3089,15 +3158,11 @@ def scrape_websites(urls: List[str], max_images: int, auto_process: bool):
     
     with st.spinner("Scraping images from websites..."):
         try:
-            # Run async scraping
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            results = loop.run_until_complete(
+            # Run async scraping; asyncio.run() shuts the loop down cleanly
+            # instead of closing it while Playwright tasks are still pending.
+            results = run_coroutine(
                 st.session_state.image_scraper.scrape_multiple_websites(urls, max_images)
             )
-            
-            loop.close()
             
             # Display results
             success_count = sum(1 for r in results if r.get("success", False))

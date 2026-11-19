@@ -465,8 +465,14 @@ cd face
 python -m venv myenv
 source myenv/bin/activate  # On Windows: myenv\Scripts\activate
 
-# Install dependencies
+# Install dependencies (numpy 2, ChromaDB 1.x, DeepFace with ONNX backend)
 pip install -r requirements.txt
+
+# Optional: browser binaries for the web scraper
+python -m playwright install chromium
+
+# Optional: dlib-based detection and the CLI/live scripts
+pip install -r requirements-optional.txt
 
 # Initialize system
 python setup_env.py
@@ -474,7 +480,8 @@ python setup_env.py
 
 ### Advanced Setup with GPU Support
 ```bash
-# Install with CUDA support (optional)
+# Optional: CUDA build for the GPU-accelerated CLI scripts (the Streamlit app
+# itself runs on the ONNX backend and does not need torch)
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 
 # Install development dependencies

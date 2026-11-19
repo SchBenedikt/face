@@ -1,44 +1,32 @@
-# Python 3.11 wird empfohlen: TensorFlow 2.15 (DeepFace-Backend) liefert keine
-# Wheels für Python 3.12.
+# Laufzeit-Abhängigkeiten der Streamlit-App.
+# Getestet mit Python 3.12 und numpy 2.x. Installation aus einem frischen venv:
+#   python -m venv .venv && .venv/bin/pip install -r requirements.txt
 #
-# Streamlit >= 1.49 ist erforderlich, weil die UI width="stretch" auf
-# st.button()/st.image() verwendet. Ältere Versionen kennen diesen Parameter
-# nicht und brechen mit einem TypeError ab.
+# DeepFace nutzt seit 0.0.105 standardmäßig das ONNX-Backend (onnxruntime),
+# daher werden TensorFlow, Torch oder dlib für die App nicht mehr benötigt.
+# Die optionalen Zusätze für die CLI-/Live-Skripte stehen in
+# requirements-optional.txt.
 
-# Web UI
+# Web-UI
 streamlit>=1.49,<2
-pyarrow>=14,<17        # st.table braucht pyarrow; <17 bleibt mit numpy 1.x kompatibel
-opencv-python==4.8.0.74
-pillow==10.0.1
-numpy==1.24.4          # oder falls nötig 1.21.6
-pandas==2.0.3
-setuptools==69.5.1
 
-# Face recognition
-face-recognition==1.3.0  # dlib wird als Abhängigkeit installiert
-deepface==0.0.81
-insightface==0.7.3
-scikit-learn==1.3.2
+# Numerik / Bildverarbeitung
+numpy>=2.0,<3
+pandas>=2.2
+pillow>=10.0
+opencv-python-headless>=4.11
 
-# Vector database
-chromadb==0.4.24        # maximal bis 0.4.x empfohlen für Mac
-faiss-cpu==1.7.4
+# Vektor-Datenbank
+chromadb>=1.0
+
+# Gesichtserkennung (ONNX-Backend, kein TensorFlow nötig)
+deepface>=0.0.105
 
 # Scraping
-playwright==1.40.0
-beautifulsoup4==4.12.2
-requests==2.31.0
-aiohttp==3.9.5          # wird von old_image_scraper.py beim App-Start importiert
-aiofiles==23.2.1
-
-# Charts & tooling
-plotly>=6.0,<7
-python-dotenv==1.0.1
-tqdm==4.66.1
-
-# ML backends
-torch==2.1.2           # Kompatibles Wheel vorab prüfen!
-torchvision==0.16.2    # Muss zur Torch-Version passen
-tensorflow==2.15.0     # Letzte Version ohne tf-keras Abhängigkeit
-matplotlib==3.8.4
-seaborn==0.13.2
+aiohttp>=3.9
+aiofiles>=23.0
+beautifulsoup4>=4.12
+tqdm>=4.66
+playwright>=1.40       # danach einmalig: python -m playwright install chromium
+requests>=2.31
+python-dotenv>=1.0

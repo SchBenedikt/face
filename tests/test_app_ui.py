@@ -143,3 +143,55 @@ def test_analysis_modal_path_is_safe(seeded_data):
     at.session_state["info_face_location"] = metadata["location"]
     at.run()
     _assert_no_exception(at)
+
+
+def test_batch_processing_lists_configured_directories(seeded_data):
+    """The batch page must use FACE_DATA_DIR instead of a hardcoded data/ path."""
+    at = _app()
+    at.run()
+    _goto(at, "🧠 Batch Face Processing")
+    _assert_no_exception(at)
+
+    warnings = [str(element.value) for element in at.warning]
+    assert not any("No image directories found" in value for value in warnings), warnings
+
+    options = [str(option) for box in at.selectbox for option in box.options]
+    image_count = len({meta["image_path"] for meta in seeded_data["metadatas"]})
+    assert any(f"{image_count} images" in option for option in options), options
+    assert any("3 images" in option for option in options), options
+
+
+def test_scraping_rejects_invalid_urls(seeded_data):
+    """Invalid input is rejected with a clear message instead of a scraper run."""
+    at = _app()
+    at.run()
+    _goto(at, "🌐 Web Scraping")
+    at.text_area[0].set_value("not a url")
+    next(button for button in at.button if "Start Scraping" in button.label).click().run()
+    _assert_no_exception(at)
+
+    errors = [str(element.value) for element in at.error]
+    assert any("Ungültige URL" in value for value in errors), errors
+
+
+def test_run_coroutine_cancels_pending_tasks():
+    """Closing the loop while Playwright's transport task is pending must not happen."""
+    import asyncio
+
+    from async_utils import run_coroutine
+
+    state = {}
+
+    async def coroutine_with_background_task():
+        async def worker():
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                state["cancelled"] = True
+                raise
+
+        asyncio.create_task(worker())
+        return "done"
+
+    assert run_coroutine(coroutine_with_background_task()) == "done"
+    assert state.get("cancelled") is True

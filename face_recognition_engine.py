@@ -11,7 +11,13 @@ warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API
 
 import cv2
 import numpy as np
-import face_recognition
+try:  # optional: needs dlib, which is not part of the default runtime
+    import face_recognition
+except Exception as _face_recognition_error:  # ImportError, OSError (missing dlib)
+    face_recognition = None
+    _FACE_RECOGNITION_IMPORT_ERROR = _face_recognition_error
+else:
+    _FACE_RECOGNITION_IMPORT_ERROR = None
 from deepface import DeepFace
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional, Any
@@ -64,6 +70,11 @@ class FaceRecognitionEngine:
         try:
             # Method 1: Primary - face_recognition library (good balance of speed and accuracy)
             try:
+                if face_recognition is None:
+                    raise RuntimeError(
+                        "face_recognition nicht verfügbar "
+                        f"({_FACE_RECOGNITION_IMPORT_ERROR})"
+                    )
                 face_locations = face_recognition.face_locations(
                     image, 
                     number_of_times_to_upsample=0,  # Reduced for speed (was 1)
@@ -343,6 +354,9 @@ class FaceRecognitionEngine:
         """
         Fallback embedding extraction using face_recognition library
         """
+        if face_recognition is None:
+            return None
+
         try:
             logger.debug("Using fallback face_recognition method with preprocessing")
             
