@@ -24,10 +24,33 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# Import our modules
-from face_recognition_engine import FaceRecognitionEngine
-from vector_store import FaceVectorStore
-from old_image_scraper import AdvancedImageScraper, advanced_scraper
+# Import our modules. The heavy/optional dependencies are guarded so that a
+# missing package produces a readable message instead of a traceback.
+import_errors = {}
+
+try:
+    from face_recognition_engine import FaceRecognitionEngine
+except Exception as exc:  # noqa: BLE001 - surface any import-time failure to the UI
+    FaceRecognitionEngine = None
+    import_errors["Gesichtserkennung (face-recognition, deepface)"] = (
+        "pip install face-recognition deepface", exc
+    )
+
+try:
+    from vector_store import FaceVectorStore
+except Exception as exc:  # noqa: BLE001
+    FaceVectorStore = None
+    import_errors["Vektor-Datenbank (chromadb)"] = ("pip install chromadb", exc)
+
+try:
+    from old_image_scraper import AdvancedImageScraper, advanced_scraper
+except Exception as exc:  # noqa: BLE001
+    AdvancedImageScraper = None
+    advanced_scraper = None
+    import_errors["Web-Scraping (aiohttp, playwright)"] = (
+        "pip install aiohttp playwright beautifulsoup4", exc
+    )
+
 from duplicate_detector import duplicate_detector
 from utils import (
     load_and_preprocess_image, create_thumbnail, get_image_files, parse_face_location
@@ -49,11 +72,17 @@ st.set_page_config(
 )
 
 # Initialize session state
-if 'face_engine' not in st.session_state:
+if FaceRecognitionEngine is not None and 'face_engine' not in st.session_state:
     st.session_state.face_engine = FaceRecognitionEngine()
 
 if 'vector_store' not in st.session_state:
-    st.session_state.vector_store = FaceVectorStore()
+    st.session_state.vector_store = None
+    st.session_state.vector_store_error = None
+    if FaceVectorStore is not None:
+        try:
+            st.session_state.vector_store = FaceVectorStore()
+        except Exception as exc:  # noqa: BLE001 - shown in the UI below
+            st.session_state.vector_store_error = f"{type(exc).__name__}: {exc}"
 
 if 'image_scraper' not in st.session_state:
     st.session_state.image_scraper = advanced_scraper
@@ -87,7 +116,21 @@ def invalidate_persons_cache():
 
 def main():
     """Main application function"""
-    
+
+    if import_errors:
+        st.error("❌ Es fehlen benötigte Abhängigkeiten – die App kann nicht starten.")
+        for name, (install, exc) in import_errors.items():
+            st.markdown(f"- **{name}** – `{install}`")
+            st.caption(f"{type(exc).__name__}: {exc}")
+        st.info("Nach der Installation die App bitte neu starten.")
+        st.stop()
+
+    if st.session_state.get('vector_store') is None:
+        st.error("❌ Die Vektor-Datenbank konnte nicht geöffnet werden.")
+        st.code(st.session_state.get('vector_store_error') or "Unbekannter Fehler")
+        st.info("Prüfe, ob das Datenverzeichnis existiert und beschreibbar ist.")
+        st.stop()
+
     st.title("🔍 Face Recognition Search")
     
     
