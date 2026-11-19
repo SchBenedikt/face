@@ -260,6 +260,7 @@ def process_images_streamlit(update_existing=False, progress_callback=None, stat
         total_processed = 0
         total_no_faces = 0
         total_errors = 0
+        failed_images = []
         start_time = time.time()
         
         num_batches = (total_images - 1) // batch_size + 1
@@ -308,6 +309,12 @@ def process_images_streamlit(update_existing=False, progress_callback=None, stat
                 elif "error" in result:
                     batch_errors += 1
                     total_errors += 1
+                    image_path = result.get("image_path", "unknown")
+                    failed_images.append({
+                        "image_path": image_path,
+                        "name": Path(image_path).name,
+                        "error": result.get("error", "Unknown error"),
+                    })
                 else:
                     total_processed += 1
                     total_no_faces += 1
@@ -332,6 +339,7 @@ def process_images_streamlit(update_existing=False, progress_callback=None, stat
             "faces_added": total_faces,
             "no_faces": total_no_faces,
             "errors": total_errors,
+            "failed_images": failed_images,
             "processing_time": total_time,
             "update_mode": update_existing
         }

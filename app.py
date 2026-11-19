@@ -2515,7 +2515,14 @@ def process_with_fast_engine(directory_path, update_existing=False):
             if result["success"]:
                 invalidate_gallery_cache()
                 invalidate_persons_cache()
-                st.success("🎉 Processing completed successfully!")
+                failed_images = result.get("failed_images", [])
+                if failed_images:
+                    st.warning(
+                        f"⚠️ Processing completed with {len(failed_images)} error(s). "
+                        "The valid images were added to the database."
+                    )
+                else:
+                    st.success("🎉 Processing completed successfully!")
                 
                 # Results metrics
                 col1, col2, col3, col4 = st.columns(4)
@@ -2558,6 +2565,14 @@ def process_with_fast_engine(directory_path, update_existing=False):
                     st.info("🔄 **Update Mode**: All existing face data was replaced with fresh analysis")
                 else:
                     st.info("🆕 **New Mode**: Only new images were processed, existing faces were preserved")
+
+                if failed_images:
+                    st.warning("**Fehlerhafte Bilder:**")
+                    for failure in failed_images:
+                        st.write(
+                            f"- `{failure.get('name', 'unknown')}`: "
+                            f"{failure.get('error', 'Unknown error')}"
+                        )
                 
                 # Suggest next steps
                 st.subheader("🎯 Next Steps")
@@ -2577,14 +2592,30 @@ def process_with_fast_engine(directory_path, update_existing=False):
                 # short summary and let main rerun after the page returns so
                 # its face counts and the gallery reflect the new rows.
                 if result.get("faces_added", 0) > 0:
+                    error_lines = "\n".join(
+                        f"- `{failure.get('name', 'unknown')}`: "
+                        f"{failure.get('error', 'Unknown error')}"
+                        for failure in failed_images
+                    )
+                    summary = (
+                        f"**Batch Summary:** {result.get('processed', 0)} images "
+                        f"processed, {result.get('faces_added', 0)} faces added, "
+                        f"{result.get('errors', 0)} errors."
+                    )
+                    if error_lines:
+                        summary += f"\n\n**Fehlerhafte Bilder:**\n{error_lines}"
+                    if failed_images:
+                        headline = (
+                            "⚠️ Batch processing completed with errors; "
+                            "the valid images were added."
+                        )
+                        kind = "warning"
+                    else:
+                        headline = "🎉 Batch processing completed successfully!"
+                        kind = "success"
                     st.session_state["_flash_messages"] = [
-                        ("success", "🎉 Batch processing completed successfully!"),
-                        (
-                            "info",
-                            f"**Batch Summary:** {result.get('processed', 0)} images "
-                            f"processed, {result.get('faces_added', 0)} faces added, "
-                            f"{result.get('errors', 0)} errors.",
-                        ),
+                        (kind, headline),
+                        ("info", summary),
                     ]
                     st.session_state["_refresh_after_processing"] = True
             
