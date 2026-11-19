@@ -634,132 +634,114 @@ class FaceVectorStore:
             logger.error(f"Error deleting face {face_id}: {e}")
             return False
     
+    def _stats_cache_file(self) -> Path:
+        """Location of the on-disk statistics cache (next to the vector DB)."""
+        return Path(self.db_path).parent / ".stats_cache.json"
+
+    def _load_stats_disk_cache(self) -> Optional[Dict[str, Any]]:
+        try:
+            cache_file = self._stats_cache_file()
+            if not cache_file.exists():
+                return None
+            with open(cache_file, "r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except Exception as e:
+            logger.debug(f"Could not read stats cache: {e}")
+            return None
+
+    def _save_stats_disk_cache(self, stats: Dict[str, Any]) -> None:
+        try:
+            cache_file = self._stats_cache_file()
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(cache_file, "w", encoding="utf-8") as handle:
+                json.dump({
+                    "total_faces": stats.get("total_faces", 0),
+                    "unique_images": stats.get("unique_images", 0),
+                    "avg_embedding_dimension": stats.get("avg_embedding_dimension", 0),
+                    "cached_at": datetime.now().isoformat(),
+                }, handle)
+        except Exception as e:
+            logger.debug(f"Could not write stats cache: {e}")
+
     def get_collection_stats(self, force_refresh: bool = False) -> Dict[str, Any]:
         """
-        Get statistics about the collection with intelligent caching
-        
-        Args:
-            force_refresh: Force recalculation even if cache is valid
-            
-        Returns:
-            Collection statistics
+        Get statistics about the collection with intelligent caching.
+
+        Counting unique images means walking the metadata of every face, so the
+        result is cached in memory and on disk (``data/.stats_cache.json``).
+        Restarting the app therefore no longer re-scans the whole collection,
+        which used to stall the first page load on large databases.
         """
         try:
-            # Get current face count for cache validation
             collection_count = self.collection.count()
-            
-            # Check if we can use cached results
-            current_time = datetime.now()
-            
-            # Use cache if:
-            # 1. Cache exists
-            # 2. Face count hasn't changed
-            # 3. Cache is less than 10 minutes old
-            # 4. Not forcing refresh
+
             cache_valid = (
-                not force_refresh and
-                self._stats_cache is not None and
-                self._last_face_count == collection_count and
-                self._cache_timestamp is not None and
-                (current_time - self._cache_timestamp).seconds < 600  # 10 minutes
+                not force_refresh
+                and self._stats_cache is not None
+                and self._last_face_count == collection_count
+                and self._cache_timestamp is not None
+                and (datetime.now() - self._cache_timestamp).total_seconds() < 600
             )
-            
             if cache_valid:
-                logger.debug(f"Using cached stats for {collection_count} faces")
                 return self._stats_cache
-            
-            logger.info(f"Calculating fresh stats for {collection_count} faces...")
-            
-            stats = {
+
+            stats: Dict[str, Any] = {
                 "total_faces": collection_count,
                 "collection_name": self.collection_name,
-                "db_path": self.db_path
+                "db_path": self.db_path,
             }
-            
-            # For small collections, calculate exact unique images
-            # For large collections, use optimized sampling
-            if collection_count <= 10000:
-                # Small collection: precise calculation
-                unique_images = set()
-                embedding_dimensions = []
-                
-                chunk_size = 1000
-                offset = 0
-                
-                while offset < collection_count:
-                    chunk_results = self.collection.get(
-                        limit=min(chunk_size, collection_count - offset),
-                        offset=offset,
-                        include=['metadatas']
-                    )
-                    
-                    if chunk_results['metadatas']:
-                        for metadata in chunk_results['metadatas']:
-                            if 'image_path' in metadata:
-                                unique_images.add(metadata['image_path'])
-                            if 'embedding_dimension' in metadata:
-                                embedding_dimensions.append(metadata['embedding_dimension'])
-                    
-                    offset += chunk_size
-                
-                unique_images_count = len(unique_images)
-                
+
+            if collection_count == 0:
+                stats.update({"unique_images": 0, "avg_embedding_dimension": 0})
             else:
-                # Large collection: statistical estimation with sampling
-                logger.info("Large collection detected - using statistical sampling for unique images")
-                
-                # Sample 5% of the collection, minimum 1000, maximum 10000
-                sample_size = min(max(int(collection_count * 0.05), 1000), 10000)
-                
-                sample_results = self.collection.get(
-                    limit=sample_size,
-                    include=['metadatas']
-                )
-                
-                unique_images_in_sample = set()
-                embedding_dimensions = []
-                
-                if sample_results['metadatas']:
-                    for metadata in sample_results['metadatas']:
-                        if 'image_path' in metadata:
-                            unique_images_in_sample.add(metadata['image_path'])
-                        if 'embedding_dimension' in metadata:
-                            embedding_dimensions.append(metadata['embedding_dimension'])
-                
-                # Estimate total unique images based on sample
-                if unique_images_in_sample:
-                    # Use Chao1 estimator for species richness
-                    sample_unique_count = len(unique_images_in_sample)
-                    faces_per_image_ratio = sample_size / sample_unique_count
-                    
-                    # Conservative estimation: assume similar ratio for full collection
-                    estimated_unique_images = int(collection_count / faces_per_image_ratio)
-                    
-                    # Add confidence bounds (10% margin)
-                    unique_images_count = estimated_unique_images
-                    
-                    logger.info(f"Estimated {unique_images_count} unique images from {sample_unique_count} in sample of {sample_size}")
+                cached = None if force_refresh else self._load_stats_disk_cache()
+                if cached and cached.get("total_faces") == collection_count:
+                    stats.update({
+                        "unique_images": int(cached.get("unique_images", 0)),
+                        "avg_embedding_dimension": float(cached.get("avg_embedding_dimension", 0) or 0),
+                    })
+                    logger.info(f"Using stored stats for {collection_count} faces")
                 else:
-                    unique_images_count = 0
-            
-            stats.update({
-                "unique_images": unique_images_count,
-                "avg_embedding_dimension": np.mean(embedding_dimensions) if embedding_dimensions else 0
-            })
-            
-            # Update cache
+                    unique_images = set()
+                    dimension_sum = 0
+                    dimension_count = 0
+                    chunk_size = 2000
+                    offset = 0
+
+                    while offset < collection_count:
+                        chunk = self.collection.get(
+                            limit=min(chunk_size, collection_count - offset),
+                            offset=offset,
+                            include=['metadatas'],
+                        )
+                        for metadata in chunk.get('metadatas') or []:
+                            if not metadata:
+                                continue
+                            image_path = metadata.get('image_path')
+                            if image_path:
+                                unique_images.add(image_path)
+                            dimension = metadata.get('embedding_dimension')
+                            if dimension:
+                                dimension_sum += int(dimension)
+                                dimension_count += 1
+                        offset += chunk_size
+
+                    stats.update({
+                        "unique_images": len(unique_images),
+                        "avg_embedding_dimension": (dimension_sum / dimension_count) if dimension_count else 0,
+                    })
+                    self._save_stats_disk_cache(stats)
+                    logger.info(f"Stats calculated: {collection_count} faces, {len(unique_images)} unique images")
+
             self._stats_cache = stats
             self._last_face_count = collection_count
-            self._cache_timestamp = current_time
-            
-            logger.info(f"Stats calculated: {collection_count} faces, {unique_images_count} unique images (cached)")
-            
+            self._cache_timestamp = datetime.now()
             return stats
-            
+
         except Exception as e:
             logger.error(f"Error getting collection stats: {e}")
             return {"error": str(e)}
-    
+
     def _check_cache_reset_marker(self):
         """Check if cache should be reset due to cleanup operations"""
         try:
@@ -817,7 +799,7 @@ class FaceVectorStore:
                 results = self.collection.get(
                     limit=limit,
                     offset=offset,
-                    include=['metadatas', 'embeddings', 'documents']
+                    include=['metadatas']
                 )
                 
                 if results and results.get('metadatas'):
@@ -831,7 +813,7 @@ class FaceVectorStore:
                     chunk_size = min(offset + limit + 100, 2000)  # Get reasonable chunk
                     all_results = self.collection.get(
                         limit=chunk_size,
-                        include=['metadatas', 'embeddings', 'documents']
+                        include=['metadatas']
                     )
                     
                     if all_results and all_results.get('metadatas'):
@@ -845,7 +827,7 @@ class FaceVectorStore:
                             end_idx = min(offset + limit, len(metadatas))
                             
                             return {
-                                'ids': [ids[offset:end_idx]] if ids else [[]],
+                                'ids': ids[offset:end_idx] if ids else [],
                                 'metadatas': metadatas[offset:end_idx],
                                 'embeddings': embeddings[offset:end_idx] if embeddings else [],
                                 'documents': documents[offset:end_idx] if documents else []
@@ -856,7 +838,7 @@ class FaceVectorStore:
             
             # Return empty result if all methods fail
             return {
-                'ids': [[]],
+                'ids': [],
                 'metadatas': [],
                 'embeddings': [],
                 'documents': []
@@ -865,7 +847,7 @@ class FaceVectorStore:
         except Exception as e:
             logger.error(f"Error in get_faces_paginated: {e}")
             return {
-                'ids': [[]],
+                'ids': [],
                 'metadatas': [],
                 'embeddings': [],
                 'documents': []
@@ -1072,7 +1054,7 @@ class FaceVectorStore:
             
             results = self.collection.get(
                 where={"person_id": target_person_id},
-                include=['metadatas', 'embeddings']
+                include=['metadatas']
             )
             
             faces = []
@@ -1306,7 +1288,7 @@ class FaceVectorStore:
             
             # Get all faces with person names - completely safe approach
             results = self.collection.get(
-                include=['metadatas', 'embeddings']
+                include=['metadatas']
             )
             
             matching_faces = []

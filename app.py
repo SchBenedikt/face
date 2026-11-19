@@ -29,7 +29,10 @@ from face_recognition_engine import FaceRecognitionEngine
 from vector_store import FaceVectorStore
 from old_image_scraper import AdvancedImageScraper, advanced_scraper
 from duplicate_detector import duplicate_detector
-from utils import load_and_preprocess_image, create_thumbnail, get_image_files
+from utils import (
+    load_and_preprocess_image, create_thumbnail, get_image_files, parse_face_location
+)
+from ui_cache import face_thumbnail
 from config import (
     PAGE_TITLE, PAGE_ICON, LAYOUT, 
     RESULTS_PER_PAGE, THUMBNAIL_SIZE,
@@ -2040,169 +2043,83 @@ def display_search_results(results: List[Dict[str, Any]]):
     
     # Display results in grid
     cols = st.columns(4)
-    
+
     for i, face_data in enumerate(page_results):
         with cols[i % 4]:
             try:
-                # Load image
-                image_path = Path(face_data['metadata']['image_path'])
-                if image_path.exists():
-                    image = load_and_preprocess_image(image_path)
-                    
-                    if image is not None:
-                        # Extract face region
-                        location = face_data['metadata'].get('location')
-                        if location:
-                            # Parse location string "top,right,bottom,left"
-                            if isinstance(location, str):
-                                coords = location.split(',')
-                                if len(coords) == 4:
-                                    top, right, bottom, left = map(int, coords)
-                                    face_image = image[top:bottom, left:right]
-                                    
-                                    # Create thumbnail
-                                    thumbnail = create_thumbnail(face_image, THUMBNAIL_SIZE)
-                                    
-                                    # Display with enhanced similarity information
-                                    st.image(thumbnail, width='stretch')
-                                    
-                                    # Enhanced similarity display with quality indicators
-                                    similarity_percentage = face_data['similarity'] * 100
-                                    confidence_score = face_data.get('confidence_score', similarity_percentage / 100) * 100
-                                    
-                                    # Calculate face quality metrics
-                                    face_width = right - left
-                                    face_height = bottom - top
-                                    face_size = min(face_width, face_height)
-                                    face_area = face_width * face_height
-                                    
-                                    # Quality indicators
-                                    quality_indicators = []
-                                    if face_size >= 80:
-                                        quality_indicators.append("🔍 High Res")
-                                    elif face_size >= 50:
-                                        quality_indicators.append("📏 Medium Res")
-                                    else:
-                                        quality_indicators.append("📱 Low Res")
-                                    
-                                    if face_area > 6400:  # 80x80
-                                        quality_indicators.append("✨ Large")
-                                    
-                                    # Color-coded similarity display with quality info
-                                    if similarity_percentage >= 70:
-                                        st.success(f"**🎯 {similarity_percentage:.1f}%**")
-                                        st.caption(f"🔒 Confidence: {confidence_score:.1f}% | Size: {face_size}px")
-                                    elif similarity_percentage >= 50:
-                                        st.info(f"**✅ {similarity_percentage:.1f}%**")
-                                        st.caption(f"📊 Confidence: {confidence_score:.1f}% | Size: {face_size}px")
-                                    elif similarity_percentage >= 30:
-                                        st.warning(f"**⚠️ {similarity_percentage:.1f}%**")
-                                        st.caption(f"📈 Confidence: {confidence_score:.1f}% | Size: {face_size}px")
-                                    else:
-                                        st.error(f"**❓ {similarity_percentage:.1f}%**")
-                                        st.caption(f"🔍 Confidence: {confidence_score:.1f}% | Size: {face_size}px")
-                                    
-                                    # Display quality indicators
-                                    if quality_indicators:
-                                        st.caption(" | ".join(quality_indicators))
-                                    
-                                    st.write(f"**📁 {image_path.name}**")
-                                    
-                                    # Display person name if assigned
-                                    face_metadata = face_data.get('metadata', {})
-                                    person_name = face_metadata.get('full_name', '')
-                                    if person_name:
-                                        st.success(f"👤 **{person_name}**")
-                                    
-                                    # Single unified info button
-                                    if st.button("ℹ️ Infos", key=f"info_{i}", help="Vollbild, Gesichtsanalyse und Namen zuweisen", width='stretch'):
-                                        face_id = face_data.get('face_id', face_data.get('id', f"face_{i}"))  # Try both face_id and id
-                                        # Set face info data and trigger modal
-                                        st.session_state.info_face_id = face_id
-                                        st.session_state.info_image_path = image_path
-                                        st.session_state.info_face_location = location
-                                        st.rerun()
-                                else:
-                                    # Fallback: show full image
-                                    st.image(image, width='stretch')
-                                    st.write(f"**Similarity:** {face_data['similarity']:.3f}")
-                            else:
-                                # Handle tuple format
-                                try:
-                                    top, right, bottom, left = location
-                                    face_image = image[top:bottom, left:right]
-                                    
-                                    # Create thumbnail
-                                    thumbnail = create_thumbnail(face_image, THUMBNAIL_SIZE)
-                                    
-                                    # Display face thumbnail
-                                    st.image(thumbnail, width='stretch')
-                                    
-                                    # Enhanced similarity display
-                                    similarity_percentage = face_data['similarity'] * 100
-                                    confidence_score = face_data.get('confidence_score', similarity_percentage / 100) * 100
-                                    
-                                    if similarity_percentage >= 70:
-                                        st.success(f"**🎯 {similarity_percentage:.1f}%**")
-                                    elif similarity_percentage >= 50:
-                                        st.info(f"**✅ {similarity_percentage:.1f}%**")
-                                    elif similarity_percentage >= 30:
-                                        st.warning(f"**⚠️ {similarity_percentage:.1f}%**")
-                                    else:
-                                        st.error(f"**❓ {similarity_percentage:.1f}%**")
-                                    
-                                    st.write(f"**📁 {image_path.name}**")
-                                    st.caption(f"🔒 Vertrauen: {confidence_score:.1f}%")
-                                    
-                                    # Display person name if assigned
-                                    face_metadata = face_data.get('metadata', {})
-                                    person_name = face_metadata.get('full_name', '')
-                                    if person_name:
-                                        st.success(f"👤 **{person_name}**")
-                                    
-                                    # Single unified info button
-                                    if st.button("ℹ️ Infos", key=f"info_tuple_{i}", help="Vollbild, Gesichtsanalyse und Namen zuweisen", width='stretch'):
-                                        face_id = face_data.get('face_id', face_data.get('id', f"face_{i}"))  # Try both face_id and id
-                                        # Set face info data and trigger modal
-                                        st.session_state.info_face_id = face_id
-                                        st.session_state.info_image_path = image_path
-                                        st.session_state.info_face_location = (top, right, bottom, left)
-                                        st.rerun()
-                                        
-                                except:
-                                    # Fallback: show full image
-                                    st.image(image, width='stretch')
-                                    st.write(f"**Similarity:** {face_data['similarity']:.3f}")
-                                    
-                                    # Add full image view button  
-                                    if st.button("🖼️ Ganzes Bild", key=f"full_img_fallback_{i}", help="Ganzes Bild anzeigen"):
-                                        show_full_image_with_face_box(image_path, None)
-                        else:
-                            st.image(image, width='stretch')
-                            
-                            similarity_percentage = face_data['similarity'] * 100
-                            confidence_score = face_data.get('confidence_score', similarity_percentage / 100) * 100
-                            
-                            if similarity_percentage >= 70:
-                                st.success(f"**🎯 {similarity_percentage:.1f}%**")
-                            elif similarity_percentage >= 50:
-                                st.info(f"**✅ {similarity_percentage:.1f}%**")
-                            elif similarity_percentage >= 30:
-                                st.warning(f"**⚠️ {similarity_percentage:.1f}%**")
-                            else:
-                                st.error(f"**❓ {similarity_percentage:.1f}%**")
-                            
-                            st.write(f"**📁 {image_path.name}**")
-                            st.caption(f"🔒 Vertrauen: {confidence_score:.1f}%")
-                            
-                            # Add full image view button
-                            if st.button("🖼️ Ganzes Bild", key=f"full_img_no_loc_{i}", help="Ganzes Bild anzeigen"):
-                                show_full_image_with_face_box(image_path, None)
-                else:
+                metadata = face_data.get('metadata', {})
+                image_path = Path(metadata.get('image_path', ''))
+                location = metadata.get('location')
+                box = parse_face_location(location)
+
+                if not image_path.exists():
                     st.error("Image not found")
-                    
+                    continue
+
+                # Cached thumbnail: the full-resolution photo is decoded at most once
+                thumbnail = face_thumbnail(image_path, location, THUMBNAIL_SIZE)
+                if thumbnail is None and box is not None:
+                    image = load_and_preprocess_image(image_path)
+                    if image is not None:
+                        top, right, bottom, left = box
+                        thumbnail = create_thumbnail(image[top:bottom, left:right], THUMBNAIL_SIZE)
+
+                if thumbnail is not None:
+                    st.image(thumbnail, width='stretch')
+
+                face_width = face_height = 0
+                if box is not None:
+                    top, right, bottom, left = box
+                    face_width = right - left
+                    face_height = bottom - top
+                face_size = min(face_width, face_height)
+                face_area = face_width * face_height
+
+                similarity_percentage = face_data['similarity'] * 100
+                confidence_score = face_data.get('confidence_score', face_data['similarity']) * 100
+
+                quality_indicators = []
+                if face_size >= 80:
+                    quality_indicators.append("🔍 High Res")
+                elif face_size >= 50:
+                    quality_indicators.append("📏 Medium Res")
+                else:
+                    quality_indicators.append("📱 Low Res")
+                if face_area > 6400:
+                    quality_indicators.append("✨ Large")
+
+                if similarity_percentage >= 70:
+                    st.success(f"**🎯 {similarity_percentage:.1f}%**")
+                    st.caption(f"🔒 Confidence: {confidence_score:.1f}% | Size: {face_size}px")
+                elif similarity_percentage >= 50:
+                    st.info(f"**✅ {similarity_percentage:.1f}%**")
+                    st.caption(f"📊 Confidence: {confidence_score:.1f}% | Size: {face_size}px")
+                elif similarity_percentage >= 30:
+                    st.warning(f"**⚠️ {similarity_percentage:.1f}%**")
+                    st.caption(f"📈 Confidence: {confidence_score:.1f}% | Size: {face_size}px")
+                else:
+                    st.error(f"**❓ {similarity_percentage:.1f}%**")
+                    st.caption(f"🔍 Confidence: {confidence_score:.1f}% | Size: {face_size}px")
+
+                if quality_indicators:
+                    st.caption(" | ".join(quality_indicators))
+
+                st.write(f"**📁 {image_path.name}**")
+
+                person_name = metadata.get('full_name', '')
+                if person_name:
+                    st.success(f"👤 **{person_name}**")
+
+                if st.button("ℹ️ Infos", key=f"info_{i}", help="Vollbild, Gesichtsanalyse und Namen zuweisen", width='stretch'):
+                    face_id = face_data.get('face_id', face_data.get('id', f"face_{i}"))
+                    st.session_state.info_face_id = face_id
+                    st.session_state.info_image_path = image_path
+                    st.session_state.info_face_location = location
+                    st.rerun()
+
             except Exception as e:
                 st.error(f"Error displaying result: {e}")
+
 
 def batch_face_processing_page():
     """Enhanced batch processing page using fast_process.py for optimal performance."""
@@ -3198,10 +3115,8 @@ def display_scraped_images():
                     with col:
                         try:
                             image_path = images_to_show[idx]
-                            image = load_and_preprocess_image(image_path)
-                            
-                            if image is not None:
-                                thumbnail = create_thumbnail(image, THUMBNAIL_SIZE)
+                            thumbnail = face_thumbnail(image_path, None, THUMBNAIL_SIZE)
+                            if thumbnail is not None:
                                 st.image(thumbnail, width='stretch')
                                 st.caption(f"{image_path.name}")
                         except Exception:
@@ -3232,7 +3147,7 @@ def duplicate_manager_page():
         
         for directory in directories:
             if directory.exists():
-                st.write(f"**{directory.name}**: {len(get_image_files(directory))} images")
+                st.write(f"**{directory.name}**: {len(get_image_files(directory, validate=False))} images")
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -3309,9 +3224,8 @@ def find_duplicates_in_directory(directory: Path):
                 with cols[j % 4]:
                     try:
                         if file_path.exists():
-                            image = load_and_preprocess_image(file_path)
-                            if image is not None:
-                                thumbnail = create_thumbnail(image, (120, 120))
+                            thumbnail = face_thumbnail(file_path, None, (120, 120))
+                            if thumbnail is not None:
                                 st.image(thumbnail, width='stretch')
                                 st.caption(f"{file_path.name}")
                                 
@@ -3440,7 +3354,7 @@ def settings_page():
     
     for name, path in directories:
         if path.exists():
-            file_count = len(get_image_files(path))
+            file_count = len(get_image_files(path, validate=False))
             st.write(f"**{name}:** {path} ({file_count} images)")
         else:
             st.write(f"**{name}:** {path} (not found)")
@@ -3494,7 +3408,7 @@ def face_gallery_page():
         col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
         
         with col1:
-            faces_per_page = st.selectbox("Gesichter pro Seite:", [20, 50, 100, 200, 500], index=2)
+            faces_per_page = st.selectbox("Gesichter pro Seite:", [20, 50, 100, 200, 500], index=1)
         
         with col2:
             show_metadata = st.checkbox("Metadaten anzeigen", value=True)
@@ -3728,9 +3642,8 @@ def display_faces_grouped_by_image(metadatas, show_metadata=True):
             # Show original image thumbnail
             if Path(image_path).exists():
                 try:
-                    original_image = load_and_preprocess_image(Path(image_path))
-                    if original_image is not None:
-                        original_thumbnail = create_thumbnail(original_image, (200, 200))
+                    original_thumbnail = face_thumbnail(image_path, None, (200, 200))
+                    if original_thumbnail is not None:
                         
                         col1, col2 = st.columns([1, 3])
                         with col1:
@@ -3827,90 +3740,63 @@ def identify_low_quality_faces(metadatas, min_face_size=30):
     return low_quality_faces
 
 def display_face_from_metadata(metadata, show_metadata=True, compact=False):
-    """Enhanced face display from metadata information"""
+    """Enhanced face display from metadata information (cached thumbnails)."""
     try:
         image_path = metadata.get('image_path', '')
         face_id = metadata.get('face_id', 'unknown')
         location_str = metadata.get('location', '0,0,0,0')
-        
-        if image_path and Path(image_path).exists():
-            # Load the original image
-            original_image = load_and_preprocess_image(Path(image_path))
-            
-            if original_image is not None:
-                # Parse face location
-                try:
-                    top, right, bottom, left = map(int, location_str.split(','))
-                    
-                    # Extract face region with adaptive padding
-                    face_width = right - left
-                    face_height = bottom - top
-                    padding = max(10, min(20, min(face_width, face_height) // 10))
-                    
-                    height, width = original_image.shape[:2]
-                    
-                    top = max(0, top - padding)
-                    left = max(0, left - padding)
-                    bottom = min(height, bottom + padding)
-                    right = min(width, right + padding)
-                    
-                    # Extract face
-                    face_image = original_image[top:bottom, left:right]
-                    
-                    # Validate face extraction
-                    if face_image.shape[0] > 0 and face_image.shape[1] > 0:
-                        # Create thumbnail with different sizes based on display mode
-                        thumbnail_size = (100, 100) if compact else THUMBNAIL_SIZE
-                        thumbnail = create_thumbnail(face_image, thumbnail_size)
-                        
-                        # Display face with enhanced styling
-                        st.image(thumbnail, width='stretch')
-                        
-                        # Single unified info button
-                        if st.button("ℹ️ Infos", key=f"gallery_info_{face_id}", help="Vollbild, Gesichtsanalyse und Namen zuweisen", width='stretch'):
-                            # Set face info data and trigger modal
-                            st.session_state.info_face_id = face_id
-                            st.session_state.info_image_path = image_path
-                            st.session_state.info_face_location = location_str
-                            st.rerun()
-                        
-                        if show_metadata:
-                            # Show person name if assigned
-                            person_name = metadata.get('full_name', '')
-                            if person_name:
-                                st.success(f"👤 **{person_name}**")
-                            
-                            if compact:
-                                st.caption(f"🆔 {face_id[:8]}...")
-                                if person_name:
-                                    st.caption(f"👤 {person_name}")
-                            else:
-                                st.caption(f"🆔 Face ID: {face_id}")
-                                st.caption(f"📁 {Path(image_path).name}")
-                                st.caption(f"📍 Position: {location_str}")
-                                
-                                # Additional metadata
-                                face_size = f"{face_width}×{face_height}px"
-                                st.caption(f"📐 Size: {face_size}")
-                                
-                                # Add hover info with image stats
-                                if Path(image_path).exists():
-                                    file_size = Path(image_path).stat().st_size / 1024
-                                    st.caption(f"💾 {file_size:.1f} KB")
-                    else:
-                        st.error("❌ Ungültiger Gesichtsbereich")
-                        
-                except ValueError as ve:
-                    st.error(f"❌ Ungültige Koordinaten: {location_str}")
-                except Exception as e:
-                    st.error(f"❌ Fehler beim Extrahieren: {str(e)[:50]}...")
-            else:
-                st.error("❌ Bild konnte nicht geladen werden")
-                st.caption(f"📁 {Path(image_path).name}")
-        else:
+
+        if not image_path or not Path(image_path).exists():
             st.error("❌ Bild nicht gefunden")
             st.caption(f"📁 {Path(image_path).name if image_path else 'Unbekannter Pfad'}")
-            
+            return
+
+        box = parse_face_location(location_str)
+        thumbnail_size = (100, 100) if compact else THUMBNAIL_SIZE
+        # Cached thumbnail: the original photo is decoded at most once
+        thumbnail = face_thumbnail(image_path, location_str, thumbnail_size)
+
+        if thumbnail is None:
+            st.error("❌ Bild konnte nicht geladen werden")
+            st.caption(f"📁 {Path(image_path).name}")
+            return
+
+        st.image(thumbnail, width='stretch')
+
+        # Single unified info button
+        if st.button("ℹ️ Infos", key=f"gallery_info_{face_id}", help="Vollbild, Gesichtsanalyse und Namen zuweisen", width='stretch'):
+            st.session_state.info_face_id = face_id
+            st.session_state.info_image_path = image_path
+            st.session_state.info_face_location = location_str
+            st.rerun()
+
+        if not show_metadata:
+            return
+
+        person_name = metadata.get('full_name', '')
+        if person_name:
+            st.success(f"👤 **{person_name}**")
+
+        if compact:
+            st.caption(f"🆔 {face_id[:8]}...")
+            if person_name:
+                st.caption(f"👤 {person_name}")
+            return
+
+        st.caption(f"🆔 Face ID: {face_id}")
+        st.caption(f"📁 {Path(image_path).name}")
+        st.caption(f"📍 Position: {location_str}")
+
+        if box is not None:
+            top, right, bottom, left = box
+            st.caption(f"📐 Size: {right - left}×{bottom - top}px")
+
+        try:
+            file_size = Path(image_path).stat().st_size / 1024
+            st.caption(f"💾 {file_size:.1f} KB")
+        except OSError:
+            pass
+
     except Exception as e:
         st.error(f"❌ Anzeigefehler: {str(e)[:50]}...")
         st.caption(f"🆔 {metadata.get('face_id', 'unknown')}")
@@ -4213,12 +4099,12 @@ def fast_process_all_images():
     # Get all image directories
     directories = []
     if IMAGES_DIR.exists():
-        image_count = len(get_image_files(IMAGES_DIR))
+        image_count = len(get_image_files(IMAGES_DIR, validate=False))
         if image_count > 0:
             directories.append(("Images", IMAGES_DIR, image_count))
     
     if SCRAPED_DIR.exists():
-        scraped_count = len(get_image_files(SCRAPED_DIR))
+        scraped_count = len(get_image_files(SCRAPED_DIR, validate=False))
         if scraped_count > 0:
             directories.append(("Scraped", SCRAPED_DIR, scraped_count))
     
@@ -4481,16 +4367,9 @@ def name_gallery_page():
                         
                         try:
                             # Load and display face thumbnail
-                            full_image = load_and_preprocess_image(image_path)
-                            if full_image is not None and face_location:
-                                coords = face_location.split(',')
-                                if len(coords) == 4:
-                                    top, right, bottom, left = map(int, coords)
-                                    face_crop = full_image[top:bottom, left:right]
-                                    if face_crop.shape[0] > 0 and face_crop.shape[1] > 0:
-                                        # Create thumbnail for consistent display
-                                        thumbnail = create_thumbnail(face_crop, (150, 150))
-                                        st.image(thumbnail, caption=f"Face {face_id[:8]}...", width='stretch')
+                            thumbnail = face_thumbnail(image_path, face_location, (150, 150))
+                            if thumbnail is not None:
+                                st.image(thumbnail, caption=f"Face {face_id[:8]}...", width='stretch')
                             else:
                                 st.warning("Gesicht konnte nicht geladen werden")
                                 
