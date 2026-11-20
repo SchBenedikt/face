@@ -2591,7 +2591,7 @@ def process_with_fast_engine(directory_path, update_existing=False):
                 # The sidebar was rendered before this batch ran. Queue a
                 # short summary and let main rerun after the page returns so
                 # its face counts and the gallery reflect the new rows.
-                if result.get("faces_added", 0) > 0:
+                if result.get("faces_added", 0) > 0 or result.get("stale_removed", 0) > 0:
                     error_lines = "\n".join(
                         f"- `{failure.get('name', 'unknown')}`: "
                         f"{failure.get('error', 'Unknown error')}"
@@ -2602,6 +2602,10 @@ def process_with_fast_engine(directory_path, update_existing=False):
                         f"processed, {result.get('faces_added', 0)} faces added, "
                         f"{result.get('errors', 0)} errors."
                     )
+                    if result.get("stale_removed", 0):
+                        summary += (
+                            f"\n- Veraltete Einträge entfernt: {result.get('stale_removed')}"
+                        )
                     if error_lines:
                         summary += f"\n\n**Fehlerhafte Bilder:**\n{error_lines}"
                     if failed_images:

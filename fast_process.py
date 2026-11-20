@@ -261,6 +261,7 @@ def process_images_streamlit(update_existing=False, progress_callback=None, stat
         total_no_faces = 0
         total_errors = 0
         failed_images = []
+        stale_removed = 0
         start_time = time.time()
         
         num_batches = (total_images - 1) // batch_size + 1
@@ -326,8 +327,17 @@ def process_images_streamlit(update_existing=False, progress_callback=None, stat
 
             if update_existing:
                 for result in results:
-                    if "error" not in result and result.get("face_count", 0) == 0:
-                        vector_store.delete_faces_by_image_path(result["image_path"])
+                    if "error" in result or result.get("face_count", 0) == 0:
+                        # An unreadable or now faceless image must not keep rows
+                        # from an earlier successful run.
+                        stale_removed += vector_store.delete_faces_by_image_path(
+                            result["image_path"]
+                        )
+
+        if update_existing:
+            # Images removed from FACE_DATA_DIR are not part of ``results`` at
+            # all, so prune their rows after the last batch.
+            stale_removed += vector_store.prune_missing_faces()
         
         # Final statistics
         total_time = time.time() - start_time
@@ -340,6 +350,7 @@ def process_images_streamlit(update_existing=False, progress_callback=None, stat
             "no_faces": total_no_faces,
             "errors": total_errors,
             "failed_images": failed_images,
+            "stale_removed": stale_removed,
             "processing_time": total_time,
             "update_mode": update_existing
         }
