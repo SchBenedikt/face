@@ -64,7 +64,7 @@ from settings_store import load_settings, save_settings, settings_path
 from config import (
     PAGE_TITLE, PAGE_ICON, LAYOUT, 
     RESULTS_PER_PAGE, THUMBNAIL_SIZE,
-    IMAGES_DIR, SCRAPED_DIR
+    IMAGES_DIR, SCRAPED_DIR, FACE_GROUPING_THRESHOLD
 )
 
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
@@ -76,6 +76,7 @@ PAGES = [
     "🌐 Web Scraping",
     "👥 Face Gallery",
     "🏷️ Name Gallery",
+    "🧩 Personengruppen",
     "🔧 Duplicate Manager",
     "📊 Database Statistics",
     "⚙️ Settings",
@@ -213,6 +214,9 @@ def get_cached_all_persons():
 def invalidate_persons_cache():
     """Mark persons cache as dirty for refresh"""
     st.session_state.persons_cache_dirty = True
+    # Name changes also change which faces are still unnamed, so the reviewed
+    # group suggestions must be recomputed on the next visit.
+    st.session_state.person_groups_cache = None
 
 
 def invalidate_gallery_cache():
@@ -405,6 +409,8 @@ def main():
         face_gallery_page()
     elif page == "🏷️ Name Gallery":
         name_gallery_page()
+    elif page == "🧩 Personengruppen":
+        person_groups_page()
     elif page == "🔧 Duplicate Manager":
         duplicate_manager_page()
     elif page == "📊 Database Statistics":
@@ -1319,14 +1325,14 @@ def show_name_assignment_modal():
                 }
                 
                 result = st.session_state.vector_store.assign_person_name_with_auto_matching(
-                    face_id, person_data, selected_person['person_id'], similarity_threshold=0.8
+                    face_id, person_data, selected_person['person_id']
                 )
                 
                 if result['success']:
                     st.success(f"✅ Person erfolgreich zugewiesen!")
                     
                     if result['total_assigned'] > 1:
-                        st.success(f"🔄 {result['total_assigned']-1} ähnliche Gesichter (>80%) automatisch zugewiesen!")
+                        st.success(f"🔄 {result['total_assigned']-1} ähnliche Gesichter (≥{result.get('similarity_threshold', 0.68)*100:.0f}%) automatisch zugewiesen!")
                     
                     # Invalidate cached names and gallery metadata
                     invalidate_persons_cache()
@@ -1411,14 +1417,14 @@ def show_name_assignment_modal():
                 
                 # Assign person with auto-matching
                 result = st.session_state.vector_store.assign_person_name_with_auto_matching(
-                    face_id, person_data, similarity_threshold=0.8
+                    face_id, person_data
                 )
                 
                 if result['success']:
                     st.success(f"✅ Person erfolgreich erstellt und zugewiesen!")
                     
                     if result['total_assigned'] > 1:
-                        st.success(f"🔄 {result['total_assigned']-1} ähnliche Gesichter (>80%) automatisch zugewiesen!")
+                        st.success(f"🔄 {result['total_assigned']-1} ähnliche Gesichter (≥{result.get('similarity_threshold', 0.68)*100:.0f}%) automatisch zugewiesen!")
                     
                     # Invalidate cached names and gallery metadata
                     invalidate_persons_cache()
@@ -1790,7 +1796,7 @@ def show_name_assignment_tab(face_id, image_path, face_location):
                 }
                 
                 result = st.session_state.vector_store.assign_person_name_with_auto_matching(
-                    face_id, person_data, selected_person['person_id'], similarity_threshold=0.8
+                    face_id, person_data, selected_person['person_id']
                 )
                 
                 if result['success']:
@@ -1843,7 +1849,7 @@ def show_name_assignment_tab(face_id, image_path, face_location):
                 person_id = str(uuid.uuid4())
                 
                 result = st.session_state.vector_store.assign_person_name_with_auto_matching(
-                    face_id, person_data, person_id, similarity_threshold=0.8
+                    face_id, person_data, person_id
                 )
                 
                 if result['success']:
@@ -4746,6 +4752,196 @@ def fast_process_all_images():
     except Exception as e:
         st.error(f"❌ Error during fast processing: {e}")
         current_status.text("❌ Fast processing failed!")
+
+def _assign_face_group(group: Dict[str, Any], person_data: Dict[str, str], person_id: str) -> int:
+    """Assign one reviewed group to a person and return the number of faces."""
+    assigned = 0
+    for face in group.get("faces", []):
+        if st.session_state.vector_store.assign_person_name(
+            face["face_id"], person_data, person_id
+        ):
+            assigned += 1
+    return assigned
+
+
+def person_groups_page():
+    """Review identity groups of unnamed faces and assign them to a person."""
+    st.header("🧩 Personengruppen")
+    st.markdown(
+        "Unbenannte Gesichter werden anhand ihrer Embeddings gruppiert. "
+        "Die Vorschläge werden erst nach Ihrer Bestätigung einer Person zugeordnet."
+    )
+
+    notice = st.session_state.pop("person_groups_notice", None)
+    if notice:
+        st.success(notice)
+
+    threshold = st.slider(
+        "Ähnlichkeitsschwelle",
+        min_value=0.50,
+        max_value=0.90,
+        value=FACE_GROUPING_THRESHOLD,
+        step=0.01,
+        help=(
+            "Cosine-Ähnlichkeit. Facenet512 verifiziert bei etwa 0,68–0,70; "
+            "höher = strengere, kleinere Gruppen."
+        ),
+        key="person_groups_threshold",
+    )
+
+    if st.button("🔄 Gruppen neu berechnen", key="refresh_person_groups"):
+        st.session_state.person_groups_cache = None
+
+    try:
+        face_count = st.session_state.vector_store.collection.count()
+    except Exception:  # noqa: BLE001 - the page still shows a readable error
+        face_count = 0
+    cache_key = f"{threshold:.2f}:{face_count}"
+    if (
+        st.session_state.get("person_groups_cache") is None
+        or st.session_state.get("person_groups_cache_key") != cache_key
+    ):
+        with st.spinner("Gruppiere Gesichter..."):
+            st.session_state.person_groups_cache = (
+                st.session_state.vector_store.get_face_groups(threshold=threshold)
+            )
+            st.session_state.person_groups_cache_key = cache_key
+
+    data = st.session_state.person_groups_cache
+    if data.get("error"):
+        st.error(f"Gruppierung fehlgeschlagen: {data['error']}")
+        return
+
+    groups = data.get("groups", [])
+    unnamed_faces = data.get("unnamed_faces", 0)
+    grouped_faces = data.get("grouped_faces", 0)
+
+    if unnamed_faces == 0:
+        st.info("Alle Gesichter sind bereits einer Person zugeordnet.")
+        return
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Unbenannte Gesichter", unnamed_faces)
+    col2.metric("Gruppen", len(groups))
+    col3.metric("In Gruppen", grouped_faces)
+
+    if not groups:
+        st.info(
+            "Keine Gruppe mit mindestens zwei Gesichtern gefunden. "
+            "Senken Sie die Schwelle etwas oder weisen Sie Namen direkt in der Galerie zu."
+        )
+        return
+
+    st.caption(
+        f"{data.get('singletons', 0)} unbenannte Gesichter passen zu keiner Gruppe "
+        "und bleiben einzeln."
+    )
+    st.markdown("---")
+
+    persons = get_cached_all_persons()
+    person_choices = {"🆕 Neue Person": None}
+    for person in persons:
+        label = f"{person['full_name']} ({person['face_count']} Gesichter)"
+        person_choices[label] = person
+
+    for index, group in enumerate(groups):
+        group_key = group["face_ids"][0]
+        with st.expander(
+            f"👥 Gruppe {index + 1}: {group['size']} Gesichter · "
+            f"Ø {group['mean_similarity']:.0%}",
+            expanded=index < 3,
+        ):
+            preview_columns = st.columns(min(6, group["size"]))
+            for face_index, face in enumerate(group["faces"][:6]):
+                metadata = face.get("metadata", {})
+                with preview_columns[face_index]:
+                    thumbnail = face_thumbnail(
+                        metadata.get("image_path", ""),
+                        metadata.get("location", ""),
+                        (120, 120),
+                    )
+                    if thumbnail is not None:
+                        st.image(
+                            thumbnail,
+                            caption=Path(metadata.get("image_path", "")).name,
+                            width="stretch",
+                        )
+                    else:
+                        st.warning("Bild nicht verfügbar")
+
+            suggestion = group.get("suggested_person")
+            if suggestion:
+                st.info(
+                    f"Ähnlichste bestehende Person: **{suggestion['full_name']}** "
+                    f"({suggestion['similarity']:.0%}). Noch nicht zugewiesen."
+                )
+
+            default_choice = 0
+            if suggestion:
+                for option_index, (_, person) in enumerate(person_choices.items()):
+                    if person and person["person_id"] == suggestion["person_id"]:
+                        default_choice = option_index
+                        break
+            choice = st.selectbox(
+                "Gruppe zuordnen",
+                list(person_choices.keys()),
+                index=default_choice,
+                key=f"group_target_{group_key}",
+            )
+            first_name = ""
+            last_name = ""
+            if person_choices[choice] is None:
+                name_col1, name_col2 = st.columns(2)
+                first_name = name_col1.text_input(
+                    "Vorname", key=f"group_first_{group_key}"
+                )
+                last_name = name_col2.text_input(
+                    "Nachname", key=f"group_last_{group_key}"
+                )
+
+            if st.button(
+                "✅ Gruppe zuweisen",
+                key=f"assign_group_{group_key}",
+                type="primary",
+            ):
+                selected_person = person_choices[choice]
+                if selected_person is None:
+                    if not first_name.strip() and not last_name.strip():
+                        st.warning("Bitte mindestens Vor- oder Nachnamen eingeben.")
+                        continue
+                    person_data = {
+                        "first_name": first_name.strip(),
+                        "middle_names": "",
+                        "last_name": last_name.strip(),
+                        "birth_date": "",
+                        "birth_place": "",
+                        "notes": "Aus Personengruppen zugewiesen",
+                    }
+                    person_id = str(uuid.uuid4())
+                else:
+                    person_data = {
+                        "first_name": selected_person.get("first_name", ""),
+                        "middle_names": selected_person.get("middle_names", ""),
+                        "last_name": selected_person.get("last_name", ""),
+                        "birth_date": selected_person.get("birth_date", ""),
+                        "birth_place": selected_person.get("birth_place", ""),
+                        "notes": selected_person.get("notes", ""),
+                    }
+                    person_id = selected_person["person_id"]
+
+                assigned = _assign_face_group(group, person_data, person_id)
+                if assigned:
+                    invalidate_persons_cache()
+                    invalidate_gallery_cache()
+                    st.session_state.person_groups_cache = None
+                    st.session_state.person_groups_notice = (
+                        f"✅ {assigned} Gesichter wurden der Person "
+                        f"{person_data['first_name']} {person_data['last_name']} zugewiesen."
+                    )
+                    st.rerun()
+                else:
+                    st.error("❌ Keine Gesichter konnten zugewiesen werden.")
+
 
 def name_gallery_page():
     """Name Gallery page to view and manage person names"""

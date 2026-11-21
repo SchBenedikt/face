@@ -27,6 +27,13 @@
 - Namen von einzelnen Gesichtern oder ganzen Personen entfernen
 - Statistiken über benannte Gesichter
 
+### 🧩 **Personengruppen** - NEU!
+- Gruppiert unbenannte Gesichter anhand ihrer Embeddings (Cosine-Ähnlichkeit)
+- Standard-Schwelle 0,68 (Facenet512); im UI zwischen 0,50 und 0,90 einstellbar
+- Zeigt Gruppen mit Vorschaubildern, Gruppengröße und durchschnittlicher Ähnlichkeit
+- Schlägt eine passende bestehende Person vor, ändert aber nichts ohne Bestätigung
+- Weist eine bestätigte Gruppe gesammelt einer neuen oder bestehenden Person zu
+
 ### 🧬 **Facial Attribute Analysis (Gesichtsanalyse)**
 - **Alter**: Geschätztes Alter in Jahren (±4.65 Jahre Genauigkeit)
 - **Geschlecht**: Männlich/Weiblich Wahrscheinlichkeiten (97.44% Genauigkeit)
@@ -37,7 +44,7 @@
 ### 🏷️ **Person Namen System** - NEU!
 - **Eindeutige Person IDs**: Jede Person wird intern über eine UUID identifiziert
 - **Vor- und Nachname**: Separate Eingabefelder für strukturierte Namensvergabe
-- **Automatische Namensverbreitung**: Gesichter mit >80% Ähnlichkeit erhalten automatisch den gleichen Namen
+- **Automatische Namensverbreitung**: Gesichter ab etwa 68% Cosine-Ähnlichkeit (Facenet512) erhalten den gleichen Namen; bei ähnlichen Treffern zu einer anderen benannten Person wird nichts zugewiesen
 - **Namen-Verwaltung**: Namen können jederzeit entfernt oder geändert werden
 - **Such-Integration**: Namen werden in Face Search und Gallery angezeigt
 
@@ -56,7 +63,7 @@
 2. Klicken Sie bei einem Gesicht auf **"🏷️ Namen zuweisen"**
 3. Geben Sie Vor- und Nachname in separate Felder ein
 4. Klicken Sie **"💾 Namen speichern"**
-5. Ähnliche Gesichter (>80%) erhalten automatisch denselben Namen
+5. Ähnliche Gesichter (Standard: ≥68% Cosine) erhalten automatisch denselben Namen
 
 ### Namen verwalten:
 1. Gehen Sie zur **🏷️ Name Gallery**
@@ -85,7 +92,7 @@ Die Ergebnisse sind Schätzungen und sollten nicht für Identifikation, Diskrimi
 
 ### Ähnlichkeitsberechnung
 - Ensemble-Ansatz mit mehreren Metriken (Cosine, Euclidean, Correlation)
-- Konfigurierbare Schwellenwerte (Standard: 80% für Auto-Namenszuweisung)
+- Konfigurierbare Schwellenwerte (Standard: 68% Cosine für Auto-Namenszuweisung, per `FACE_AUTO_ASSIGN_THRESHOLD` übersteuerbar)
 - Konfidenzwerte für verbesserte Genauigkeit
 
 Alle Funktionen sind vollständig implementiert und einsatzbereit! 🎉

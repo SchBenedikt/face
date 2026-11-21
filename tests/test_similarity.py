@@ -2,9 +2,11 @@ import numpy as np
 import pytest
 
 from similarity import (
+    cosine_from_chroma_l2_distance,
     cosine_from_l2_distance,
     cosine_similarity,
     normalise_embedding,
+    similarity_from_chroma_l2_distance,
     similarity_from_l2_distance,
 )
 
@@ -28,6 +30,14 @@ def test_distance_to_similarity_is_monotonic():
 def test_similarity_stays_within_bounds():
     assert similarity_from_l2_distance(2.0) == 0.0
     assert similarity_from_l2_distance(-1.0) == 1.0
+
+
+def test_chroma_squared_distance_is_converted_back_to_cosine():
+    # ChromaDB's L2 space returns squared distances. For unit vectors a
+    # squared distance of 0.52 means cosine 1 - 0.52/2 = 0.74.
+    assert cosine_from_chroma_l2_distance(0.52) == pytest.approx(0.74, abs=1e-6)
+    assert similarity_from_chroma_l2_distance(0.52) == pytest.approx(0.74, abs=1e-6)
+    assert cosine_from_chroma_l2_distance(2.0) == pytest.approx(0.0, abs=1e-9)
 
 
 def test_normalise_embedding_returns_unit_length():

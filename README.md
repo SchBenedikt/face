@@ -57,7 +57,7 @@ This isn't just another face recognition tool. It's a **comprehensive facial int
 - **🔍 Vector Search**: Lightning-fast similarity search through massive face databases
 - **📊 Rich Analytics**: Age, gender, emotion, and ethnicity analysis with confidence scores
 - **🌐 Web Scraping**: Automated image collection with ethical guidelines
-- **👥 Person Management**: Intelligent name assignment and automatic propagation
+- **👥 Person Management**: Intelligent name assignment, reviewed identity groups and automatic propagation
 
 ## 🎯 Key Features
 
@@ -78,6 +78,11 @@ This isn't just another face recognition tool. It's a **comprehensive facial int
 - **Parallel Computing**: Multi-core optimization for maximum speed
 - **Smart Caching**: Avoid redundant computations with intelligent memory management
 - **Memory Management**: Optimized for desktop/laptop hardware
+
+### 🧩 **Personen & Gruppierung**
+- **Identitätsgruppen**: Unbenannte Gesichter werden per Cosine-Ähnlichkeit gruppiert (Facenet512-Schwelle ~0,68) und erst nach Review zugewiesen
+- **Namensverwaltung**: Manuelle Zuordnung, automatische Verbreitung mit Ambiguitätsschutz
+- **Kalibrierte Ähnlichkeit**: ChromaDBs quadrierte L2-Distanz wird korrekt in Cosine umgerechnet
 
 ### 🌐 **Data Collection & Management**
 - **Web Scraping**: Automated image harvesting from websites with robots.txt compliance

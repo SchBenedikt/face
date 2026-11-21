@@ -137,7 +137,7 @@ Verwalten Sie alle Personen-Namen in der Datenbank
 │ ✅ Name erfolgreich zugewiesen!                 │
 │ Person ID: abc123def456                         │
 │                                                 │
-│ 🔄 3 ähnliche Gesichter (>80%) automatisch     │
+│ 🔄 3 ähnliche Gesichter (≥68%) automatisch     │
 │ zugewiesen!                                     │
 └─────────────────────────────────────────────────┘
     """)

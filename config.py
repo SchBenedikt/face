@@ -44,6 +44,14 @@ VECTOR_DB_PATH = str(DATA_DIR / "face_vectors.db")
 COLLECTION_NAME = "face_embeddings"
 SIMILARITY_THRESHOLD = 0.4  # Verbesserte Threshold für bessere Gesichtserkennung (0.4 = 40% Ähnlichkeit)
 
+# Identity grouping. Facenet512 uses a cosine verification threshold around
+# 0.70 (DeepFace's 0.30 cosine distance); 0.68 is slightly more permissive and
+# is meant for reviewed group suggestions, not blind assignment.
+FACE_GROUPING_THRESHOLD = float(os.environ.get("FACE_GROUPING_THRESHOLD", "0.68"))
+FACE_GROUPING_MARGIN = float(os.environ.get("FACE_GROUPING_MARGIN", "0.04"))
+FACE_AUTO_ASSIGN_THRESHOLD = float(os.environ.get("FACE_AUTO_ASSIGN_THRESHOLD", "0.68"))
+FACE_AUTO_ASSIGN_AMBIGUITY_MARGIN = 0.05
+
 # Face Recognition Quality Settings - Enhanced for better accuracy
 FACE_EMBEDDING_MODEL = "Facenet512"  # Primary DeepFace model for highest quality
 FACE_EMBEDDING_MODELS = ["Facenet512", "ArcFace", "VGG-Face", "Facenet"]  # Ensemble models

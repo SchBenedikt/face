@@ -25,7 +25,7 @@
    - Success message appears
    - Modal closes automatically
    - Face now shows "👤 **John Doe**" below the image
-   - Similar faces (>80% match) automatically get the same name
+   - Similar faces (≥68% cosine by default) automatically get the same name
 
 ### 2. Name Assignment in Face Gallery
 1. Go to **👥 Face Gallery**
@@ -58,7 +58,7 @@
 1. Assign a name to a face in Face Search
 2. Look for the success message mentioning auto-assigned faces
 3. Go to Name Gallery and check if the person has multiple faces
-4. **Expected**: Similar faces (>80% similarity) should automatically receive the same name
+4. **Expected**: Similar faces (≥68% cosine by default) should automatically receive the same name; a face that is equally close to another named person must stay unassigned
 
 ### 5. Name Removal Test
 1. In Name Gallery, click "🗑️ Namen löschen" for a person
@@ -122,7 +122,7 @@ After testing, check that:
 
 ✅ All modals open and close properly  
 ✅ Names are saved and displayed correctly  
-✅ Auto-assignment works for similar faces (>80%)  
+✅ Auto-assignment works for similar faces (≥68% cosine by default)
 ✅ Name removal works for individuals and entire persons  
 ✅ Name Gallery displays all persons with correct statistics  
 ✅ Search and sort functions work in Name Gallery  
@@ -132,7 +132,7 @@ After testing, check that:
 
 ## Known Limitations
 
-- Auto-assignment threshold is fixed at 80% (could be made configurable)
+- Auto-assignment uses `FACE_AUTO_ASSIGN_THRESHOLD` (default 0.68); the Personengruppen slider controls grouping only
 - Names are stored as simple text (no special characters validation)
 - Person IDs are not exposed in UI (internal use only)
 - No export function for person name data (future enhancement)

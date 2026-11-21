@@ -16,11 +16,20 @@ import json
 from datetime import datetime
 import uuid
 
-from config import VECTOR_DB_PATH, COLLECTION_NAME, SIMILARITY_THRESHOLD
+from config import (
+    VECTOR_DB_PATH,
+    COLLECTION_NAME,
+    SIMILARITY_THRESHOLD,
+    FACE_GROUPING_THRESHOLD,
+    FACE_GROUPING_MARGIN,
+    FACE_AUTO_ASSIGN_THRESHOLD,
+    FACE_AUTO_ASSIGN_AMBIGUITY_MARGIN,
+)
+from face_grouping import centroid_of, group_embeddings
 from similarity import (
-    cosine_from_l2_distance,
+    cosine_from_chroma_l2_distance,
     normalise_embedding,
-    similarity_from_l2_distance,
+    similarity_from_chroma_l2_distance,
 )
 
 # Additional telemetry suppression after imports
@@ -277,7 +286,7 @@ class FaceVectorStore:
             for index, face_id in enumerate(ids[0]):
                 try:
                     distance = float(distances[0][index])
-                    similarity = similarity_from_l2_distance(distance)
+                    similarity = similarity_from_chroma_l2_distance(distance)
                     if similarity < min_similarity:
                         continue
 
@@ -285,13 +294,15 @@ class FaceVectorStore:
                         'face_id': face_id,
                         'similarity': similarity,
                         'similarity_percentage': similarity * 100,
-                        'cosine_similarity': cosine_from_l2_distance(distance),
-                        'euclidean_distance': distance,
+                        'cosine_similarity': cosine_from_chroma_l2_distance(distance),
+                        'euclidean_distance': float(np.sqrt(max(distance, 0.0))),
+                        'chroma_distance': distance,
                         'confidence_score': similarity,
                         'metadata': metadatas[0][index] or {},
                         'similarity_metrics': {
-                            'cosine_similarity': cosine_from_l2_distance(distance),
-                            'euclidean_distance': distance,
+                            'cosine_similarity': cosine_from_chroma_l2_distance(distance),
+                            'euclidean_distance': float(np.sqrt(max(distance, 0.0))),
+                            'chroma_distance': distance,
                             'primary_similarity': similarity,
                         },
                     })
@@ -851,7 +862,7 @@ class FaceVectorStore:
             logger.error(f"Error assigning person data to {face_id}: {e}")
             return None
 
-    def assign_person_name_with_auto_matching(self, face_id: str, person_data: Dict[str, str], person_id: Optional[str] = None, similarity_threshold: float = 0.8) -> Dict[str, Any]:
+    def assign_person_name_with_auto_matching(self, face_id: str, person_data: Dict[str, str], person_id: Optional[str] = None, similarity_threshold: float = FACE_AUTO_ASSIGN_THRESHOLD, ambiguity_margin: float = FACE_AUTO_ASSIGN_AMBIGUITY_MARGIN) -> Dict[str, Any]:
         """
         Assign person name and automatically find and assign similar faces
         
@@ -859,7 +870,9 @@ class FaceVectorStore:
             face_id: Face identifier for the initial face
             person_data: Dictionary with person information
             person_id: Unique person ID (if None, creates new one)
-            similarity_threshold: Minimum similarity for auto-assignment (default 0.8 = 80%)
+            similarity_threshold: Minimum cosine similarity for auto-assignment
+            ambiguity_margin: Skip a candidate when another named person is
+                nearly as close; avoids spreading a name across look-alikes
             
         Returns:
             Dictionary with results:
@@ -889,6 +902,7 @@ class FaceVectorStore:
                     'person_id': assigned_person_id,
                     'total_assigned': 1,
                     'similar_faces': [],
+                    'skipped_ambiguous': 0,
                     'warning': 'Auto-matching skipped - no embedding available'
                 }
             
@@ -899,26 +913,69 @@ class FaceVectorStore:
                 min_similarity=similarity_threshold
             )
             
-            assigned_similar = []
-            
-            # Auto-assign names to similar faces that don't already have names
+            # Candidates that already carry another name are never overwritten.
+            candidates = []
             for similar_face in similar_faces:
                 similar_face_id = similar_face.get('id', similar_face.get('face_id'))
-                
-                # Skip the original face
                 if similar_face_id == face_id:
                     continue
-                
-                # Check if face already has a name assigned
                 existing_metadata = similar_face.get('metadata', {})
                 if existing_metadata.get('person_id') and existing_metadata.get('full_name'):
-                    # Skip faces that already have names
                     continue
+                candidates.append(similar_face)
+
+            # Fetch candidate embeddings once, so the ambiguity check does not
+            # need one database round-trip per face.
+            candidate_embeddings = {}
+            if candidates:
+                candidate_ids = [
+                    str(face.get('id', face.get('face_id'))) for face in candidates
+                ]
+                try:
+                    rows = self.collection.get(ids=candidate_ids, include=['embeddings'])
+                    candidate_rows = rows.get('embeddings')
+                    if candidate_rows is None:
+                        candidate_rows = []
+                    for candidate_id, embedding in zip(
+                        rows.get('ids') or [], candidate_rows
+                    ):
+                        candidate_embeddings[str(candidate_id)] = normalise_embedding(embedding)
+                except Exception as exc:  # noqa: BLE001 - matching can continue without it
+                    logger.warning(f"Could not load candidate embeddings: {exc}")
+
+            # A candidate is only assigned when it is closer to this person
+            # than to any other named person. Without this margin, a face that
+            # looks similar to two people was assigned to whichever name was
+            # processed first.
+            other_person_centroids = self._person_centroids(
+                exclude_person_id=assigned_person_id
+            )
+            assigned_similar = []
+            skipped_ambiguous = 0
+
+            for similar_face in candidates:
+                similar_face_id = str(similar_face.get('id', similar_face.get('face_id')))
+                anchor_similarity = float(similar_face['similarity'])
+                candidate_vector = candidate_embeddings.get(similar_face_id)
+
+                if candidate_vector is not None and other_person_centroids:
+                    other_best = max(
+                        float(np.dot(candidate_vector, centroid))
+                        for centroid in other_person_centroids.values()
+                    )
+                    if other_best >= anchor_similarity - ambiguity_margin:
+                        skipped_ambiguous += 1
+                        logger.info(
+                            f"Skipped ambiguous auto-assignment for {similar_face_id} "
+                            f"(this person: {anchor_similarity:.1%}, "
+                            f"other person: {other_best:.1%})"
+                        )
+                        continue
                 
                 # Assign the same person data to this similar face
                 if self.assign_person_name(similar_face_id, person_data, assigned_person_id):
                     assigned_similar.append(similar_face_id)
-                    logger.info(f"Auto-assigned name to similar face {similar_face_id} (similarity: {similar_face['similarity']:.1%})")
+                    logger.info(f"Auto-assigned name to similar face {similar_face_id} (similarity: {anchor_similarity:.1%})")
             
             total_assigned = 1 + len(assigned_similar)  # Original + similar faces
             
@@ -929,6 +986,7 @@ class FaceVectorStore:
                 'person_id': assigned_person_id,
                 'total_assigned': total_assigned,
                 'similar_faces': assigned_similar,
+                'skipped_ambiguous': skipped_ambiguous,
                 'similarity_threshold': similarity_threshold
             }
             
@@ -938,7 +996,8 @@ class FaceVectorStore:
                 'success': False,
                 'error': str(e),
                 'total_assigned': 0,
-                'similar_faces': []
+                'similar_faces': [],
+                'skipped_ambiguous': 0
             }
     
     def remove_person_name(self, face_id: str) -> bool:
@@ -1132,7 +1191,153 @@ class FaceVectorStore:
             import traceback
             logger.error(f"Full traceback: {traceback.format_exc()}")
             return []
-    
+
+    def _person_centroids(
+        self, exclude_person_id: Optional[str] = None
+    ) -> Dict[str, np.ndarray]:
+        """Return one unit-length centroid per named person.
+
+        Used by the auto-assignment ambiguity check and by the group page to
+        suggest an existing person for a new identity cluster.
+        """
+        try:
+            rows = self.collection.get(include=['embeddings', 'metadatas'])
+            embeddings = rows.get('embeddings')
+            if embeddings is None:
+                embeddings = []
+            vectors: Dict[str, List[np.ndarray]] = {}
+            for embedding, metadata in zip(
+                embeddings, rows.get('metadatas') or []
+            ):
+                metadata = metadata or {}
+                person_id = str(metadata.get('person_id') or '').strip()
+                if not person_id or person_id == exclude_person_id:
+                    continue
+                vector = normalise_embedding(embedding)
+                if np.any(vector):
+                    vectors.setdefault(person_id, []).append(vector)
+            return {
+                person_id: centroid_of(person_vectors)
+                for person_id, person_vectors in vectors.items()
+            }
+        except Exception as exc:  # noqa: BLE001 - grouping must stay optional
+            logger.warning(f"Could not build person centroids: {exc}")
+            return {}
+
+    def get_face_groups(
+        self,
+        threshold: float = FACE_GROUPING_THRESHOLD,
+        margin: float = FACE_GROUPING_MARGIN,
+        min_size: int = 2,
+    ) -> Dict[str, Any]:
+        """Group unnamed faces into reviewed identity suggestions.
+
+        Named faces are never changed here; they are only used to suggest a
+        matching existing person for a group. The caller (the Personengruppen
+        page) asks the user before assigning anything.
+        """
+        empty: Dict[str, Any] = {
+            'groups': [],
+            'unnamed_faces': 0,
+            'grouped_faces': 0,
+            'singletons': 0,
+            'threshold': threshold,
+            'margin': margin,
+        }
+        try:
+            rows = self.collection.get(include=['embeddings', 'metadatas'])
+            ids = rows.get('ids') or []
+            metadatas = rows.get('metadatas') or []
+            embeddings = rows.get('embeddings')
+            if embeddings is None:
+                embeddings = []
+
+            unnamed_ids: List[str] = []
+            unnamed_embeddings: List[np.ndarray] = []
+            metadata_by_id: Dict[str, Dict[str, Any]] = {}
+            person_vectors: Dict[str, List[np.ndarray]] = {}
+            person_metadata: Dict[str, Dict[str, Any]] = {}
+
+            for face_id, metadata, embedding in zip(ids, metadatas, embeddings):
+                metadata = metadata or {}
+                vector = normalise_embedding(embedding)
+                if not np.any(vector):
+                    continue
+                person_id = str(metadata.get('person_id') or '').strip()
+                if person_id:
+                    person_vectors.setdefault(person_id, []).append(vector)
+                    person_metadata.setdefault(person_id, metadata)
+                else:
+                    key = str(face_id)
+                    unnamed_ids.append(key)
+                    unnamed_embeddings.append(vector)
+                    metadata_by_id[key] = metadata
+
+            person_centroids = {
+                person_id: centroid_of(vectors)
+                for person_id, vectors in person_vectors.items()
+            }
+            clusters = group_embeddings(
+                unnamed_ids, unnamed_embeddings, threshold=threshold, margin=margin
+            )
+
+            groups = []
+            for cluster in clusters:
+                if len(cluster['face_ids']) < min_size:
+                    continue
+
+                suggestion = None
+                if person_centroids:
+                    best_person_id, best_similarity = max(
+                        (
+                            (person_id, float(np.dot(cluster['centroid'], centroid)))
+                            for person_id, centroid in person_centroids.items()
+                        ),
+                        key=lambda item: item[1],
+                    )
+                    if best_similarity >= threshold:
+                        metadata = person_metadata.get(best_person_id, {})
+                        name = metadata.get('full_name') or ' '.join(
+                            part for part in (
+                                metadata.get('first_name', ''),
+                                metadata.get('last_name', ''),
+                            ) if part
+                        )
+                        suggestion = {
+                            'person_id': best_person_id,
+                            'full_name': name or 'Unbekannt',
+                            'similarity': best_similarity,
+                        }
+
+                groups.append({
+                    'face_ids': cluster['face_ids'],
+                    'faces': [
+                        {
+                            'face_id': face_id,
+                            'metadata': metadata_by_id.get(face_id, {}),
+                        }
+                        for face_id in cluster['face_ids']
+                    ],
+                    'size': len(cluster['face_ids']),
+                    'mean_similarity': cluster['mean_similarity'],
+                    'min_similarity': cluster['min_similarity'],
+                    'suggested_person': suggestion,
+                })
+
+            grouped_faces = sum(group['size'] for group in groups)
+            empty.update({
+                'groups': groups,
+                'unnamed_faces': len(unnamed_ids),
+                'grouped_faces': grouped_faces,
+                'singletons': len(unnamed_ids) - grouped_faces,
+            })
+            return empty
+
+        except Exception as exc:  # noqa: BLE001 - the page shows the error
+            logger.error(f"Error grouping faces: {exc}")
+            empty['error'] = str(exc)
+            return empty
+
     def find_similar_faces(
         self, 
         query_embedding: np.ndarray, 
@@ -1152,13 +1357,13 @@ class FaceVectorStore:
         """
         return self.search_similar_faces(query_embedding, n_results, min_similarity)
     
-    def auto_assign_similar_faces(self, face_id: str, similarity_threshold: float = 0.8) -> int:
+    def auto_assign_similar_faces(self, face_id: str, similarity_threshold: float = FACE_AUTO_ASSIGN_THRESHOLD) -> int:
         """
         Automatically assign person name to faces with high similarity (>threshold)
         
         Args:
             face_id: Reference face with assigned person
-            similarity_threshold: Minimum similarity to auto-assign (default 0.8 = 80%)
+            similarity_threshold: Minimum cosine similarity to auto-assign (default 0.68)
             
         Returns:
             Number of faces that were auto-assigned

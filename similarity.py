@@ -30,6 +30,23 @@ def similarity_from_l2_distance(distance: float) -> float:
     return float(np.clip(cosine_from_l2_distance(distance), 0.0, 1.0))
 
 
+def cosine_from_chroma_l2_distance(distance: float) -> float:
+    """Convert ChromaDB's default L2 distance into cosine similarity.
+
+    ChromaDB's ``l2`` space returns the *squared* Euclidean distance, not the
+    Euclidean distance itself. Treating it as Euclidean inflated every
+    similarity in the middle of the range (a true cosine of 0.74 was shown as
+    0.86), which made thresholds and grouping unreliable.
+    """
+    squared = max(float(distance), 0.0)
+    return cosine_from_l2_distance(np.sqrt(squared))
+
+
+def similarity_from_chroma_l2_distance(distance: float) -> float:
+    """ChromaDB squared-L2 distance to a 0..1 similarity score."""
+    return float(np.clip(cosine_from_chroma_l2_distance(distance), 0.0, 1.0))
+
+
 def normalise_embedding(embedding: Union[np.ndarray, list]) -> np.ndarray:
     """Return a unit-length float32 copy of an embedding."""
     vector = np.asarray(embedding, dtype=np.float32).ravel()
