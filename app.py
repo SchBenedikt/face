@@ -541,7 +541,7 @@ def face_search_page():
                     ["Balanced", "High Precision", "High Recall"],
                     index=0,
                     key="face_search_mode",
-                    help="Balanced: Normal results | Precision: Fewer but better matches | Recall: More results, some false positives"
+                    help="Ändert Cosine-Schwelle und Trefferzahl: Balanced nutzt den eingestellten Wert, High Precision setzt die Schwelle höher, High Recall niedriger."
                 )
                 
                 # Result Sorting

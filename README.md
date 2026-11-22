@@ -79,7 +79,7 @@ The application provides local face search over images you choose to index:
 ### 🔍 **Advanced Search Engine**
 - **Similarity Search**: Find faces similar to uploaded images
 - **Result Filters**: Filter displayed results by cosine similarity, face size, or assigned name
-- **Smart Modes**: High Precision, High Recall, or Balanced search algorithms
+- **Search Presets**: Balanced, High Precision, and High Recall adjust the cosine threshold and result count
 - **Real-time Filtering**: Dynamic result filtering by similarity, size, and assigned name
 
 ### 🧠 **AI-Powered Analysis**
@@ -113,7 +113,8 @@ The application provides local face search over images you choose to index:
 - Face crops from DeepFace detectors are aligned and reused for both embedding extraction and the result preview.
 - The active recognition pipeline extracts one 512-dimensional Facenet512 embedding per detected face. Model candidates and ensemble helpers elsewhere in the code are legacy configuration; search does not combine four models.
 - Embeddings are unit-normalized and stored in the local ChromaDB collection. Search converts ChromaDB distances to cosine similarity and ranks indexed images.
-- The default search threshold is 0.50 cosine similarity. In one diagnostic sample of 50 same-person and 50 different-person pairs from LFW's test split, it retrieved 46/50 same-person pairs and accepted 0/50 different-person pairs after selecting the largest detected face in each portrait. The detector returned multiple boxes for 41/195 portraits, so this measures the selected-face path rather than detector precision. This small sample is not a calibrated probability, a full LFW benchmark, or a general accuracy claim; evaluate on a representative labeled collection.
+- The default search threshold is 0.50 cosine similarity. In a reproducible diagnostic sample of 200 same-person and 200 different-person pairs from LFW's test split (seed 42), it retrieved 185/200 same-person pairs and accepted 0/200 different-person pairs after selecting the largest detected face in each portrait. The detector returned multiple boxes for 132/719 portraits, so this measures the selected-face path rather than detector precision. This is not the official cross-validated LFW benchmark or a general accuracy claim; evaluate on a representative labeled collection.
+- To repeat the LFW diagnostic, install optional `scikit-learn` and run `.venv/bin/python evaluate_lfw_pairs.py --pairs-per-class 200`. The dataset is cached outside the repository. The script reports detection coverage and false-accept/recall tradeoffs for the active pipeline.
 - Search covers only images indexed in this application's database; it does not search the public web.
 
 ### Index updates
