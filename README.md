@@ -342,12 +342,12 @@ def calculate_comprehensive_similarity(embedding1, embedding2):
 
 ### 🎭 **Face Detection Backends**
 
-We use **multiple detection backends** for different scenarios:
+The active detector order depends on optional dlib availability:
 
-- **🔍 OpenCV Haar Cascades**: Ultra-fast for real-time processing
-- **🧠 CNN-based Detection**: Balanced speed and accuracy  
-- **🎯 MTCNN**: High-accuracy for challenging conditions
-- **🚀 RetinaFace**: State-of-the-art for research applications
+- With `face-recognition` installed: configured dlib HOG/CNN first, then
+  DeepFace RetinaFace, MTCNN and OpenCV, followed by OpenCV Haar.
+- Without dlib: DeepFace RetinaFace, MTCNN and OpenCV first, followed by
+  OpenCV Haar. This is the default installation path.
 
 ### 🔧 **Quality Assessment Pipeline**
 
@@ -621,7 +621,8 @@ Customize processing behavior by editing configuration files:
 **`config.py`** - Main system settings:
 ```python
 # Face detection settings
-DETECTION_BACKEND = "cnn"  # opencv, cnn, mtcnn, retinaface
+FACE_DETECTION_BACKENDS = ["retinaface", "mtcnn", "opencv"]
+FACE_RECOGNITION_MODEL = "cnn"  # Optional face-recognition/dlib HOG or CNN
 SIMILARITY_THRESHOLD = 0.6
 MIN_FACE_SIZE = 30
 

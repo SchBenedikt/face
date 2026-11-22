@@ -3806,22 +3806,29 @@ def settings_page():
     st.subheader("Face Detection Model Settings")
 
     active_model = current_settings["detection_model"]
-    st.write(f"**Aktiv:** {active_model.upper()}")
     try:
         import face_recognition as _face_recognition  # noqa: F401
-        st.caption(
-            "Die Auswahl wird sofort an face_recognition weitergegeben und "
-            "ist nach einem Neustart weiterhin aktiv."
-        )
+        face_recognition_available = True
     except Exception:  # noqa: BLE001 - optional package
+        face_recognition_available = False
+
+    st.write(f"**Gespeicherte dlib-Auswahl:** {active_model.upper()}")
+    if face_recognition_available:
+        st.caption(
+            f"**Aktive Erkennung:** face_recognition {active_model.upper()} zuerst, "
+            "danach DeepFace (RetinaFace → MTCNN → OpenCV) und zuletzt OpenCV Haar. "
+            "Die Auswahl bleibt nach einem Neustart aktiv."
+        )
+    else:
         st.info(
-            "face_recognition ist nicht installiert. Die App nutzt deshalb den "
-            "OpenCV-Fallback; die gespeicherte Auswahl greift, sobald das "
-            "optionale Paket installiert ist."
+            "**Aktive Erkennung:** DeepFace (RetinaFace → MTCNN → OpenCV), "
+            "danach OpenCV Haar. face_recognition/dlib ist nicht installiert; "
+            f"die gespeicherte {active_model.upper()}-Auswahl greift erst nach "
+            "Installation des optionalen Pakets."
         )
     
     # Model comparison table
-    st.subheader("Model Vergleich")
+    st.subheader("Optionaler dlib-Detektor: Modellvergleich")
     comparison_data = {
         "Model": ["HOG", "CNN"],
         "Geschwindigkeit": ["⚡ Sehr schnell", "🐌 Langsamer"],
@@ -3838,7 +3845,10 @@ def settings_page():
     
     with col1:
         st.write("**Embedding Model:** DeepFace Facenet512")
-        st.write(f"**Detection Model:** {current_settings['detection_model'].upper()} {'✅ (Genauer)' if current_settings['detection_model'] == 'cnn' else '⚡ (Schneller)'}")
+        if face_recognition_available:
+            st.write(f"**Aktiver dlib-Detektor:** {active_model.upper()}")
+        else:
+            st.write("**Aktiver Detektor:** DeepFace mit RetinaFace/MTCNN-Fallback")
         st.write("**Vector Database:** ChromaDB")
     
     with col2:

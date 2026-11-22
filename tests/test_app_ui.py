@@ -94,6 +94,18 @@ def test_pages_render_without_exception(seeded_data, page, needle):
     assert needle.lower() in joined.lower(), joined[:800]
 
 
+def test_settings_report_the_effective_face_detector(seeded_data):
+    at = _app()
+    at.run()
+    _goto(at, "⚙️ Settings")
+    _assert_no_exception(at)
+
+    joined = _all_text(at)
+    assert "Aktive Erkennung" in joined
+    assert "RetinaFace" in joined
+    assert "MTCNN" in joined
+
+
 def test_face_gallery_renders_cached_thumbnails(seeded_data):
     at = _app()
     at.run()
