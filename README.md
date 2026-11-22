@@ -86,7 +86,7 @@ The application provides local face search over images you choose to index:
 - **Facial Recognition**: Facenet512 embeddings with RetinaFace-first detection and aligned face crops
 - **Attribute Detection**: Age, gender, emotion, ethnicity analysis
 - **Search Scores**: Cosine similarity is shown as a ranking score, not a match probability
-- **Search Threshold**: Defaults to 0.60 cosine similarity; High Precision raises it to 0.70 and High Recall lowers it to 0.50
+- **Search Threshold**: Defaults to 0.50 cosine similarity; High Precision adds 0.15 and High Recall subtracts 0.10
 
 ### ⚡ **High-Performance Processing**
 - **Batch Processing**: Process image directories in configurable batches
@@ -113,7 +113,7 @@ The application provides local face search over images you choose to index:
 - Face crops from DeepFace detectors are aligned and reused for both embedding extraction and the result preview.
 - The active recognition pipeline extracts one 512-dimensional Facenet512 embedding per detected face. Model candidates and ensemble helpers elsewhere in the code are legacy configuration; search does not combine four models.
 - Embeddings are unit-normalized and stored in the local ChromaDB collection. Search converts ChromaDB distances to cosine similarity and ranks indexed images.
-- The default search threshold is 0.60 cosine similarity. On the built-in demo set (32 images, 8 identities), this returned all 48 same-identity pairs above the threshold and none of 448 different-identity pairs. This small dataset is only a starting point, not a calibrated probability or a general accuracy claim; use the evaluation tool on a representative labeled collection.
+- The default search threshold is 0.50 cosine similarity. In one diagnostic sample of 50 same-person and 50 different-person pairs from LFW's test split, it retrieved 46/50 same-person pairs and accepted 0/50 different-person pairs after selecting the largest detected face in each portrait. The detector returned multiple boxes for 41/195 portraits, so this measures the selected-face path rather than detector precision. This small sample is not a calibrated probability, a full LFW benchmark, or a general accuracy claim; evaluate on a representative labeled collection.
 - Search covers only images indexed in this application's database; it does not search the public web.
 
 ### Index updates
@@ -184,7 +184,7 @@ To remove detected image-file duplicates after review, add `--clean`. This clean
 
 ### Settings and data location
 
-`config.py` defines the active detector order, Facenet512 model, default search threshold (0.60), and ChromaDB path. `FACE_DATA_DIR` relocates the images and database together. The CLI batch processor handles `IMAGES_DIR`; use the app's batch page to update additional directories.
+`config.py` defines the active detector order, Facenet512 model, default search threshold (0.50), and ChromaDB path. `FACE_DATA_DIR` relocates the images and database together. The CLI batch processor handles `IMAGES_DIR`; use the app's batch page to update additional directories.
 
 ## 🎯 Use Cases
 

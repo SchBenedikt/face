@@ -512,7 +512,7 @@ def face_search_page():
                     value=float(query_settings["similarity_threshold"]),
                     step=0.05,
                     key="face_search_similarity_threshold",
-                    help="Cosine-Ähnlichkeit, keine Match-Wahrscheinlichkeit. 0,60 ist ein Startwert aus dem kleinen Demo-Benchmark; High Precision erhöht ihn auf 0,70."
+                    help="Cosine-Ähnlichkeit, keine Match-Wahrscheinlichkeit. 0,50 ist ein vorsichtiger Startwert aus einer kleinen LFW-Stichprobe; High Precision erhöht ihn auf 0,65."
                 )
                 
                 # Similarity filter (the old labels called this "quality")
@@ -788,7 +788,7 @@ def search_with_selected_face_enhanced(face_index: int):
             adjusted_max_results = max_results
             
             if search_params['search_mode'] == "High Precision":
-                adjusted_threshold = min(similarity_threshold + 0.1, 0.9)
+                adjusted_threshold = min(similarity_threshold + 0.15, 0.9)
                 adjusted_max_results = min(max_results, 25)
             elif search_params['search_mode'] == "High Recall":
                 adjusted_threshold = max(similarity_threshold - 0.1, 0.2)
