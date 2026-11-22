@@ -55,6 +55,9 @@ def evaluate_lfw_pairs(
         funneled=True,
         resize=1.0,
         color=True,
+        # Keep the full source frame instead of sklearn's default center crop;
+        # this exercises multi-person detection as users' photos do.
+        slice_=(slice(0, 250), slice(0, 250)),
         download_if_missing=True,
     )
 
@@ -92,9 +95,10 @@ def evaluate_lfw_pairs(
 
             if len(locations) > 1:
                 image_counts["multiple_faces"] += 1
-            # The LFW pair items are centered single-person portraits. Select
-            # their largest detected face so incidental background faces do
-            # not invalidate the verification pair.
+            # LFW pair labels refer to the primary centered person, but the
+            # full source frame may contain other visible people. Select the
+            # largest box to score that labeled person while retaining the
+            # multi-face count as a separate detector observation.
             location = max(
                 locations,
                 key=lambda box: max(0, box[1] - box[3]) * max(0, box[2] - box[0]),

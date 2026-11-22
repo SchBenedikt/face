@@ -708,6 +708,59 @@ def show_face_selection_interface():
     query_image = detected_data['query_image']
     
     st.write(f"**{len(face_locations)} face(s) detected. Select the face for search:**")
+
+    # A crop-only gallery hides where a face came from in group photos. Show
+    # the full query with the same indices used by the thumbnails and buttons.
+    source_height, source_width = query_image.shape[:2]
+    display_scale = min(1.0, 1600.0 / max(source_height, source_width))
+    display_size = (
+        max(1, int(round(source_width * display_scale))),
+        max(1, int(round(source_height * display_scale))),
+    )
+    overview = (
+        query_image.copy()
+        if display_scale == 1.0
+        else cv2.resize(query_image, display_size, interpolation=cv2.INTER_AREA)
+    )
+    image_height, image_width = overview.shape[:2]
+    font_scale = max(0.5, min(1.5, min(image_height, image_width) / 600.0))
+    line_width = max(2, int(font_scale * 2))
+    for idx, face_loc in enumerate(face_locations):
+        if isinstance(face_loc, dict):
+            top, right, bottom, left = (
+                face_loc['top'], face_loc['right'], face_loc['bottom'], face_loc['left']
+            )
+        else:
+            top, right, bottom, left = face_loc
+        top = int(round(top * display_scale))
+        right = int(round(right * display_scale))
+        bottom = int(round(bottom * display_scale))
+        left = int(round(left * display_scale))
+        color = (25, 230, 90)  # RGB image: bright green outline
+        cv2.rectangle(overview, (left, top), (right, bottom), color, line_width)
+        label = str(idx + 1)
+        (label_width, label_height), baseline = cv2.getTextSize(
+            label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, line_width
+        )
+        label_top = max(0, top - label_height - baseline - 6)
+        cv2.rectangle(
+            overview,
+            (left, label_top),
+            (left + label_width + 8, min(image_height - 1, label_top + label_height + baseline + 6)),
+            color,
+            thickness=-1,
+        )
+        cv2.putText(
+            overview,
+            label,
+            (left + 4, min(image_height - baseline - 1, label_top + label_height + 2)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            (255, 255, 255),
+            line_width,
+            cv2.LINE_AA,
+        )
+    st.image(overview, caption="Nummern entsprechen den Gesichtsvorschauen und Suchschaltflächen.", width='stretch')
     
     # Display faces in a grid
     cols = st.columns(min(len(face_locations), 3))
