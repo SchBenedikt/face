@@ -702,8 +702,12 @@ def show_face_selection_interface():
             else:
                 top, right, bottom, left = face_loc
             
-            # Extract and display face
-            face_image = query_image[top:bottom, left:right]
+            # Preview the exact aligned/padded crop that will be embedded.
+            face_image = st.session_state.face_engine.get_face_crop(
+                query_image, (top, right, bottom, left)
+            )
+            if face_image is None:
+                face_image = query_image[top:bottom, left:right]
             face_thumbnail = create_thumbnail(face_image, (120, 120))
             
             st.image(face_thumbnail, caption=f"Gesicht {idx+1}")

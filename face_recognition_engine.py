@@ -305,6 +305,28 @@ class FaceRecognitionEngine:
         except Exception as e:
             logger.error(f"Error filtering faces: {e}")
             return face_locations
+
+    def get_face_crop(
+        self, image: np.ndarray, face_location: Tuple[int, int, int, int]
+    ) -> Optional[np.ndarray]:
+        """Return the same aligned or padded crop used to build the embedding."""
+        try:
+            crop = self._get_aligned_face_crop(image, face_location)
+            if crop is not None:
+                return crop
+
+            top, right, bottom, left = face_location
+            height, width = image.shape[:2]
+            padding = 10
+            face_top = max(0, top - padding)
+            face_bottom = min(height, bottom + padding)
+            face_left = max(0, left - padding)
+            face_right = min(width, right + padding)
+            crop = image[face_top:face_bottom, face_left:face_right]
+            return crop if crop.size else None
+        except Exception as exc:  # noqa: BLE001 - invalid boxes should not crash UI
+            logger.debug("Could not extract crop for face %s: %s", face_location, exc)
+            return None
     
     def extract_face_embedding(self, image: np.ndarray, face_location: Tuple[int, int, int, int]) -> Optional[np.ndarray]:
         """
@@ -320,17 +342,12 @@ class FaceRecognitionEngine:
         try:
             top, right, bottom, left = face_location
             
-            # RetinaFace/MTCNN results include an eye-aligned crop. Use it when
-            # available; HOG/CNN and Haar still use a padded source-image box.
-            face_image = self._get_aligned_face_crop(image, face_location)
+            # Use the same crop for UI preview and embedding. DeepFace results
+            # provide an eye-aligned RGB crop; dlib/Haar use a padded source box.
+            face_image = self.get_face_crop(image, face_location)
             if face_image is None:
-                padding = 10
-                height, width = image.shape[:2]
-                face_top = max(0, top - padding)
-                face_bottom = min(height, bottom + padding)
-                face_left = max(0, left - padding)
-                face_right = min(width, right + padding)
-                face_image = image[face_top:face_bottom, face_left:face_right]
+                logger.debug("No crop available for face at %s", face_location)
+                return None
             
             # Validate face size
             if face_image.shape[0] < MIN_FACE_SIZE[0] or face_image.shape[1] < MIN_FACE_SIZE[1]:

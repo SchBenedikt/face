@@ -81,6 +81,7 @@ def test_deepface_aligned_crop_is_used_for_embedding(monkeypatch):
     monkeypatch.setattr(engine, "_extract_single_model_embedding", capture_embedding)
     locations = engine.detect_faces(image)
     assert locations == [(25, 85, 83, 30)]
+    np.testing.assert_array_equal(engine.get_face_crop(image, locations[0]), aligned_crop)
 
     embedding = engine.extract_face_embedding(image, locations[0])
     repeated_embedding = engine.extract_face_embedding(image, locations[0])
