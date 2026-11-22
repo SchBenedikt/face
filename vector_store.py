@@ -160,6 +160,22 @@ class FaceVectorStore:
         })
         self.collection.modify(metadata=metadata)
         self._pipeline_status_cache = None
+
+    def _metadata_for_existing_ids(self, face_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Read metadata that should survive an embedding refresh for stable IDs."""
+        if not face_ids:
+            return {}
+        try:
+            rows = self.collection.get(ids=face_ids, include=['metadatas'])
+            return {
+                str(face_id): dict(metadata or {})
+                for face_id, metadata in zip(
+                    rows.get('ids') or [], rows.get('metadatas') or []
+                )
+            }
+        except Exception as exc:  # noqa: BLE001 - a metadata read must not block indexing
+            logger.warning("Could not preserve metadata for refreshed faces: %s", exc)
+            return {}
     
     def add_face_embedding(
         self, 
@@ -186,8 +202,9 @@ class FaceVectorStore:
                 raise ValueError("Embedding must be a finite, non-zero vector")
             embedding_list = vector.tolist()
             
-            # Add metadata
+            existing_metadata = self._metadata_for_existing_ids([face_id])
             full_metadata = {
+                **existing_metadata.get(face_id, {}),
                 **metadata,
                 "added_at": datetime.now().isoformat(),
                 "embedding_dimension": len(vector),
@@ -239,10 +256,11 @@ class FaceVectorStore:
                 raise ValueError("All embeddings in a batch must have the same dimension")
             embedding_lists = [vector.tolist() for vector in vectors]
             
-            # Add metadata
+            existing_metadata = self._metadata_for_existing_ids(face_ids)
             full_metadatas = []
-            for metadata, vector in zip(metadatas, vectors):
+            for face_id, metadata, vector in zip(face_ids, metadatas, vectors):
                 full_metadata = {
+                    **existing_metadata.get(str(face_id), {}),
                     **metadata,
                     "added_at": datetime.now().isoformat(),
                     "embedding_dimension": int(vector.size),
