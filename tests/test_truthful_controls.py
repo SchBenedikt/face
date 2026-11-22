@@ -149,3 +149,21 @@ def test_deepface_edge_face_keeps_its_aligned_crop(monkeypatch):
     assert locations == [(0, 45, 51, 0)]
     assert engine.extract_face_embedding(image, locations[0]) is not None
     np.testing.assert_array_equal(captured["face_image"], aligned_crop)
+
+
+def test_embedding_failure_marks_image_as_incomplete(monkeypatch, tmp_path):
+    engine = FaceRecognitionEngine()
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    monkeypatch.setattr(
+        face_recognition_engine,
+        "load_and_preprocess_image",
+        lambda path: image,
+    )
+    monkeypatch.setattr(engine, "detect_faces", lambda loaded_image: [(20, 90, 90, 20)])
+    monkeypatch.setattr(engine, "extract_face_embedding", lambda loaded_image, location: None)
+
+    result = engine.process_image(tmp_path / "existing.jpg")
+
+    assert "error" in result
+    assert result["preserve_existing"] is True
+    assert result.get("face_count") is None

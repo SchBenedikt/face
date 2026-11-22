@@ -680,7 +680,11 @@ class FaceRecognitionEngine:
             image = load_and_preprocess_image(image_path)
             if image is None:
                 logger.warning(f"Failed to load image: {image_path}")
-                return {"error": "Failed to load image", "image_path": str(image_path)}
+                return {
+                    "error": "Failed to load image",
+                    "image_path": str(image_path),
+                    "source_unreadable": True,
+                }
             
             logger.debug(f"Image loaded successfully: {image.shape}")
             
@@ -702,6 +706,7 @@ class FaceRecognitionEngine:
             
             # Extract embeddings for each face
             faces_data = []
+            embedding_failures = 0
             for i, face_location in enumerate(face_locations):
                 try:
                     logger.debug(f"Extracting embedding for face {i+1}/{len(face_locations)}")
@@ -716,11 +721,26 @@ class FaceRecognitionEngine:
                         })
                         logger.debug(f"Successfully extracted embedding for face {i+1}")
                     else:
+                        embedding_failures += 1
                         logger.warning(f"Failed to extract embedding for face {i+1} in {image_path}")
                         
                 except Exception as e:
                     logger.error(f"Error extracting embedding for face {i+1} in {image_path}: {e}")
+                    embedding_failures += 1
                     continue
+
+            # Treat the image as a failed unit when any detected face could
+            # not be embedded. In update mode, callers then retain the previous
+            # complete set instead of replacing it with partial data.
+            if embedding_failures:
+                return {
+                    "error": (
+                        f"Could not extract embeddings for {embedding_failures} "
+                        f"of {len(face_locations)} detected face(s)"
+                    ),
+                    "image_path": str(image_path),
+                    "preserve_existing": True,
+                }
             
             result = {
                 "image_path": str(image_path),
@@ -734,7 +754,11 @@ class FaceRecognitionEngine:
             
         except Exception as e:
             logger.error(f"Critical error processing image {image_path}: {e}")
-            return {"error": str(e), "image_path": str(image_path)}
+            return {
+                "error": str(e),
+                "image_path": str(image_path),
+                "preserve_existing": True,
+            }
     
     def process_images_batch(self, image_paths: List[Path], max_workers: int = 1) -> List[Dict[str, Any]]:
         """

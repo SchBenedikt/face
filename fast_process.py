@@ -55,6 +55,13 @@ def filter_unprocessed_images(image_files: List[Path], processed_paths: set) -> 
     """Keep files whose full path is new; equal file names in other folders stay."""
     return [path for path in image_files if _normalised_path(path) not in processed_paths]
 
+
+def _should_remove_existing_faces(result: dict) -> bool:
+    """Only replace old rows after a successful no-face result or bad source."""
+    if result.get("source_unreadable"):
+        return True
+    return "error" not in result and result.get("face_count", 0) == 0
+
 def process_images_fast(update_existing=False):
     """Fast batch processing with minimal overhead"""
     
@@ -173,9 +180,10 @@ def process_images_fast(update_existing=False):
             print(f"  💾 Wrote {added_count} faces to database")
 
         if update_existing:
-            # An image that lost all its faces must also lose its old rows.
+            # Preserve old rows when model/runtime processing failed. Remove
+            # them only after a valid no-face result or a corrupt source file.
             for result in results:
-                if "error" not in result and result.get("face_count", 0) == 0:
+                if _should_remove_existing_faces(result):
                     vector_store.delete_faces_by_image_path(result["image_path"])
         
         # Batch timing
@@ -327,9 +335,9 @@ def process_images_streamlit(update_existing=False, progress_callback=None, stat
 
             if update_existing:
                 for result in results:
-                    if "error" in result or result.get("face_count", 0) == 0:
-                        # An unreadable or now faceless image must not keep rows
-                        # from an earlier successful run.
+                    if _should_remove_existing_faces(result):
+                        # A corrupt or successfully faceless image must not keep
+                        # stale rows. Runtime/model failures preserve old rows.
                         stale_removed += vector_store.delete_faces_by_image_path(
                             result["image_path"]
                         )
