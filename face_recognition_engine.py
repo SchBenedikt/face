@@ -1,6 +1,4 @@
-"""
-Face Recognition Engine using multiple models for optimal performance
-"""
+"""Face detection and embedding extraction for local similarity search."""
 # Set up environment before importing other modules to prevent threading issues
 from setup_env import setup_environment
 setup_environment()
@@ -27,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 from threading import RLock
 import pickle
+from weakref import ref as weakref_ref
 
 from utils import load_and_preprocess_image
 import config
@@ -249,10 +248,10 @@ class FaceRecognitionEngine:
         image: np.ndarray,
         crops: Dict[Tuple[int, int, int, int], np.ndarray],
     ) -> None:
-        """Keep a small, thread-safe cache so embedding uses the aligned detector crop."""
+        """Cache aligned crops without retaining full source images in memory."""
         image_key = id(image)
         with self._aligned_face_crops_lock:
-            self._aligned_face_crops[image_key] = (image, dict(crops))
+            self._aligned_face_crops[image_key] = (weakref_ref(image), dict(crops))
             self._aligned_face_crops.move_to_end(image_key)
             while len(self._aligned_face_crops) > 8:
                 self._aligned_face_crops.popitem(last=False)
@@ -264,7 +263,9 @@ class FaceRecognitionEngine:
         image_key = id(image)
         with self._aligned_face_crops_lock:
             cached = self._aligned_face_crops.get(image_key)
-            if cached is None or cached[0] is not image:
+            if cached is None or cached[0]() is not image:
+                if cached is not None and cached[0]() is None:
+                    self._aligned_face_crops.pop(image_key, None)
                 return None
             self._aligned_face_crops.move_to_end(image_key)
             return cached[1].get(tuple(location))
