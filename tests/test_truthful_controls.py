@@ -52,3 +52,41 @@ def test_engine_reads_the_saved_detection_model(isolated_settings, monkeypatch):
 
     assert engine.detection_model == "hog"
     assert captured["model"] == "hog"
+
+
+def test_deepface_aligned_crop_is_used_for_embedding(monkeypatch):
+    engine = FaceRecognitionEngine()
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    aligned_crop = np.full((64, 64, 3), 173, dtype=np.uint8)
+    captured = {}
+
+    class FakeDeepFace:
+        @staticmethod
+        def extract_faces(**kwargs):
+            captured["extract_kwargs"] = kwargs
+            return [{
+                "facial_area": {"x": 30, "y": 25, "w": 55, "h": 58},
+                "confidence": 0.99,
+                "face": aligned_crop,
+            }]
+
+    monkeypatch.setattr(face_recognition_engine, "DeepFace", FakeDeepFace)
+    monkeypatch.setattr(face_recognition_engine, "face_recognition", None)
+
+    def capture_embedding(face_image, model_name):
+        captured["face_image"] = face_image.copy()
+        captured["model_name"] = model_name
+        return np.ones(512, dtype=np.float32)
+
+    monkeypatch.setattr(engine, "_extract_single_model_embedding", capture_embedding)
+    locations = engine.detect_faces(image)
+    assert locations == [(25, 85, 83, 30)]
+
+    embedding = engine.extract_face_embedding(image, locations[0])
+
+    assert embedding is not None
+    np.testing.assert_array_equal(captured["face_image"], aligned_crop)
+    assert captured["model_name"] == engine.primary_model
+    assert captured["extract_kwargs"]["align"] is True
+    assert captured["extract_kwargs"]["color_face"] == "rgb"
+    assert captured["extract_kwargs"]["normalize_face"] is False

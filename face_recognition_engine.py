@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Optional, Any
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from collections import OrderedDict
+from threading import RLock
 import pickle
 
 from utils import load_and_preprocess_image
@@ -78,6 +80,8 @@ class FaceRecognitionEngine:
         self.detection_backends = getattr(config, 'FACE_DETECTION_BACKENDS', ["opencv", "mtcnn", "retinaface"])
         self.model_cache = {}  # Cache for model loading
         self.ensemble_enabled = getattr(config, 'FACE_ENSEMBLE_WEIGHTING', True)
+        self._aligned_face_crops = OrderedDict()
+        self._aligned_face_crops_lock = RLock()
 
     def set_detection_model(self, model: str) -> None:
         """Apply a saved detector choice to this engine instance."""
@@ -123,7 +127,17 @@ class FaceRecognitionEngine:
             # optional face_recognition package is missing or returns nothing.
             deepface_faces = self._detect_faces_with_deepface(image)
             if deepface_faces:
-                return self._filter_valid_faces(deepface_faces, image.shape[:2])
+                candidate_locations = [location for location, _ in deepface_faces]
+                valid_locations = self._filter_valid_faces(candidate_locations, image.shape[:2])
+                valid_set = set(valid_locations)
+                crops = {
+                    location: crop
+                    for location, crop in deepface_faces
+                    if crop is not None and location in valid_set
+                }
+                if crops:
+                    self._remember_aligned_face_crops(image, crops)
+                return valid_locations
 
             # Final fallback - OpenCV Haar cascades (fastest, least robust)
             try:
@@ -161,8 +175,8 @@ class FaceRecognitionEngine:
 
     def _detect_faces_with_deepface(
         self, image: np.ndarray
-    ) -> List[Tuple[int, int, int, int]]:
-        """Use configured DeepFace detectors and return top/right/bottom/left boxes."""
+    ) -> List[Tuple[Tuple[int, int, int, int], Optional[np.ndarray]]]:
+        """Return boxes and DeepFace's aligned RGB crops for detected faces."""
         extract_faces = getattr(DeepFace, "extract_faces", None)
         if not callable(extract_faces):
             return []
@@ -186,6 +200,8 @@ class FaceRecognitionEngine:
                     detector_backend=backend,
                     enforce_detection=False,
                     align=True,
+                    color_face="rgb",
+                    normalize_face=False,
                 )
                 locations = []
                 for detection in detections or []:
@@ -196,16 +212,49 @@ class FaceRecognitionEngine:
                     x, y = int(area.get("x", 0)), int(area.get("y", 0))
                     width, height = int(area.get("w", 0)), int(area.get("h", 0))
                     if width > 0 and height > 0:
-                        locations.append((y, x + width, y + height, x))
+                        location = (y, x + width, y + height, x)
+                        face_crop = detection.get("face")
+                        if not isinstance(face_crop, np.ndarray) or face_crop.size == 0:
+                            face_crop = None
+                        else:
+                            face_crop = np.ascontiguousarray(face_crop)
+                        locations.append((location, face_crop))
                 if locations:
                     logger.debug(
                         "DeepFace/%s detected %d face(s)", backend, len(locations)
                     )
-                    return sorted(locations, key=lambda box: (box[0], box[3]))
+                    return sorted(locations, key=lambda item: (item[0][0], item[0][3]))
             except Exception as exc:  # noqa: BLE001 - try the next available backend
                 logger.debug("DeepFace/%s face detection failed: %s", backend, exc)
 
         return []
+
+    def _remember_aligned_face_crops(
+        self,
+        image: np.ndarray,
+        crops: Dict[Tuple[int, int, int, int], np.ndarray],
+    ) -> None:
+        """Keep a small, thread-safe cache so embedding uses the aligned detector crop."""
+        image_key = id(image)
+        with self._aligned_face_crops_lock:
+            self._aligned_face_crops[image_key] = (image, dict(crops))
+            self._aligned_face_crops.move_to_end(image_key)
+            while len(self._aligned_face_crops) > 8:
+                self._aligned_face_crops.popitem(last=False)
+
+    def _take_aligned_face_crop(
+        self, image: np.ndarray, location: Tuple[int, int, int, int]
+    ) -> Optional[np.ndarray]:
+        """Consume the aligned crop associated with one image and face box."""
+        image_key = id(image)
+        with self._aligned_face_crops_lock:
+            cached = self._aligned_face_crops.get(image_key)
+            if cached is None or cached[0] is not image:
+                return None
+            crop = cached[1].pop(tuple(location), None)
+            if not cached[1]:
+                self._aligned_face_crops.pop(image_key, None)
+            return crop
     
     def _filter_valid_faces(self, face_locations: List[Tuple[int, int, int, int]], image_shape: Tuple[int, int]) -> List[Tuple[int, int, int, int]]:
         """
@@ -260,17 +309,17 @@ class FaceRecognitionEngine:
         try:
             top, right, bottom, left = face_location
             
-            # Extract face region with minimal padding for speed
-            padding = 10  # Fixed small padding for speed
-            height, width = image.shape[:2]
-            
-            # Apply padding while staying within image bounds
-            face_top = max(0, top - padding)
-            face_bottom = min(height, bottom + padding)
-            face_left = max(0, left - padding)  
-            face_right = min(width, right + padding)
-            
-            face_image = image[face_top:face_bottom, face_left:face_right]
+            # RetinaFace/MTCNN results include an eye-aligned crop. Use it when
+            # available; HOG/CNN and Haar still use a padded source-image box.
+            face_image = self._take_aligned_face_crop(image, face_location)
+            if face_image is None:
+                padding = 10
+                height, width = image.shape[:2]
+                face_top = max(0, top - padding)
+                face_bottom = min(height, bottom + padding)
+                face_left = max(0, left - padding)
+                face_right = min(width, right + padding)
+                face_image = image[face_top:face_bottom, face_left:face_right]
             
             # Validate face size
             if face_image.shape[0] < MIN_FACE_SIZE[0] or face_image.shape[1] < MIN_FACE_SIZE[1]:

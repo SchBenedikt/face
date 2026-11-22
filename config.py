@@ -57,7 +57,7 @@ FACE_EMBEDDING_MODEL = "Facenet512"  # Primary DeepFace model for highest qualit
 FACE_EMBEDDING_MODELS = ["Facenet512", "ArcFace", "VGG-Face", "Facenet"]  # Ensemble models
 # Bump this whenever the detector, crop or embedding preprocessing changes.
 # Similarity comparisons across pipeline versions are not meaningful.
-EMBEDDING_PIPELINE_VERSION = "facenet512-rgb-base-v2"
+EMBEDDING_PIPELINE_VERSION = "facenet512-retinaface-aligned-rgb-base-v3"
 FACE_DETECTION_BACKENDS = ["retinaface", "mtcnn", "opencv"]  # Accuracy-first fallback order
 FACE_PREPROCESSING_ENABLED = True   # Erweiterte Gesichtsvorverarbeitung aktivieren
 FACE_QUALITY_VALIDATION = True     # Embedding-Qualität validieren
