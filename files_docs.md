@@ -19,6 +19,7 @@ The detector tries the optional `face_recognition` package first when installed.
 - `vector_store.py` — ChromaDB collections, pipeline-version checks, similarity search, grouping, and person metadata.
 - `similarity.py` — Normalization and distance conversion helpers.
 - `face_grouping.py` — Clustering helpers for reviewed identity groups.
+- `evaluate_face_search.py` — Retrieval and threshold metrics for labeled, identity-folder datasets.
 - `settings_store.py` — Validated JSON settings stored under the configured data directory.
 - `fast_process.py` — CLI batch indexing for `IMAGES_DIR`; `--update` refreshes that directory.
 - `fast_config.py` — Shared data paths, supported image formats, and batch size. It does not select a different model.

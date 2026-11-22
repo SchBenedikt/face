@@ -512,7 +512,7 @@ def face_search_page():
                     value=float(query_settings["similarity_threshold"]),
                     step=0.05,
                     key="face_search_similarity_threshold",
-                    help="Kosinusähnlichkeit der Facenet512-Vektoren (kein Match-Wahrscheinlichkeitswert). 0,70 ist ein sinnvoller Startwert; niedriger liefert mehr, aber unsicherere Treffer."
+                    help="Cosine-Ähnlichkeit, keine Match-Wahrscheinlichkeit. 0,60 ist ein Startwert aus dem kleinen Demo-Benchmark; High Precision erhöht ihn auf 0,70."
                 )
                 
                 # Similarity filter (the old labels called this "quality")
@@ -570,15 +570,15 @@ def face_search_page():
                 In addition to similarity search, you can now perform detailed analysis on any found face:
                 
                 **📊 Analyzed Attributes:**
-                - **👤 Age**: Estimated age (±4.65 years accuracy)  
-                - **⚧️ Gender**: Male/Female (97.44% accuracy)
+                - **👤 Age**: Approximate model estimate; accuracy varies with the image
+                - **⚧️ Gender**: Approximate model category; not a verified demographic attribute
                 - **😊 Emotions**: Happy, Neutral, Sad, Angry, Surprised, Fearful, Disgusted
                 - **🌍 Ethnicity**: Asian, Caucasian, Middle Eastern, Indian, Latino, African
                 
                 **🔬 Technical Details:**
                 - Based on DeepFace library with neural networks
-                - High-precision models for each attribute type
-                - Confidence values for every prediction
+                - Model outputs may be wrong and are not calibrated for decision-making
+                - Category scores are model outputs, not verified probabilities
                 
                 **🚀 Usage:**
                 Click the **🧬 Analysis** button for any search result to get detailed information.
@@ -1122,7 +1122,7 @@ def show_facial_attributes_popup(image_path, face_location, face_id="unknown"):
             if 'age' in analysis:
                 st.markdown("## 🎂 **Altersschätzung**")
                 age = analysis['age']
-                st.metric("Geschätztes Alter", f"{age} Jahre", help="Genauigkeit: ±4,65 Jahre")
+                st.metric("Geschätztes Alter", f"{age} Jahre", help="Ungefähre Modellschätzung; keine Genauigkeitsgarantie")
                 
                 # Age category with visual indicator
                 if age < 18:
@@ -1703,7 +1703,7 @@ def show_analysis_tab(image_path, face_location, face_id):
         if 'age' in analysis:
             st.markdown("### 🎂 **Altersschätzung**")
             age = analysis['age']
-            st.metric("Geschätztes Alter", f"{age} Jahre", help="Genauigkeit: ±4,65 Jahre")
+            st.metric("Geschätztes Alter", f"{age} Jahre", help="Ungefähre Modellschätzung; keine Genauigkeitsgarantie")
             
             # Age category
             if age < 18:
@@ -2072,7 +2072,7 @@ def show_full_image_modal():
             if 'age' in analysis:
                 st.markdown("## 🎂 **Alter**")
                 age = analysis['age']
-                st.metric("Geschätztes Alter", f"{age} Jahre", help="Genauigkeit: ±4,65 Jahre")
+                st.metric("Geschätztes Alter", f"{age} Jahre", help="Ungefähre Modellschätzung; keine Genauigkeitsgarantie")
                 
                 # Age category with visual indicator
                 if age < 18:

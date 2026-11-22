@@ -4,7 +4,7 @@
 
 ### 🔍 **Face Search**
 - Upload reference image with face detection
-- Facenet512 embedding search with adjustable cosine-distance threshold (default: 0.70)
+- Facenet512 embedding search with adjustable cosine-similarity threshold (default: 0.60)
 - Trefferwerte zeigen Cosine-Ähnlichkeit, keine Match-Wahrscheinlichkeit
 - Multi-face detection with selection interface
 - Full-screen view with highlighted face
@@ -93,7 +93,7 @@ Die Ergebnisse sind Schätzungen und sollten nicht für Identifikation, Diskrimi
 
 ### Ähnlichkeitsberechnung
 - Die aktive Suche vergleicht unit-normalisierte Facenet512-Vektoren mit Cosine-Ähnlichkeit
-- Suchstandard: 0,70 Cosine; automatische Namenszuweisung: 0,68, per `FACE_AUTO_ASSIGN_THRESHOLD` übersteuerbar
+- Suchstandard: 0,60 Cosine; automatische Namenszuweisung: 0,68, per `FACE_AUTO_ASSIGN_THRESHOLD` übersteuerbar
 - Ähnlichkeitswerte sind Ranking-Scores, keine Wahrscheinlichkeiten oder bestätigten Identitäten
 
 Gesichts- und Attributerkennung kann falsche Ergebnisse liefern. Für Benchmark-Angaben siehe nur reproduzierbare Messungen mit einem geeigneten, beschrifteten Datensatz.
