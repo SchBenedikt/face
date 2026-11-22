@@ -98,6 +98,25 @@ def load_settings() -> Dict[str, Any]:
     return values
 
 
+def active_embedding_pipeline_version() -> str:
+    """Return the pipeline id for the detector this installation will use.
+
+    The optional ``face_recognition`` package changes the active detector to
+    dlib and its HOG/CNN setting changes face boxes and crops. Those vectors
+    must not share an index version with DeepFace-aligned embeddings or with
+    the other dlib model.
+    """
+    try:
+        import face_recognition  # noqa: F401 - availability selects the path
+    except Exception:  # noqa: BLE001 - optional dlib stack may be unavailable
+        return str(config.EMBEDDING_PIPELINE_VERSION)
+
+    model = str(load_settings().get("detection_model", "cnn")).lower()
+    if model not in CHOICES["detection_model"]:
+        model = "cnn"
+    return f"{config.EMBEDDING_PIPELINE_VERSION}-dlib-{model}"
+
+
 def save_settings(values: Dict[str, Any]) -> Tuple[bool, Dict[str, str]]:
     """Validate and persist ``values``; nothing is written when they are invalid."""
     clean, errors = validate_settings(values)

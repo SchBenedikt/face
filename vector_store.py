@@ -24,9 +24,9 @@ from config import (
     FACE_GROUPING_MARGIN,
     FACE_AUTO_ASSIGN_THRESHOLD,
     FACE_AUTO_ASSIGN_AMBIGUITY_MARGIN,
-    EMBEDDING_PIPELINE_VERSION,
 )
 from face_grouping import centroid_of, group_embeddings
+from settings_store import active_embedding_pipeline_version
 from similarity import (
     cosine_from_chroma_distance,
     normalise_embedding,
@@ -60,6 +60,7 @@ class FaceVectorStore:
         self._last_face_count = None
         self._cache_timestamp = None
         self._pipeline_status_cache = None
+        self._embedding_pipeline_version = active_embedding_pipeline_version()
         
         # Check for cache reset marker
         self._check_cache_reset_marker()
@@ -83,26 +84,36 @@ class FaceVectorStore:
                 configuration={"hnsw": {"space": "l2"}},
                 metadata={
                     "description": "Face embeddings for similarity search",
-                    "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
+                    "embedding_pipeline_version": self._embedding_pipeline_version,
                     "embedding_pipeline_complete": True,
                 }
             )
             logger.info(f"Created new collection: {collection_name}")
 
+    def refresh_embedding_pipeline_version(self) -> None:
+        """Refresh the active pipeline id after runtime settings are saved."""
+        version = active_embedding_pipeline_version()
+        if version != self._embedding_pipeline_version:
+            self._embedding_pipeline_version = version
+            self._pipeline_status_cache = None
+
     def get_embedding_pipeline_status(self) -> Dict[str, Any]:
         """Describe whether the stored index matches the active embedding pipeline."""
-        if self._pipeline_status_cache is not None:
+        if (
+            self._pipeline_status_cache is not None
+            and self._pipeline_status_cache.get("current_version") == self._embedding_pipeline_version
+        ):
             return dict(self._pipeline_status_cache)
         try:
             metadata = dict(self.collection.metadata or {})
             stored_version = metadata.get("embedding_pipeline_version")
             total_faces = int(self.collection.count())
-            compatible = stored_version == EMBEDDING_PIPELINE_VERSION
+            compatible = stored_version == self._embedding_pipeline_version
             complete = compatible and bool(metadata.get("embedding_pipeline_complete"))
             pending_faces = 0
             if compatible and not complete and total_faces:
                 current_rows = self.collection.get(
-                    where={"embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION},
+                    where={"embedding_pipeline_version": self._embedding_pipeline_version},
                     include=[],
                 )
                 pending_faces = max(0, total_faces - len(current_rows.get("ids") or []))
@@ -112,7 +123,7 @@ class FaceVectorStore:
             status = {
                 "total_faces": total_faces,
                 "stored_version": stored_version,
-                "current_version": EMBEDDING_PIPELINE_VERSION,
+                "current_version": self._embedding_pipeline_version,
                 "compatible": compatible,
                 "complete": complete,
                 "reindex_required": total_faces > 0 and not compatible,
@@ -126,7 +137,7 @@ class FaceVectorStore:
             status = {
                 "total_faces": 0,
                 "stored_version": None,
-                "current_version": EMBEDDING_PIPELINE_VERSION,
+                "current_version": self._embedding_pipeline_version,
                 "compatible": False,
                 "complete": False,
                 "reindex_required": False,
@@ -141,11 +152,11 @@ class FaceVectorStore:
         metadata = dict(self.collection.metadata or {})
         old_version = metadata.get("embedding_pipeline_version")
         was_complete = (
-            old_version == EMBEDDING_PIPELINE_VERSION
+            old_version == self._embedding_pipeline_version
             and bool(metadata.get("embedding_pipeline_complete"))
         )
         metadata.update({
-            "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
+            "embedding_pipeline_version": self._embedding_pipeline_version,
             "embedding_pipeline_complete": was_complete,
         })
         self.collection.modify(metadata=metadata)
@@ -155,7 +166,7 @@ class FaceVectorStore:
         """Mark the index complete after every available source image is reprocessed."""
         metadata = dict(self.collection.metadata or {})
         metadata.update({
-            "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
+            "embedding_pipeline_version": self._embedding_pipeline_version,
             "embedding_pipeline_complete": True,
         })
         self.collection.modify(metadata=metadata)
@@ -208,7 +219,7 @@ class FaceVectorStore:
                 **metadata,
                 "added_at": datetime.now().isoformat(),
                 "embedding_dimension": len(vector),
-                "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
+                "embedding_pipeline_version": self._embedding_pipeline_version,
             }
             
             # Add or replace the row; re-adding a face must not fail.
@@ -264,7 +275,7 @@ class FaceVectorStore:
                     **metadata,
                     "added_at": datetime.now().isoformat(),
                     "embedding_dimension": int(vector.size),
-                    "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
+                    "embedding_pipeline_version": self._embedding_pipeline_version,
                 }
                 full_metadatas.append(full_metadata)
             
@@ -388,7 +399,7 @@ class FaceVectorStore:
                 logger.warning(
                     "Search blocked: index pipeline %r does not match active pipeline %r",
                     status.get("stored_version"),
-                    EMBEDDING_PIPELINE_VERSION,
+                    self._embedding_pipeline_version,
                 )
                 return []
 
@@ -443,7 +454,7 @@ class FaceVectorStore:
                 query_embeddings=[query_list.tolist()],
                 n_results=search_n,
                 include=['metadatas', 'distances'],
-                where={"embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION},
+                where={"embedding_pipeline_version": self._embedding_pipeline_version},
             )
 
             ids = results.get('ids') or [[]]
@@ -862,7 +873,7 @@ class FaceVectorStore:
                 configuration={"hnsw": {"space": "l2"}},
                 metadata={
                     "description": "Face embeddings for similarity search",
-                    "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
+                    "embedding_pipeline_version": self._embedding_pipeline_version,
                     "embedding_pipeline_complete": True,
                 }
             )
@@ -1383,7 +1394,7 @@ class FaceVectorStore:
             if not self.get_embedding_pipeline_status()["compatible"]:
                 return {}
             rows = self.collection.get(
-                where={"embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION},
+                where={"embedding_pipeline_version": self._embedding_pipeline_version},
                 include=['embeddings', 'metadatas'],
             )
             embeddings = rows.get('embeddings')
@@ -1434,7 +1445,7 @@ class FaceVectorStore:
                 empty["error"] = "Index muss mit der aktuellen Gesichtspipeline neu aufgebaut werden."
                 return empty
             rows = self.collection.get(
-                where={"embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION},
+                where={"embedding_pipeline_version": self._embedding_pipeline_version},
                 include=['embeddings', 'metadatas'],
             )
             ids = rows.get('ids') or []

@@ -115,7 +115,8 @@ def show_embedding_pipeline_status() -> None:
     status = store.get_embedding_pipeline_status()
     if status.get("reindex_required"):
         st.warning(
-            "Der gespeicherte Gesichtsindex wurde mit einer älteren Pipeline erstellt. "
+            "Der gespeicherte Gesichtsindex wurde mit einer anderen Erkennungs-/Embedding-Pipeline erstellt "
+            "(zum Beispiel nach einem Wechsel zwischen HOG und CNN). "
             "Die Suche wird bis zur Aktualisierung blockiert, damit alte und neue "
             "Embeddings nicht falsch miteinander verglichen werden. Öffne **Batch Face "
             "Processing**, wähle **Update All Images** und aktualisiere zuerst "
@@ -3884,6 +3885,9 @@ def settings_page():
             engine = st.session_state.get("face_engine")
             if engine is not None:
                 engine.set_detection_model(detection_model)
+            store = st.session_state.get("vector_store")
+            if store is not None:
+                store.refresh_embedding_pipeline_version()
             st.session_state.settings_flash = f"✅ Einstellungen gespeichert: {settings_path()}"
             st.rerun()
         else:
