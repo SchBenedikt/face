@@ -170,6 +170,39 @@ def test_search_scores_follow_collection_distance_space(tmp_path, space):
     )
 
 
+def test_large_search_request_raises_hnsw_search_breadth(tmp_path):
+    store = FaceVectorStore(
+        db_path=str(tmp_path / "vectors_ef_search"),
+        collection_name="ef_search_test",
+    )
+    store.client.delete_collection(name=store.collection_name)
+    store.collection = store.client.create_collection(
+        name=store.collection_name,
+        configuration={"hnsw": {"space": "l2", "ef_search": 10}},
+        metadata={
+            "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
+            "embedding_pipeline_complete": True,
+        },
+    )
+    store._pipeline_status_cache = None
+
+    rng = np.random.default_rng(42)
+    embeddings = rng.normal(size=(80, 512)).astype(np.float32)
+    embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True)
+    store.collection.add(
+        ids=[f"face_{index}" for index in range(len(embeddings))],
+        embeddings=embeddings.tolist(),
+        metadatas=[
+            {"face_id": f"face_{index}", "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION}
+            for index in range(len(embeddings))
+        ],
+    )
+
+    store.search_similar_faces(embeddings[0], n_results=20, min_similarity=0.0)
+
+    assert store.collection.configuration["hnsw"]["ef_search"] >= 60
+
+
 def test_reprocessing_the_same_image_is_idempotent(tmp_path):
     store = FaceVectorStore(
         db_path=str(tmp_path / "vectors"), collection_name="idempotent"

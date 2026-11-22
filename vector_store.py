@@ -381,6 +381,11 @@ class FaceVectorStore:
                 or collection_configuration.get("spann")
                 or {}
             )
+            index_type = (
+                "hnsw" if collection_configuration.get("hnsw")
+                else "spann" if collection_configuration.get("spann")
+                else None
+            )
             distance_space = str(
                 index_configuration.get("space")
                 or collection_metadata.get("hnsw:space")
@@ -393,6 +398,28 @@ class FaceVectorStore:
             # Trade a little recall for a lot of speed: the old code asked for
             # up to 20,000 neighbours including their embeddings.
             search_n = int(min(max(n_results * 3, 50), 500, collection_size))
+
+            # HNSW's default ef_search is 100. Requests for larger candidate
+            # sets can otherwise return fewer useful neighbors than requested,
+            # lowering recall on large indexes. Increase the per-collection
+            # search breadth only when needed, and never lower an existing value.
+            target_search_ef = min(search_n, collection_size)
+            current_search_ef = int(index_configuration.get("ef_search", 100))
+            if index_type and target_search_ef > current_search_ef:
+                updates = {"ef_search": target_search_ef}
+                if index_type == "spann":
+                    current_probe = int(index_configuration.get("search_nprobe", 1))
+                    if target_search_ef > current_probe:
+                        updates["search_nprobe"] = target_search_ef
+                try:
+                    self.collection.modify(configuration={index_type: updates})
+                except Exception as exc:  # noqa: BLE001 - still run search with persisted settings
+                    logger.warning(
+                        "Could not raise Chroma %s search breadth to %d: %s",
+                        index_type,
+                        target_search_ef,
+                        exc,
+                    )
 
             results = self.collection.query(
                 query_embeddings=[query_list.tolist()],
