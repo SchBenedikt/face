@@ -106,7 +106,10 @@ class FaceRecognitionEngine:
                     )
                 face_locations = face_recognition.face_locations(
                     image, 
-                    number_of_times_to_upsample=0,  # Reduced for speed (was 1)
+                    # Upsampling recovers smaller faces that are commonly missed
+                    # in full-resolution family/group photos. The old value (0)
+                    # traded too much recall for a small speed gain.
+                    number_of_times_to_upsample=1,
                     model=self.detection_model
                 )
                 if face_locations:
@@ -120,8 +123,11 @@ class FaceRecognitionEngine:
                 gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
                 faces = self.face_cascade.detectMultiScale(
                     gray,
-                    scaleFactor=1.2,  # Slightly larger steps for speed (was 1.1)
-                    minNeighbors=4,   # Reduced for speed (was 5)
+                    # Haar is only a fallback when the configured detector is
+                    # unavailable. Use stricter settings here because loose
+                    # cascades frequently label textures and objects as faces.
+                    scaleFactor=1.1,
+                    minNeighbors=6,
                     minSize=MIN_FACE_SIZE,
                     flags=cv2.CASCADE_SCALE_IMAGE
                 )
@@ -155,10 +161,12 @@ class FaceRecognitionEngine:
             
             for top, right, bottom, left in face_locations:
                 # Ensure coordinates are within image bounds
-                top = max(0, min(height-1, top))
-                bottom = max(0, min(height-1, bottom))
-                left = max(0, min(width-1, left))
-                right = max(0, min(width-1, right))
+                # Face boxes use an exclusive bottom/right edge, so the image
+                # dimensions themselves are valid upper bounds.
+                top = max(0, min(height, top))
+                bottom = max(0, min(height, bottom))
+                left = max(0, min(width, left))
+                right = max(0, min(width, right))
                 
                 # Calculate face dimensions
                 face_width = right - left
@@ -166,8 +174,10 @@ class FaceRecognitionEngine:
                 
                 # Apply size constraints
                 if (face_width >= MIN_FACE_SIZE[0] and face_height >= MIN_FACE_SIZE[1]):
-                    # Filter out faces that are too large (likely false positives)
-                    if face_width < width * 0.8 and face_height < height * 0.8:
+                    # Keep close-up portraits; only reject a detector result
+                    # that spans almost the entire image, which is usually a
+                    # failed cascade detection rather than a face crop.
+                    if face_width < width * 0.98 and face_height < height * 0.98:
                         valid_faces.append((top, right, bottom, left))
                     else:
                         logger.debug(f"Filtered out oversized face: {face_width}x{face_height}")
@@ -223,8 +233,17 @@ class FaceRecognitionEngine:
             except Exception as model_e:
                 logger.debug(f"Primary model {self.primary_model} failed: {model_e}")
             
-            # Fallback to face_recognition library (faster than DeepFace ensemble)
-            return self._extract_fallback_embedding(face_image)
+            # Never mix embeddings from different recognition models. The
+            # face_recognition fallback produces 128-dimensional dlib vectors,
+            # while the index normally contains Facenet512 (512 dimensions).
+            # Mixing them makes Chroma writes/searches fail or compares
+            # incompatible feature spaces. Report extraction failure instead.
+            logger.warning(
+                "Embedding extraction failed for the configured model %s; "
+                "skipping this face rather than creating an incompatible vector",
+                self.primary_model,
+            )
+            return None
                 
         except Exception as e:
             logger.error(f"Error extracting face embedding: {e}")

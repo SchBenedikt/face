@@ -100,14 +100,18 @@ class FaceVectorStore:
             True if successful, False otherwise
         """
         try:
-            # Convert embedding to list for ChromaDB
-            embedding_list = embedding.tolist()
+            # Chroma uses squared L2 distance by default, so all stored and
+            # queried vectors must be unit length for cosine scoring to hold.
+            vector = normalise_embedding(embedding)
+            if vector.size == 0 or not np.all(np.isfinite(vector)) or not np.any(vector):
+                raise ValueError("Embedding must be a finite, non-zero vector")
+            embedding_list = vector.tolist()
             
             # Add metadata
             full_metadata = {
                 **metadata,
                 "added_at": datetime.now().isoformat(),
-                "embedding_dimension": len(embedding)
+                "embedding_dimension": len(vector)
             }
             
             # Add or replace the row; re-adding a face must not fail.
@@ -143,16 +147,24 @@ class FaceVectorStore:
             if len(face_ids) != len(embeddings) or len(face_ids) != len(metadatas):
                 raise ValueError("Lists must have the same length")
             
-            # Convert embeddings to lists
-            embedding_lists = [emb.tolist() for emb in embeddings]
+            vectors = [normalise_embedding(embedding) for embedding in embeddings]
+            if any(
+                vector.size == 0 or not np.all(np.isfinite(vector)) or not np.any(vector)
+                for vector in vectors
+            ):
+                raise ValueError("Embeddings must be finite, non-zero vectors")
+            dimensions = {int(vector.size) for vector in vectors}
+            if len(dimensions) != 1:
+                raise ValueError("All embeddings in a batch must have the same dimension")
+            embedding_lists = [vector.tolist() for vector in vectors]
             
             # Add metadata
             full_metadatas = []
-            for metadata in metadatas:
+            for metadata, vector in zip(metadatas, vectors):
                 full_metadata = {
                     **metadata,
                     "added_at": datetime.now().isoformat(),
-                    "embedding_dimension": len(embeddings[0])
+                    "embedding_dimension": int(vector.size)
                 }
                 full_metadatas.append(full_metadata)
             
