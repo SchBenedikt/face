@@ -513,7 +513,7 @@ def face_search_page():
                     value=float(query_settings["similarity_threshold"]),
                     step=0.05,
                     key="face_search_similarity_threshold",
-                    help="Cosine-Ähnlichkeit, keine Match-Wahrscheinlichkeit. 0,60 ist ein Startwert aus einer LFW-Retrieval-Stichprobe; High Precision erhöht ihn auf 0,75."
+                    help="Cosine-Ähnlichkeit, keine Match-Wahrscheinlichkeit. 0,65 ist ein konservativer Startwert aus einer LFW-Stichprobe; High Precision erhöht ihn auf 0,80."
                 )
                 
                 # Similarity filter (the old labels called this "quality")

@@ -42,7 +42,7 @@ MAX_FACE_SIZE = (None, None)  # Keine Begrenzung für Gesichtsgröße - maximale
 # Vector database settings
 VECTOR_DB_PATH = str(DATA_DIR / "face_vectors.db")
 COLLECTION_NAME = "face_embeddings"
-SIMILARITY_THRESHOLD = 0.60  # Lower false accepts on a labeled LFW retrieval sample; calibrate per collection
+SIMILARITY_THRESHOLD = 0.65  # Fewer false accepts in the labeled LFW sample; calibrate per collection
 
 # Identity grouping. Facenet512 uses a cosine verification threshold around
 # 0.70 (DeepFace's 0.30 cosine distance); 0.68 is slightly more permissive and

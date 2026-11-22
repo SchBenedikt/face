@@ -86,7 +86,7 @@ The application provides local face search over images you choose to index:
 - **Facial Recognition**: Facenet512 embeddings with RetinaFace-first detection and aligned face crops
 - **Attribute Detection**: Age, gender, emotion, ethnicity analysis
 - **Search Scores**: Cosine similarity is shown as a ranking score, not a match probability
-- **Search Threshold**: Defaults to 0.60 cosine similarity; High Precision adds 0.15 and High Recall subtracts 0.10
+- **Search Threshold**: Defaults to 0.65 cosine similarity; High Precision adds 0.15 and High Recall subtracts 0.10
 
 ### ⚡ **High-Performance Processing**
 - **Batch Processing**: Process image directories in configurable batches
@@ -113,7 +113,7 @@ The application provides local face search over images you choose to index:
 - Face crops from DeepFace detectors are aligned and reused for both embedding extraction and the result preview.
 - The active recognition pipeline extracts one 512-dimensional Facenet512 embedding per detected face. Model candidates and ensemble helpers elsewhere in the code are legacy configuration; search does not combine four models.
 - Embeddings are unit-normalized and stored in the local ChromaDB collection. Search converts ChromaDB distances to cosine similarity and ranks indexed images.
-- The default search threshold is 0.60 cosine similarity. In an identity-balanced LFW retrieval sample (300 images, 62 identities, four to five images per identity), 299 images produced embeddings; both exhaustive cosine ranking and the app's ChromaDB/HNSW path ranked the correct identity first for 99.3% of queries and in the top five for all queries. On this 299-vector index, the ChromaDB build and 299 queries took 3.16 seconds. At threshold 0.50, 92.2% of same-identity pairs passed and 1.15% of different-identity pairs also passed; at 0.60, same-identity recall was 81.6% and different-identity false accepts were 0.14%. This threshold favors fewer false matches over maximum recall. In a separate sample of 200 same-person and 200 different-person pairs from full 250×250 LFW test images (seed 42), threshold 0.50 retrieved 185/200 same-person pairs and accepted 0/200 different-person pairs after selecting the largest detected face. The detector returned multiple boxes for 132/719 full images; visual inspection of six examples found those boxes around distinct visible people, not duplicate boxes. These are diagnostic samples, not the official cross-validated LFW benchmark or general accuracy claims. Evaluate on a representative labeled collection.
+- The default search threshold is 0.65 cosine similarity. In an identity-balanced LFW retrieval sample (300 images, 62 identities, four to five images per identity), 299 images produced embeddings; both exhaustive cosine ranking and the app's ChromaDB/HNSW path ranked the correct identity first for 99.3% of queries and in the top five for all queries. On this 299-vector index, the ChromaDB build and 299 queries took 2.54 seconds. At threshold 0.50, 92.2% of same-identity pairs passed and 1.15% of different-identity pairs also passed; at 0.60, same-identity recall was 81.6% and different-identity false accepts were 0.14%; at 0.65, recall was 72.4% and false accepts were 0.045%. The 0.65 default trades some recall for fewer false matches. These are pair rates from a diagnostic sample, not match probabilities or general accuracy guarantees. In a separate sample of 200 same-person and 200 different-person pairs from full 250×250 LFW test images (seed 42), threshold 0.50 retrieved 185/200 same-person pairs and accepted 0/200 different-person pairs after selecting the largest detected face. The detector returned multiple boxes for 132/719 full images; visual inspection of six examples found those boxes around distinct visible people, not duplicate boxes. These are not the official cross-validated LFW benchmark. Evaluate on a representative labeled collection.
 - To repeat the retrieval measurement, install optional `scikit-learn` and run `.venv/bin/python evaluate_face_search.py --lfw-people --max-images 300 --seed 42`. To repeat the pair measurement, run `.venv/bin/python evaluate_lfw_pairs.py --pairs-per-class 200`. LFW downloads are cached outside the repository.
 - Search covers only images indexed in this application's database; it does not search the public web.
 
@@ -185,7 +185,7 @@ To remove detected image-file duplicates after review, add `--clean`. This clean
 
 ### Settings and data location
 
-`config.py` defines the active detector order, Facenet512 model, default search threshold (0.60), and ChromaDB path. `FACE_DATA_DIR` relocates the images and database together. The CLI batch processor handles `IMAGES_DIR`; use the app's batch page to update additional directories.
+`config.py` defines the active detector order, Facenet512 model, default search threshold (0.65), and ChromaDB path. `FACE_DATA_DIR` relocates the images and database together. The CLI batch processor handles `IMAGES_DIR`; use the app's batch page to update additional directories.
 
 ## 🎯 Use Cases
 

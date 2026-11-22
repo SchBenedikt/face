@@ -494,7 +494,7 @@ class FaceVectorStore:
 
             similar_faces.sort(key=lambda face: face['similarity'], reverse=True)
             top_score = similar_faces[0]['similarity_percentage'] if similar_faces else 0.0
-            logger.info(
+            logger.debug(
                 f"Found {len(similar_faces)} similar faces above {min_similarity:.2f} "
                 f"(top: {top_score:.1f}%)"
             )
