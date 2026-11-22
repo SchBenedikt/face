@@ -114,3 +114,38 @@ def test_invalid_primary_detection_does_not_block_deepface_fallback(monkeypatch)
     monkeypatch.setattr(face_recognition_engine, "DeepFace", FakeDeepFace)
 
     assert engine.detect_faces(image) == [(25, 85, 83, 30)]
+
+
+def test_deepface_edge_face_keeps_its_aligned_crop(monkeypatch):
+    engine = FaceRecognitionEngine()
+    image = np.zeros((100, 100, 3), dtype=np.uint8)
+    aligned_crop = np.full((64, 64, 3), 211, dtype=np.uint8)
+
+    class FakeFaceRecognition:
+        @staticmethod
+        def face_locations(image, number_of_times_to_upsample=0, model="hog"):
+            return []
+
+    class FakeDeepFace:
+        @staticmethod
+        def extract_faces(**kwargs):
+            return [{
+                "facial_area": {"x": -5, "y": -4, "w": 50, "h": 55},
+                "confidence": 0.99,
+                "face": aligned_crop,
+            }]
+
+    monkeypatch.setattr(face_recognition_engine, "face_recognition", FakeFaceRecognition)
+    monkeypatch.setattr(face_recognition_engine, "DeepFace", FakeDeepFace)
+    captured = {}
+
+    def capture_embedding(face_image, model_name):
+        captured["face_image"] = face_image.copy()
+        return np.ones(512, dtype=np.float32)
+
+    monkeypatch.setattr(engine, "_extract_single_model_embedding", capture_embedding)
+    locations = engine.detect_faces(image)
+
+    assert locations == [(0, 45, 51, 0)]
+    assert engine.extract_face_embedding(image, locations[0]) is not None
+    np.testing.assert_array_equal(captured["face_image"], aligned_crop)

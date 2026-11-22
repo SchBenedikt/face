@@ -134,11 +134,19 @@ class FaceRecognitionEngine:
                 valid_locations = self._filter_valid_faces(candidate_locations, image.shape[:2])
                 if valid_locations:
                     valid_set = set(valid_locations)
-                    crops = {
-                        location: crop
-                        for location, crop in deepface_faces
-                        if crop is not None and location in valid_set
-                    }
+                    crops = {}
+                    for location, crop in deepface_faces:
+                        if crop is None:
+                            continue
+                        # Filtering clamps boxes that cross an image edge.
+                        # Associate the aligned crop with that same clamped
+                        # location, or embeddings silently fall back to a raw
+                        # (unaligned) slice for edge faces.
+                        normalized = self._filter_valid_faces(
+                            [location], image.shape[:2]
+                        )
+                        if normalized and normalized[0] in valid_set:
+                            crops[normalized[0]] = crop
                     if crops:
                         self._remember_aligned_face_crops(image, crops)
                     return valid_locations
