@@ -137,11 +137,25 @@ assert not exceptions(at), exceptions(at)
 next(button for button in at.button if "Analyze Image for Faces" in button.label).click().run()
 assert not exceptions(at), exceptions(at)
 assert at.session_state["detected_faces"], "query image yielded no faces"
+# Search controls remain live after face detection; changing the cap before
+# selecting a face must affect that search rather than the earlier analysis.
+next(slider for slider in at.slider if "Maximum Results" in slider.label).set_value(1).run()
+assert not exceptions(at), exceptions(at)
 next(button for button in at.button if "Nach Gesicht 1 suchen" in button.label).click().run()
 assert not exceptions(at), exceptions(at)
 
 results = at.session_state["search_results"]
 assert results, "similarity search returned no results"
+assert len(results) <= 1, f"updated result cap was ignored: {{len(results)}}"
+# The threshold is also read at search time, after face detection. Re-search
+# with a stricter threshold and prove every returned score honors it.
+next(slider for slider in at.slider if "Maximum Results" in slider.label).set_value(200).run()
+next(slider for slider in at.slider if "Similarity Threshold" in slider.label).set_value(0.99).run()
+next(button for button in at.button if "Nach Gesicht 1 suchen" in button.label).click().run()
+assert not exceptions(at), exceptions(at)
+results = at.session_state["search_results"]
+assert results, "updated similarity threshold removed the identical image"
+assert all(result["similarity"] >= 0.99 for result in results), results
 assert results[0]["similarity"] > 0.99, results[0]["similarity"]
 assert any("Enhanced Search Results" in value for value in texts(at, "subheader")), texts(at, "subheader")
 print("SEARCH_RESULTS:", len(results))

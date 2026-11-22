@@ -490,6 +490,7 @@ def face_search_page():
                     min_value=1, 
                     max_value=200, 
                     value=int(query_settings["max_results"]),
+                    key="face_search_max_results",
                     help="Maximum number of similar faces to return"
                 )
                 
@@ -499,6 +500,7 @@ def face_search_page():
                     max_value=1.0, 
                     value=float(query_settings["similarity_threshold"]),
                     step=0.05,
+                    key="face_search_similarity_threshold",
                     help="Mindestähnlichkeit für Suchergebnisse. Höhere Werte liefern weniger, dafür engere Treffer."
                 )
                 
@@ -507,6 +509,7 @@ def face_search_page():
                     "🎯 Similarity Filter",
                     ["All Matches", "Strong Matches (≥70%)", "Medium+ Matches (≥40%)", "Weak Matches (≥30%)"],
                     index=0,
+                    key="face_search_quality_filter",
                     help="Blendet Treffer unterhalb der gewählten Ähnlichkeit aus"
                 )
             
@@ -517,6 +520,7 @@ def face_search_page():
                     min_value=20,
                     max_value=200,
                     value=30,
+                    key="face_search_min_face_size",
                     help="Kleine Gesichter können echte Treffer sein. Erhöhe den Wert, wenn kleine Fehlalarme stören."
                 )
                 
@@ -525,6 +529,7 @@ def face_search_page():
                     "🎯 Search Mode",
                     ["Balanced", "High Precision", "High Recall"],
                     index=0,
+                    key="face_search_mode",
                     help="Balanced: Normal results | Precision: Fewer but better matches | Recall: More results, some false positives"
                 )
                 
@@ -533,6 +538,7 @@ def face_search_page():
                     "📊 Sort Results By",
                     ["Similarity Score", "Face Size", "Date Added", "File Name"],
                     index=0,
+                    key="face_search_sort_by",
                     help="Order search results by different criteria"
                 )
             
@@ -541,6 +547,7 @@ def face_search_page():
                 aspect_ratio_filter = st.checkbox(
                     "Filter Extreme Aspect Ratios",
                     value=True,
+                    key="face_search_aspect_ratio_filter",
                     help="Remove faces with unusual width/height ratios (often false positives)"
                 )
             
@@ -728,16 +735,30 @@ def search_with_selected_face_enhanced(face_index: int):
     detected_data = st.session_state.detected_faces
     face_locations = detected_data['face_locations']
     query_image = detected_data['query_image']
-    max_results = detected_data['max_results']
-    similarity_threshold = detected_data['similarity_threshold']
+    max_results = int(st.session_state.get(
+        'face_search_max_results', detected_data['max_results']
+    ))
+    similarity_threshold = float(st.session_state.get(
+        'face_search_similarity_threshold', detected_data['similarity_threshold']
+    ))
     
     # Get advanced search parameters from session state
     search_params = {
-        'quality_filter': st.session_state.get('quality_filter', 'All Matches'),
-        'min_face_size': st.session_state.get('min_face_size', 30),
-        'search_mode': st.session_state.get('search_mode', 'Balanced'),
-        'sort_by': st.session_state.get('sort_by', 'Similarity Score'),
-        'aspect_ratio_filter': st.session_state.get('aspect_ratio_filter', True),
+        'quality_filter': st.session_state.get(
+            'face_search_quality_filter', st.session_state.get('quality_filter', 'All Matches')
+        ),
+        'min_face_size': int(st.session_state.get(
+            'face_search_min_face_size', st.session_state.get('min_face_size', 30)
+        )),
+        'search_mode': st.session_state.get(
+            'face_search_mode', st.session_state.get('search_mode', 'Balanced')
+        ),
+        'sort_by': st.session_state.get(
+            'face_search_sort_by', st.session_state.get('sort_by', 'Similarity Score')
+        ),
+        'aspect_ratio_filter': st.session_state.get(
+            'face_search_aspect_ratio_filter', st.session_state.get('aspect_ratio_filter', True)
+        ),
     }
     
     selected_face_location = face_locations[face_index]
@@ -895,8 +916,12 @@ def search_with_selected_face(face_index: int):
     detected_data = st.session_state.detected_faces
     face_locations = detected_data['face_locations']
     query_image = detected_data['query_image']
-    max_results = detected_data['max_results']
-    similarity_threshold = detected_data['similarity_threshold']
+    max_results = int(st.session_state.get(
+        'face_search_max_results', detected_data['max_results']
+    ))
+    similarity_threshold = float(st.session_state.get(
+        'face_search_similarity_threshold', detected_data['similarity_threshold']
+    ))
     
     selected_face_location = face_locations[face_index]
     
