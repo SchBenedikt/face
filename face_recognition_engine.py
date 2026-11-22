@@ -131,7 +131,13 @@ class FaceRecognitionEngine:
             deepface_faces = self._detect_faces_with_deepface(image)
             if deepface_faces:
                 candidate_locations = [location for location, _ in deepface_faces]
-                valid_locations = self._filter_valid_faces(candidate_locations, image.shape[:2])
+                # Trusted landmark detectors can correctly return a box that
+                # fills a tightly cropped portrait. The generic full-frame
+                # guard is still applied to dlib/Haar, where such boxes are
+                # more often failed detections.
+                valid_locations = self._filter_valid_faces(
+                    candidate_locations, image.shape[:2], allow_full_frame=True
+                )
                 if valid_locations:
                     valid_set = set(valid_locations)
                     crops = {}
@@ -143,7 +149,7 @@ class FaceRecognitionEngine:
                         # location, or embeddings silently fall back to a raw
                         # (unaligned) slice for edge faces.
                         normalized = self._filter_valid_faces(
-                            [location], image.shape[:2]
+                            [location], image.shape[:2], allow_full_frame=True
                         )
                         if normalized and normalized[0] in valid_set:
                             crops[normalized[0]] = crop
@@ -220,7 +226,10 @@ class FaceRecognitionEngine:
                 for detection in detections or []:
                     area = detection.get("facial_area") or {}
                     confidence = float(detection.get("confidence") or 0.0)
-                    if confidence and confidence < 0.65:
+                    # DeepFace returns the entire image as a fallback box when
+                    # a backend finds no face and detection is not enforced.
+                    # A missing/zero confidence is not a real detection.
+                    if not np.isfinite(confidence) or confidence < 0.65:
                         continue
                     x, y = int(area.get("x", 0)), int(area.get("y", 0))
                     width, height = int(area.get("w", 0)), int(area.get("h", 0))
@@ -267,7 +276,12 @@ class FaceRecognitionEngine:
             self._aligned_face_crops.move_to_end(image_key)
             return cached[1].get(tuple(location))
     
-    def _filter_valid_faces(self, face_locations: List[Tuple[int, int, int, int]], image_shape: Tuple[int, int]) -> List[Tuple[int, int, int, int]]:
+    def _filter_valid_faces(
+        self,
+        face_locations: List[Tuple[int, int, int, int]],
+        image_shape: Tuple[int, int],
+        allow_full_frame: bool = False,
+    ) -> List[Tuple[int, int, int, int]]:
         """
         Filter face detections based on size and position constraints
         """
@@ -290,10 +304,12 @@ class FaceRecognitionEngine:
                 
                 # Apply size constraints
                 if (face_width >= MIN_FACE_SIZE[0] and face_height >= MIN_FACE_SIZE[1]):
-                    # Keep close-up portraits; only reject a detector result
-                    # that spans almost the entire image, which is usually a
-                    # failed cascade detection rather than a face crop.
-                    if face_width < width * 0.98 and face_height < height * 0.98:
+                    # Keep close-up portraits; the generic dlib/Haar path
+                    # rejects boxes spanning almost the whole image, while
+                    # confidence-filtered DeepFace boxes may legitimately do so.
+                    if allow_full_frame or (
+                        face_width < width * 0.98 and face_height < height * 0.98
+                    ):
                         valid_faces.append((top, right, bottom, left))
                     else:
                         logger.debug(f"Filtered out oversized face: {face_width}x{face_height}")

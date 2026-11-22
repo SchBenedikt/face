@@ -4,7 +4,8 @@
 
 ### 🔍 **Face Search**
 - Upload reference image with face detection
-- Similarity search in database with adjustable threshold
+- Facenet512 embedding search with adjustable cosine-distance threshold (default: 0.70)
+- Trefferwerte zeigen Cosine-Ähnlichkeit, keine Match-Wahrscheinlichkeit
 - Multi-face detection with selection interface
 - Full-screen view with highlighted face
 - Detailed facial analysis (age, gender, emotions, ethnicity)
@@ -29,7 +30,7 @@
 
 ### 🧩 **Personengruppen** - NEU!
 - Gruppiert unbenannte Gesichter anhand ihrer Embeddings (Cosine-Ähnlichkeit)
-- Standard-Schwelle 0,68 (Facenet512); im UI zwischen 0,50 und 0,90 einstellbar
+- Standard-Schwelle 0,68 Cosine-Ähnlichkeit (Facenet512); im UI einstellbar
 - Zeigt Gruppen mit Vorschaubildern, Gruppengröße und durchschnittlicher Ähnlichkeit
 - Schlägt eine passende bestehende Person vor, ändert aber nichts ohne Bestätigung
 - Weist eine bestätigte Gruppe gesammelt einer neuen oder bestehenden Person zu
@@ -44,7 +45,7 @@
 ### 🏷️ **Person Namen System** - NEU!
 - **Eindeutige Person IDs**: Jede Person wird intern über eine UUID identifiziert
 - **Vor- und Nachname**: Separate Eingabefelder für strukturierte Namensvergabe
-- **Automatische Namensverbreitung**: Gesichter ab etwa 68% Cosine-Ähnlichkeit (Facenet512) erhalten den gleichen Namen; bei ähnlichen Treffern zu einer anderen benannten Person wird nichts zugewiesen
+- **Automatische Namensverbreitung**: Gesichter ab etwa 0,68 Cosine-Ähnlichkeit (Facenet512) erhalten den gleichen Namen; bei ähnlichen Treffern zu einer anderen benannten Person wird nichts zugewiesen
 - **Namen-Verwaltung**: Namen können jederzeit entfernt oder geändert werden
 - **Such-Integration**: Namen werden in Face Search und Gallery angezeigt
 
@@ -63,7 +64,7 @@
 2. Klicken Sie bei einem Gesicht auf **"🏷️ Namen zuweisen"**
 3. Geben Sie Vor- und Nachname in separate Felder ein
 4. Klicken Sie **"💾 Namen speichern"**
-5. Ähnliche Gesichter (Standard: ≥68% Cosine) erhalten automatisch denselben Namen
+5. Ähnliche Gesichter (Standard: ≥0,68 Cosine) erhalten automatisch denselben Namen
 
 ### Namen verwalten:
 1. Gehen Sie zur **🏷️ Name Gallery**

@@ -84,10 +84,10 @@ This isn't just another face recognition tool. It's a **comprehensive facial int
 - **Real-time Filtering**: Dynamic result filtering by similarity, size, quality
 
 ### 🧠 **AI-Powered Analysis**
-- **Facial Recognition**: State-of-the-art embedding extraction using ensemble methods
+- **Facial Recognition**: Facenet512 embeddings with RetinaFace-first detection and aligned face crops
 - **Attribute Detection**: Age, gender, emotion, ethnicity analysis
-- **Quality Assessment**: Automatic image quality scoring and enhancement
-- **Confidence Metrics**: Reliability scores for all detections and predictions
+- **Search Scores**: Cosine similarity is shown as a ranking score, not a match probability
+- **Search Threshold**: Defaults to 0.70 cosine similarity; adjust it to trade precision for recall
 
 ### ⚡ **High-Performance Processing**
 - **Batch Processing**: Handle multiple images efficiently with multi-threading
