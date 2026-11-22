@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Evaluate face retrieval on a labeled directory tree.
 
-Expected layout: one subdirectory per identity, containing images that each
-show exactly one person. The benchmark reports measurements for this dataset;
-it does not claim those measurements generalize to other collections.
+Expected layout: one subdirectory per identity, containing images whose main
+face belongs to that identity. When an image has multiple detections, the
+largest face is evaluated. Results describe this dataset, not other collections.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import tempfile
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -89,10 +90,16 @@ def evaluate(
             if not locations:
                 counts["no_face"] += 1
                 continue
-            if len(locations) != 1:
+            if len(locations) > 1:
                 counts["multiple_faces"] += 1
-                continue
-            embedding = engine.extract_face_embedding(image, locations[0])
+            # Each directory is labeled as one identity, so measure retrieval
+            # for its most prominent detected face. Keep multi-face coverage
+            # visible in the report instead of silently dropping those images.
+            location = max(
+                locations,
+                key=lambda box: max(0, box[1] - box[3]) * max(0, box[2] - box[0]),
+            )
+            embedding = engine.extract_face_embedding(image, location)
             if embedding is None:
                 counts["embedding_errors"] += 1
                 continue
@@ -124,6 +131,10 @@ def evaluate(
     queries = 0
     top1_hits = 0
     top5_hits = 0
+    ann_top1_hits = 0
+    ann_top5_hits = 0
+    ann_queries = 0
+    ann_index_seconds = 0.0
     for query_index, identity in enumerate(labels):
         candidates = scores[query_index].copy()
         candidates[query_index] = -np.inf
@@ -135,6 +146,37 @@ def evaluate(
         ranked_labels = label_array[candidate_indices]
         top1_hits += int(ranked_labels[0] == identity)
         top5_hits += int(np.any(ranked_labels == identity))
+
+    # Check the application's actual ChromaDB/HNSW retrieval path as well as
+    # exhaustive cosine ranking. Exclude each query's own indexed vector and
+    # compare the next five returned neighbors with its identity label.
+    from vector_store import FaceVectorStore
+
+    ann_started = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="face-search-index-") as temporary_index:
+        store = FaceVectorStore(db_path=temporary_index)
+        face_ids = [f"benchmark_face_{index}" for index in range(len(vectors))]
+        metadatas = [
+            {"image_path": str(index), "identity": identity}
+            for index, identity in enumerate(labels)
+        ]
+        written = store.add_face_embeddings_batch(face_ids, vectors, metadatas)
+        if written != len(vectors):
+            raise RuntimeError(f"Could not index benchmark vectors: wrote {written}/{len(vectors)}")
+
+        for query_index, identity in enumerate(labels):
+            hits = store.search_similar_faces(
+                vectors[query_index], n_results=6, min_similarity=0.0
+            )
+            neighbors = [hit for hit in hits if hit["face_id"] != face_ids[query_index]][:5]
+            if not neighbors:
+                continue
+            ann_queries += 1
+            neighbor_labels = [hit["metadata"].get("identity") for hit in neighbors]
+            ann_top1_hits += int(neighbor_labels[0] == identity)
+            ann_top5_hits += int(identity in neighbor_labels)
+        del store
+    ann_index_seconds = round(time.monotonic() - ann_started, 2)
 
     pair_metrics = []
     for threshold in thresholds:
@@ -154,6 +196,10 @@ def evaluate(
         "queries": queries,
         "top1": top1_hits / queries if queries else None,
         "top5": top5_hits / queries if queries else None,
+        "ann_queries": ann_queries,
+        "chroma_top1": ann_top1_hits / ann_queries if ann_queries else None,
+        "chroma_top5": ann_top5_hits / ann_queries if ann_queries else None,
+        "chroma_index_and_query_seconds": ann_index_seconds,
         "same_identity_pairs": int(len(same_scores)),
         "different_identity_pairs": int(len(different_scores)),
         "same_identity_median_cosine": float(np.median(same_scores)) if len(same_scores) else None,
@@ -162,11 +208,75 @@ def evaluate(
     }
 
 
+def evaluate_lfw_people(
+    max_images: int = 300,
+    seed: int = 42,
+    data_home: Path | None = None,
+    min_faces_per_person: int = 20,
+    thresholds: tuple[float, ...] = (0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7),
+) -> dict[str, Any]:
+    """Run closed-set retrieval on a reproducible LFW people subset."""
+    try:
+        from sklearn.datasets import fetch_lfw_people
+    except ImportError as exc:
+        raise RuntimeError("Install scikit-learn to run this benchmark: pip install scikit-learn") from exc
+
+    from PIL import Image
+
+    cache_path = data_home or Path.home() / ".cache" / "face-search" / "lfw"
+    data = fetch_lfw_people(
+        data_home=str(cache_path),
+        funneled=True,
+        resize=1.0,
+        color=True,
+        min_faces_per_person=min_faces_per_person,
+    )
+    by_identity = {
+        name: np.flatnonzero(data.target == index).tolist()
+        for index, name in enumerate(data.target_names)
+    }
+    selected = _select_images(by_identity, max_images, seed)
+
+    # Reuse the directory evaluator as the single implementation of face
+    # detection, ranking, and pair metrics. Generated images are temporary.
+    with tempfile.TemporaryDirectory(prefix="face-lfw-retrieval-") as temporary:
+        root = Path(temporary)
+        sampled_count = 0
+        for identity, indices in selected.items():
+            identity_dir = root / identity
+            identity_dir.mkdir(parents=True, exist_ok=True)
+            for image_index, dataset_index in enumerate(indices):
+                image = np.asarray(data.images[dataset_index])
+                if np.issubdtype(image.dtype, np.floating) and image.size and np.nanmax(image) <= 1.0:
+                    image = image * 255.0
+                image = np.clip(image, 0, 255).astype(np.uint8)
+                Image.fromarray(image).save(identity_dir / f"{image_index:04d}.jpg", quality=95)
+                sampled_count += 1
+
+        result = evaluate(root, max_images=0, seed=seed, thresholds=thresholds)
+
+    result.update({
+        "dataset": "LFW people retrieval sample",
+        "seed": seed,
+        "min_faces_per_person": min_faces_per_person,
+        "sampled_images": sampled_count,
+        "sampled_identities": len(selected),
+    })
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("dataset", type=Path, help="Root directory with one identity subdirectory per person")
+    parser.add_argument("dataset", type=Path, nargs="?",
+                        help="Root directory with one identity subdirectory per person")
+    parser.add_argument("--lfw-people", action="store_true",
+                        help="Download and evaluate a reproducible LFW people sample")
+    parser.add_argument("--data-home", type=Path,
+                        help="External LFW download cache (default: ~/.cache/face-search/lfw)")
+    parser.add_argument("--min-faces-per-person", type=int, default=20,
+                        help="LFW identity inclusion minimum when using --lfw-people (default: 20)")
     parser.add_argument("--max-images", type=int, default=2000,
-                        help="Balanced image cap for the pairwise comparison (0 means no cap; default: 2000)")
+                        help="Balanced image cap for retrieval and pair metrics (0 means no cap; default: 2000)")
     parser.add_argument("--seed", type=int, default=42, help="Subset selection seed")
     parser.add_argument("--thresholds", default="0.3,0.5,0.7,0.8",
                         help="Comma-separated cosine thresholds (default: 0.3,0.5,0.7,0.8)")
@@ -175,8 +285,20 @@ def main() -> int:
         thresholds = tuple(float(value) for value in args.thresholds.split(","))
         if any(not 0.0 <= value <= 1.0 for value in thresholds):
             raise ValueError("thresholds must be between 0 and 1")
-        result = evaluate(args.dataset, args.max_images, args.seed, thresholds)
-    except (ValueError, OSError) as exc:
+        if args.lfw_people:
+            if args.dataset is not None:
+                raise ValueError("Do not pass a dataset directory together with --lfw-people")
+            if args.min_faces_per_person < 1:
+                raise ValueError("--min-faces-per-person must be at least 1")
+            result = evaluate_lfw_people(
+                args.max_images, args.seed, args.data_home,
+                args.min_faces_per_person, thresholds,
+            )
+        else:
+            if args.dataset is None:
+                raise ValueError("Provide a labeled dataset directory or use --lfw-people")
+            result = evaluate(args.dataset, args.max_images, args.seed, thresholds)
+    except (RuntimeError, ValueError, OSError) as exc:
         parser.error(str(exc))
     print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False))
     return 0
