@@ -28,9 +28,9 @@ from config import (
 )
 from face_grouping import centroid_of, group_embeddings
 from similarity import (
-    cosine_from_chroma_l2_distance,
+    cosine_from_chroma_distance,
     normalise_embedding,
-    similarity_from_chroma_l2_distance,
+    similarity_from_chroma_distance,
 )
 
 # Additional telemetry suppression after imports
@@ -80,6 +80,7 @@ class FaceVectorStore:
         except Exception:
             self.collection = self.client.create_collection(
                 name=collection_name,
+                configuration={"hnsw": {"space": "l2"}},
                 metadata={
                     "description": "Face embeddings for similarity search",
                     "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
@@ -373,6 +374,22 @@ class FaceVectorStore:
                 )
                 return []
 
+            collection_metadata = dict(self.collection.metadata or {})
+            collection_configuration = getattr(self.collection, "configuration", {}) or {}
+            index_configuration = (
+                collection_configuration.get("hnsw")
+                or collection_configuration.get("spann")
+                or {}
+            )
+            distance_space = str(
+                index_configuration.get("space")
+                or collection_metadata.get("hnsw:space")
+                or "l2"
+            ).lower()
+            if distance_space not in {"l2", "cosine", "ip"}:
+                logger.error("Unsupported Chroma distance space %r; refusing to mis-score results", distance_space)
+                return []
+
             # Trade a little recall for a lot of speed: the old code asked for
             # up to 20,000 neighbours including their embeddings.
             search_n = int(min(max(n_results * 3, 50), 500, collection_size))
@@ -392,22 +409,25 @@ class FaceVectorStore:
             for index, face_id in enumerate(ids[0]):
                 try:
                     distance = float(distances[0][index])
-                    similarity = similarity_from_chroma_l2_distance(distance)
+                    cosine_similarity = cosine_from_chroma_distance(distance, distance_space)
+                    similarity = similarity_from_chroma_distance(distance, distance_space)
                     if similarity < min_similarity:
                         continue
+
+                    euclidean_distance = float(np.sqrt(max(0.0, 2.0 - 2.0 * cosine_similarity)))
 
                     similar_faces.append({
                         'face_id': face_id,
                         'similarity': similarity,
                         'similarity_percentage': similarity * 100,
-                        'cosine_similarity': cosine_from_chroma_l2_distance(distance),
-                        'euclidean_distance': float(np.sqrt(max(distance, 0.0))),
+                        'cosine_similarity': cosine_similarity,
+                        'euclidean_distance': euclidean_distance,
                         'chroma_distance': distance,
                         'confidence_score': similarity,
                         'metadata': metadatas[0][index] or {},
                         'similarity_metrics': {
-                            'cosine_similarity': cosine_from_chroma_l2_distance(distance),
-                            'euclidean_distance': float(np.sqrt(max(distance, 0.0))),
+                            'cosine_similarity': cosine_similarity,
+                            'euclidean_distance': euclidean_distance,
                             'chroma_distance': distance,
                             'primary_similarity': similarity,
                         },
@@ -794,6 +814,7 @@ class FaceVectorStore:
             # Recreate the collection
             self.collection = self.client.create_collection(
                 name=self.collection_name,
+                configuration={"hnsw": {"space": "l2"}},
                 metadata={
                     "description": "Face embeddings for similarity search",
                     "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,

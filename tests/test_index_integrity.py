@@ -20,6 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from face_recognition_engine import FaceRecognitionEngine, build_face_id
 from vector_store import FaceVectorStore
+from config import EMBEDDING_PIPELINE_VERSION
 
 
 def _embedding(seed: int) -> np.ndarray:
@@ -130,6 +131,43 @@ def test_search_excludes_legacy_vectors_until_reprocessed(tmp_path):
     status = store.get_embedding_pipeline_status()
     assert status["complete"]
     assert not status["reindex_in_progress"]
+
+
+@pytest.mark.parametrize("space", ["l2", "cosine", "ip"])
+def test_search_scores_follow_collection_distance_space(tmp_path, space):
+    store = FaceVectorStore(
+        db_path=str(tmp_path / f"vectors_{space}"),
+        collection_name=f"metric_{space}",
+    )
+    store.client.delete_collection(name=store.collection_name)
+    store.collection = store.client.create_collection(
+        name=store.collection_name,
+        configuration={"hnsw": {"space": space}},
+        metadata={
+            "description": "metric scoring regression",
+            "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
+            "embedding_pipeline_complete": True,
+        },
+    )
+    store._pipeline_status_cache = None
+
+    target = np.array([1.0, 0.0], dtype=np.float32)
+    query = np.array([0.74, np.sqrt(1.0 - 0.74**2)], dtype=np.float32)
+    assert store.add_face_embedding(
+        "match",
+        target,
+        {"image_path": "/match.jpg", "face_id": "match"},
+    )
+
+    results = store.search_similar_faces(query, n_results=1, min_similarity=0.73)
+
+    assert len(results) == 1
+    assert results[0]["cosine_similarity"] == pytest.approx(0.74, abs=0.01)
+    assert results[0]["similarity"] == pytest.approx(0.74, abs=0.01)
+    assert results[0]["euclidean_distance"] == pytest.approx(np.sqrt(0.52), abs=0.01)
+    assert results[0]["chroma_distance"] == pytest.approx(
+        0.52 if space == "l2" else 0.26, abs=0.01
+    )
 
 
 def test_reprocessing_the_same_image_is_idempotent(tmp_path):

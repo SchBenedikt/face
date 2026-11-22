@@ -42,6 +42,25 @@ def cosine_from_chroma_l2_distance(distance: float) -> float:
     return cosine_from_l2_distance(np.sqrt(squared))
 
 
+def cosine_from_chroma_distance(distance: float, space: str = "l2") -> float:
+    """Convert a Chroma distance to cosine for normalized vectors.
+
+    Chroma's L2 space returns squared Euclidean distance; cosine and inner
+    product spaces return ``1 - cosine`` for unit-length embeddings.
+    """
+    normalized_space = str(space or "l2").lower()
+    if normalized_space == "l2":
+        return cosine_from_chroma_l2_distance(distance)
+    if normalized_space in ("cosine", "ip"):
+        return float(np.clip(1.0 - float(distance), -1.0, 1.0))
+    raise ValueError(f"Unsupported Chroma distance space: {space}")
+
+
+def similarity_from_chroma_distance(distance: float, space: str = "l2") -> float:
+    """Convert Chroma's configured distance to a clipped 0..1 score."""
+    return float(np.clip(cosine_from_chroma_distance(distance, space), 0.0, 1.0))
+
+
 def similarity_from_chroma_l2_distance(distance: float) -> float:
     """ChromaDB squared-L2 distance to a 0..1 similarity score."""
     return float(np.clip(cosine_from_chroma_l2_distance(distance), 0.0, 1.0))
