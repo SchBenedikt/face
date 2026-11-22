@@ -41,6 +41,10 @@ def load_and_preprocess_image(image_path: Union[str, Path]) -> Optional[np.ndarr
         # Method 1: Try PIL/Pillow first (handles more formats)
         try:
             with Image.open(image_path) as pil_image:
+                # Camera photos commonly store portrait/rotation in EXIF
+                # metadata instead of physically rotating the pixel data.
+                # Apply it before coordinates and embeddings are computed.
+                pil_image = ImageOps.exif_transpose(pil_image)
                 # Convert to RGB if necessary
                 if pil_image.mode != 'RGB':
                     pil_image = pil_image.convert('RGB')
@@ -94,6 +98,21 @@ def load_and_preprocess_image(image_path: Union[str, Path]) -> Optional[np.ndarr
         
     except Exception as e:
         logger.error(f"Critical error loading image {image_path}: {e}")
+        return None
+
+
+def load_uploaded_image(uploaded_file) -> Optional[Image.Image]:
+    """Decode an uploaded image as RGB and apply its EXIF orientation."""
+    try:
+        try:
+            uploaded_file.seek(0)
+        except (AttributeError, OSError):
+            pass
+        with Image.open(uploaded_file) as image:
+            image.load()
+            return ImageOps.exif_transpose(image).convert("RGB")
+    except Exception as exc:  # noqa: BLE001 - invalid uploads are a normal UI case
+        logger.warning("Could not decode uploaded image: %s", exc)
         return None
 
 def is_valid_image_file(file_path: Union[str, Path]) -> bool:

@@ -56,7 +56,7 @@ except Exception as exc:  # noqa: BLE001
 
 from duplicate_detector import delete_duplicate_files, duplicate_detector
 from utils import (
-    load_and_preprocess_image, create_thumbnail, get_image_files, parse_face_location
+    load_and_preprocess_image, load_uploaded_image, create_thumbnail, get_image_files, parse_face_location
 )
 from ui_cache import face_thumbnail
 from async_utils import run_coroutine
@@ -619,13 +619,10 @@ def load_query_image(uploaded_file):
     readable message instead of a traceback.
     """
     try:
-        try:
-            uploaded_file.seek(0)
-        except (AttributeError, OSError):
-            pass
-        image = Image.open(uploaded_file)
-        image.load()  # force a full decode so truncated files fail here
-        return image.convert("RGB"), None
+        image = load_uploaded_image(uploaded_file)
+        if image is None:
+            raise ValueError("Image decoding failed")
+        return image, None
     except Exception as exc:  # noqa: BLE001 - any decode failure means "invalid"
         logger.warning(f"Could not decode uploaded image: {exc}")
         return None, (
