@@ -106,6 +106,28 @@ def count_images(directory: Path, recursive: bool = False) -> int:
     return len(found)
 
 
+def show_embedding_pipeline_status() -> None:
+    """Explain when stored vectors need to be rebuilt after model-pipeline changes."""
+    store = st.session_state.get("vector_store")
+    if store is None:
+        return
+    status = store.get_embedding_pipeline_status()
+    if status.get("reindex_required"):
+        st.warning(
+            "Der gespeicherte Gesichtsindex wurde mit einer älteren Pipeline erstellt. "
+            "Die Suche wird bis zur Aktualisierung blockiert, damit alte und neue "
+            "Embeddings nicht falsch miteinander verglichen werden. Öffne **Batch Face "
+            "Processing**, wähle **Update All Images** und aktualisiere zuerst "
+            "**Images and subfolders** und anschließend **Scraped Images**."
+        )
+    elif status.get("reindex_in_progress"):
+        st.info(
+            f"Index-Aktualisierung läuft: noch {status.get('pending_faces', 0):,} "
+            "alte Einträge. Suchtreffer enthalten bis zum Abschluss nur bereits "
+            "aktualisierte Bilder. Aktualisiere alle Bildordner im Batch Processor."
+        )
+
+
 def discover_image_directories() -> List[Any]:
     """Return the (label, path) pairs the batch processor can work on.
 
@@ -114,9 +136,11 @@ def discover_image_directories() -> List[Any]:
     """
     available: List[Any] = []
 
-    images_count = count_images(IMAGES_DIR)
+    # The root option is the reliable way to reprocess a full library. Include
+    # nested downloaded folders as well as files placed directly in images/.
+    images_count = count_images(IMAGES_DIR, recursive=True)
     if images_count:
-        available.append((f"🖼️ Images ({images_count} images)", str(IMAGES_DIR)))
+        available.append((f"🖼️ Images and subfolders ({images_count} images)", str(IMAGES_DIR)))
 
     if Path(IMAGES_DIR).exists():
         downloaded = [
@@ -427,6 +451,7 @@ def face_search_page():
     """Face search functionality with multi-face selection"""
     
     st.header("🔍 Search for Similar Faces")
+    show_embedding_pipeline_status()
     
     # Upload query image
     uploaded_file = st.file_uploader(
@@ -2374,6 +2399,7 @@ def batch_face_processing_page():
     
     st.header("🚀 Fast Batch Face Processing")
     st.markdown("**High-performance face detection and processing using optimized algorithms**")
+    show_embedding_pipeline_status()
     
     tab1, tab2 = st.tabs(["⚡ Fast Processing", "📊 Processing Stats"])
     
@@ -3649,6 +3675,7 @@ def database_stats_page():
     """Database statistics page"""
     
     st.header("📊 Database Statistics")
+    show_embedding_pipeline_status()
     
     # Get stats
     stats = st.session_state.vector_store.get_collection_stats()

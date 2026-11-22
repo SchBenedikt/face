@@ -57,6 +57,12 @@ launching the app to force CPU mode. CPU thread limits default to `1`, and can
 be overridden with `OMP_NUM_THREADS`, `MKL_NUM_THREADS`,
 `NUMEXPR_NUM_THREADS`, or `OPENBLAS_NUM_THREADS`.
 
+When the face detector or embedding preprocessing changes, the app marks old
+vectors as incompatible and excludes them from similarity results. In **Batch
+Face Processing**, run **Update All Images** for **Images and subfolders** and
+for **Scraped Images** to rebuild the complete searchable index. During that
+update, only already reprocessed images are searched.
+
 ## 🌟 What Makes This Special?
 
 This isn't just another face recognition tool. It's a **comprehensive facial intelligence platform** that combines cutting-edge AI with practical usability:

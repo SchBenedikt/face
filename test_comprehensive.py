@@ -55,16 +55,16 @@ def test_configuration_completeness():
         logger.error(f"Configuration test failed: {e}")
         return False
 
-def test_face_recognition_engine_ensemble():
+def test_face_recognition_engine_ensemble(monkeypatch):
     """Test the enhanced face recognition engine"""
     logger.info("Testing face recognition engine enhancements...")
     
     try:
         # Mock dependencies to avoid import errors
-        sys.modules['cv2'] = MagicMock()
-        sys.modules['face_recognition'] = MagicMock()
-        sys.modules['deepface'] = MagicMock()
-        sys.modules['DeepFace'] = MagicMock()
+        monkeypatch.setitem(sys.modules, 'cv2', MagicMock())
+        monkeypatch.setitem(sys.modules, 'face_recognition', MagicMock())
+        monkeypatch.setitem(sys.modules, 'deepface', MagicMock())
+        monkeypatch.setitem(sys.modules, 'DeepFace', MagicMock())
         
         from face_recognition_engine import FaceRecognitionEngine
         
@@ -114,13 +114,13 @@ def test_face_recognition_engine_ensemble():
         logger.error(f"Face recognition engine test failed: {e}")
         return False
 
-def test_vector_store_enhancements():
+def test_vector_store_enhancements(monkeypatch):
     """Test vector store similarity enhancements"""
     logger.info("Testing vector store enhancements...")
     
     try:
         # Mock chromadb to avoid dependency issues
-        sys.modules['chromadb'] = MagicMock()
+        monkeypatch.setitem(sys.modules, 'chromadb', MagicMock())
         
         from vector_store import FaceVectorStore
         
@@ -231,10 +231,8 @@ def test_streamlit_integration():
     logger.info("Testing Streamlit integration improvements...")
     
     try:
-        # Mock streamlit to avoid import issues
-        sys.modules['streamlit'] = MagicMock()
-        
-        # This is a basic import test since we can't run streamlit in this environment
+        # Import the real package. Replacing it in sys.modules also replaces
+        # decorators used by ui_cache and contaminates later AppTest runs.
         import app
         
         # Test that search function exists and has expected parameters

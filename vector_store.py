@@ -24,6 +24,7 @@ from config import (
     FACE_GROUPING_MARGIN,
     FACE_AUTO_ASSIGN_THRESHOLD,
     FACE_AUTO_ASSIGN_AMBIGUITY_MARGIN,
+    EMBEDDING_PIPELINE_VERSION,
 )
 from face_grouping import centroid_of, group_embeddings
 from similarity import (
@@ -58,6 +59,7 @@ class FaceVectorStore:
         self._stats_cache = None
         self._last_face_count = None
         self._cache_timestamp = None
+        self._pipeline_status_cache = None
         
         # Check for cache reset marker
         self._check_cache_reset_marker()
@@ -78,9 +80,85 @@ class FaceVectorStore:
         except Exception:
             self.collection = self.client.create_collection(
                 name=collection_name,
-                metadata={"description": "Face embeddings for similarity search"}
+                metadata={
+                    "description": "Face embeddings for similarity search",
+                    "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
+                    "embedding_pipeline_complete": True,
+                }
             )
             logger.info(f"Created new collection: {collection_name}")
+
+    def get_embedding_pipeline_status(self) -> Dict[str, Any]:
+        """Describe whether the stored index matches the active embedding pipeline."""
+        if self._pipeline_status_cache is not None:
+            return dict(self._pipeline_status_cache)
+        try:
+            metadata = dict(self.collection.metadata or {})
+            stored_version = metadata.get("embedding_pipeline_version")
+            total_faces = int(self.collection.count())
+            compatible = stored_version == EMBEDDING_PIPELINE_VERSION
+            complete = compatible and bool(metadata.get("embedding_pipeline_complete"))
+            pending_faces = 0
+            if compatible and not complete and total_faces:
+                current_rows = self.collection.get(
+                    where={"embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION},
+                    include=[],
+                )
+                pending_faces = max(0, total_faces - len(current_rows.get("ids") or []))
+                if pending_faces == 0:
+                    self.mark_embedding_pipeline_complete()
+                    complete = True
+            status = {
+                "total_faces": total_faces,
+                "stored_version": stored_version,
+                "current_version": EMBEDDING_PIPELINE_VERSION,
+                "compatible": compatible,
+                "complete": complete,
+                "reindex_required": total_faces > 0 and not compatible,
+                "reindex_in_progress": compatible and not complete,
+                "pending_faces": pending_faces,
+            }
+            self._pipeline_status_cache = dict(status)
+            return status
+        except Exception as exc:  # noqa: BLE001 - status must not prevent app startup
+            logger.warning("Could not read embedding pipeline status: %s", exc)
+            status = {
+                "total_faces": 0,
+                "stored_version": None,
+                "current_version": EMBEDDING_PIPELINE_VERSION,
+                "compatible": False,
+                "complete": False,
+                "reindex_required": False,
+                "reindex_in_progress": False,
+                "error": str(exc),
+            }
+            self._pipeline_status_cache = dict(status)
+            return status
+
+    def _mark_pipeline_write(self) -> None:
+        """Tag new rows and make legacy rows invisible to current searches."""
+        metadata = dict(self.collection.metadata or {})
+        old_version = metadata.get("embedding_pipeline_version")
+        was_complete = (
+            old_version == EMBEDDING_PIPELINE_VERSION
+            and bool(metadata.get("embedding_pipeline_complete"))
+        )
+        metadata.update({
+            "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
+            "embedding_pipeline_complete": was_complete,
+        })
+        self.collection.modify(metadata=metadata)
+        self._pipeline_status_cache = None
+
+    def mark_embedding_pipeline_complete(self) -> None:
+        """Mark the index complete after every available source image is reprocessed."""
+        metadata = dict(self.collection.metadata or {})
+        metadata.update({
+            "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
+            "embedding_pipeline_complete": True,
+        })
+        self.collection.modify(metadata=metadata)
+        self._pipeline_status_cache = None
     
     def add_face_embedding(
         self, 
@@ -111,7 +189,8 @@ class FaceVectorStore:
             full_metadata = {
                 **metadata,
                 "added_at": datetime.now().isoformat(),
-                "embedding_dimension": len(vector)
+                "embedding_dimension": len(vector),
+                "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
             }
             
             # Add or replace the row; re-adding a face must not fail.
@@ -120,6 +199,7 @@ class FaceVectorStore:
                 metadatas=[full_metadata],
                 ids=[face_id]
             )
+            self._mark_pipeline_write()
             self.invalidate_stats_cache()
             
             return True
@@ -164,7 +244,8 @@ class FaceVectorStore:
                 full_metadata = {
                     **metadata,
                     "added_at": datetime.now().isoformat(),
-                    "embedding_dimension": int(vector.size)
+                    "embedding_dimension": int(vector.size),
+                    "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
                 }
                 full_metadatas.append(full_metadata)
             
@@ -175,6 +256,7 @@ class FaceVectorStore:
                 metadatas=full_metadatas,
                 ids=face_ids
             )
+            self._mark_pipeline_write()
 
             image_paths = {
                 str(metadata.get("image_path"))
@@ -210,6 +292,7 @@ class FaceVectorStore:
                 if stale:
                     self.collection.delete(ids=stale)
                     removed += len(stale)
+                    self._pipeline_status_cache = None
             except Exception as exc:  # noqa: BLE001 - cleanup must not fail the write
                 logger.warning(f"Could not clean old faces for {image_path}: {exc}")
         return removed
@@ -247,6 +330,7 @@ class FaceVectorStore:
                 self.collection.delete(ids=stale[start:start + 500])
 
             self.invalidate_stats_cache()
+            self._pipeline_status_cache = None
             logger.info(f"Pruned {len(stale)} face(s) with missing image files")
             return len(stale)
         except Exception as e:
@@ -280,6 +364,15 @@ class FaceVectorStore:
             if collection_size == 0:
                 return []
 
+            status = self.get_embedding_pipeline_status()
+            if not status["compatible"]:
+                logger.warning(
+                    "Search blocked: index pipeline %r does not match active pipeline %r",
+                    status.get("stored_version"),
+                    EMBEDDING_PIPELINE_VERSION,
+                )
+                return []
+
             # Trade a little recall for a lot of speed: the old code asked for
             # up to 20,000 neighbours including their embeddings.
             search_n = int(min(max(n_results * 3, 50), 500, collection_size))
@@ -288,6 +381,7 @@ class FaceVectorStore:
                 query_embeddings=[query_list.tolist()],
                 n_results=search_n,
                 include=['metadatas', 'distances'],
+                where={"embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION},
             )
 
             ids = results.get('ids') or [[]]
@@ -521,6 +615,7 @@ class FaceVectorStore:
         try:
             self.collection.delete(ids=[face_id])
             self.invalidate_stats_cache()
+            self._pipeline_status_cache = None
             logger.info(f"Deleted face {face_id}")
             return True
             
@@ -542,6 +637,7 @@ class FaceVectorStore:
             ids = list(existing.get("ids") or [])
             if ids:
                 self.collection.delete(ids=ids)
+                self._pipeline_status_cache = None
                 logger.info(f"Deleted {len(ids)} face(s) for image {image_path}")
             self.invalidate_stats_cache()
             return len(ids)
@@ -693,11 +789,16 @@ class FaceVectorStore:
         try:
             # Delete the collection
             self.client.delete_collection(self.collection_name)
+            self._pipeline_status_cache = None
             
             # Recreate the collection
             self.collection = self.client.create_collection(
                 name=self.collection_name,
-                metadata={"description": "Face embeddings for similarity search"}
+                metadata={
+                    "description": "Face embeddings for similarity search",
+                    "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
+                    "embedding_pipeline_complete": True,
+                }
             )
             self.invalidate_stats_cache()
             
@@ -1213,7 +1314,12 @@ class FaceVectorStore:
         suggest an existing person for a new identity cluster.
         """
         try:
-            rows = self.collection.get(include=['embeddings', 'metadatas'])
+            if not self.get_embedding_pipeline_status()["compatible"]:
+                return {}
+            rows = self.collection.get(
+                where={"embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION},
+                include=['embeddings', 'metadatas'],
+            )
             embeddings = rows.get('embeddings')
             if embeddings is None:
                 embeddings = []
@@ -1257,7 +1363,14 @@ class FaceVectorStore:
             'margin': margin,
         }
         try:
-            rows = self.collection.get(include=['embeddings', 'metadatas'])
+            status = self.get_embedding_pipeline_status()
+            if not status["compatible"]:
+                empty["error"] = "Index muss mit der aktuellen Gesichtspipeline neu aufgebaut werden."
+                return empty
+            rows = self.collection.get(
+                where={"embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION},
+                include=['embeddings', 'metadatas'],
+            )
             ids = rows.get('ids') or []
             metadatas = rows.get('metadatas') or []
             embeddings = rows.get('embeddings')

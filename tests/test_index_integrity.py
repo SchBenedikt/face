@@ -100,6 +100,38 @@ def test_batch_add_replaces_legacy_rows_for_the_same_image(tmp_path):
     assert all(metadata["image_path"] == image_path for metadata in stored["metadatas"])
 
 
+def test_search_excludes_legacy_vectors_until_reprocessed(tmp_path):
+    store = FaceVectorStore(
+        db_path=str(tmp_path / "vectors"), collection_name="pipeline_migration"
+    )
+    query = np.zeros(512, dtype=np.float32)
+    query[0] = 1.0
+    current = np.zeros(512, dtype=np.float32)
+    current[1] = 1.0
+    store.collection.modify(metadata={"description": "legacy index"})
+    store.collection.add(
+        ids=["legacy"],
+        embeddings=[query.tolist()],
+        metadatas=[{"image_path": "/legacy.jpg", "face_id": "legacy"}],
+    )
+
+    assert store.add_face_embedding(
+        "current", current, {"image_path": "/current.jpg", "face_id": "current"}
+    )
+    results = store.search_similar_faces(current, min_similarity=0.5)
+    assert [result["face_id"] for result in results] == ["current"]
+    status = store.get_embedding_pipeline_status()
+    assert status["reindex_in_progress"]
+    assert status["pending_faces"] == 1
+
+    assert store.add_face_embedding(
+        "legacy", current, {"image_path": "/legacy.jpg", "face_id": "legacy"}
+    )
+    status = store.get_embedding_pipeline_status()
+    assert status["complete"]
+    assert not status["reindex_in_progress"]
+
+
 def test_reprocessing_the_same_image_is_idempotent(tmp_path):
     store = FaceVectorStore(
         db_path=str(tmp_path / "vectors"), collection_name="idempotent"
