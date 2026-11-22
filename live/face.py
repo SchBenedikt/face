@@ -192,17 +192,13 @@ def identify_face(face_region, face_engine, vector_store, similarity_threshold=S
         similar_faces = vector_store.search_similar_faces(
             embedding, 
             n_results=5,  # Mehr Matches für bessere Vergleiche
-            min_similarity=max(0.6, similarity_threshold - 0.15)  # Deutlich weniger streng
+            min_similarity=float(np.clip(similarity_threshold, 0.0, 1.0)),
         )
         
         if similar_faces:
             best_match = similar_faces[0]
             best_similarity = best_match['similarity']
             
-            # Sehr lockere Überprüfung - hauptsächlich auf Basis der Ähnlichkeit
-            if best_similarity < 0.65:  # Sehr niedriger Threshold
-                return None
-                
             person_data = best_match['metadata']
             
             # UTF-8 sichere Verarbeitung der Namen
