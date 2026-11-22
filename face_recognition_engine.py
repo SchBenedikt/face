@@ -117,8 +117,11 @@ class FaceRecognitionEngine:
                     model=self.detection_model
                 )
                 if face_locations:
-                    logger.debug(f"face_recognition detected {len(face_locations)} faces")
-                    return self._filter_valid_faces(face_locations, image.shape[:2])
+                    valid_locations = self._filter_valid_faces(face_locations, image.shape[:2])
+                    if valid_locations:
+                        logger.debug(f"face_recognition detected %d valid faces", len(valid_locations))
+                        return valid_locations
+                    logger.debug("face_recognition detections were all filtered; trying next detector")
             except Exception as e:
                 logger.debug(f"face_recognition detection failed: {e}")
 
@@ -129,15 +132,17 @@ class FaceRecognitionEngine:
             if deepface_faces:
                 candidate_locations = [location for location, _ in deepface_faces]
                 valid_locations = self._filter_valid_faces(candidate_locations, image.shape[:2])
-                valid_set = set(valid_locations)
-                crops = {
-                    location: crop
-                    for location, crop in deepface_faces
-                    if crop is not None and location in valid_set
-                }
-                if crops:
-                    self._remember_aligned_face_crops(image, crops)
-                return valid_locations
+                if valid_locations:
+                    valid_set = set(valid_locations)
+                    crops = {
+                        location: crop
+                        for location, crop in deepface_faces
+                        if crop is not None and location in valid_set
+                    }
+                    if crops:
+                        self._remember_aligned_face_crops(image, crops)
+                    return valid_locations
+                logger.debug("DeepFace detections were all filtered; trying Haar fallback")
 
             # Final fallback - OpenCV Haar cascades (fastest, least robust)
             try:

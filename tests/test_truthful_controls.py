@@ -90,3 +90,27 @@ def test_deepface_aligned_crop_is_used_for_embedding(monkeypatch):
     assert captured["extract_kwargs"]["align"] is True
     assert captured["extract_kwargs"]["color_face"] == "rgb"
     assert captured["extract_kwargs"]["normalize_face"] is False
+
+
+def test_invalid_primary_detection_does_not_block_deepface_fallback(monkeypatch):
+    engine = FaceRecognitionEngine()
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+
+    class FakeFaceRecognition:
+        @staticmethod
+        def face_locations(image, number_of_times_to_upsample=0, model="hog"):
+            return [(0, 10, 10, 0)]  # Below the configured minimum size.
+
+    class FakeDeepFace:
+        @staticmethod
+        def extract_faces(**kwargs):
+            return [{
+                "facial_area": {"x": 30, "y": 25, "w": 55, "h": 58},
+                "confidence": 0.99,
+                "face": np.full((64, 64, 3), 173, dtype=np.uint8),
+            }]
+
+    monkeypatch.setattr(face_recognition_engine, "face_recognition", FakeFaceRecognition)
+    monkeypatch.setattr(face_recognition_engine, "DeepFace", FakeDeepFace)
+
+    assert engine.detect_faces(image) == [(25, 85, 83, 30)]
