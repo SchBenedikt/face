@@ -311,8 +311,12 @@ def test_settings_save_persists_and_is_used_by_the_search(seeded_data, isolated_
 
     max_results_slider = next(slider for slider in restarted.slider if "Maximum Results" in slider.label)
     threshold_slider = next(slider for slider in restarted.slider if "Similarity Threshold" in slider.label)
+    min_face_size_slider = next(slider for slider in restarted.slider if "Minimum Face Size" in slider.label)
+    similarity_filter = next(selectbox for selectbox in restarted.selectbox if "Similarity Filter" in selectbox.label)
     assert max_results_slider.value == 7
     assert threshold_slider.value == pytest.approx(0.9)
+    assert min_face_size_slider.value == 30
+    assert similarity_filter.value == "All Matches"
 
 
 def test_pending_navigation_switches_the_sidebar_page(seeded_data):

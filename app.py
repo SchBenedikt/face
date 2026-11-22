@@ -499,14 +499,14 @@ def face_search_page():
                     max_value=1.0, 
                     value=float(query_settings["similarity_threshold"]),
                     step=0.05,
-                    help="Mindestähnlichkeit für Suchergebnisse (0.4 = 40% Ähnlichkeit). Höhere Werte = genauere Ergebnisse aber weniger Treffer."
+                    help="Mindestähnlichkeit für Suchergebnisse. Höhere Werte liefern weniger, dafür engere Treffer."
                 )
                 
                 # Similarity filter (the old labels called this "quality")
                 quality_filter = st.selectbox(
                     "🎯 Similarity Filter",
                     ["All Matches", "Strong Matches (≥70%)", "Medium+ Matches (≥40%)", "Weak Matches (≥30%)"],
-                    index=2,
+                    index=0,
                     help="Blendet Treffer unterhalb der gewählten Ähnlichkeit aus"
                 )
             
@@ -516,8 +516,8 @@ def face_search_page():
                     "Minimum Face Size (px)",
                     min_value=20,
                     max_value=200,
-                    value=50,
-                    help="Filter out very small faces which are often false positives"
+                    value=30,
+                    help="Kleine Gesichter können echte Treffer sein. Erhöhe den Wert, wenn kleine Fehlalarme stören."
                 )
                 
                 # Search Mode
@@ -732,8 +732,8 @@ def search_with_selected_face_enhanced(face_index: int):
     
     # Get advanced search parameters from session state
     search_params = {
-        'quality_filter': st.session_state.get('quality_filter', 'Medium+ Matches (≥40%)'),
-        'min_face_size': st.session_state.get('min_face_size', 50),
+        'quality_filter': st.session_state.get('quality_filter', 'All Matches'),
+        'min_face_size': st.session_state.get('min_face_size', 30),
         'search_mode': st.session_state.get('search_mode', 'Balanced'),
         'sort_by': st.session_state.get('sort_by', 'Similarity Score'),
         'aspect_ratio_filter': st.session_state.get('aspect_ratio_filter', True),
