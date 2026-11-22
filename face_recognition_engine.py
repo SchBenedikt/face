@@ -54,22 +54,16 @@ def build_face_id(image_path: Path | str, face_index: int) -> str:
 
 
 class FaceRecognitionEngine:
-    """
-    Advanced face recognition engine combining multiple DeepFace models for optimal accuracy
-    """
+    """Detect faces and extract Facenet512 embeddings for local search."""
     
     def __init__(self):
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         
-        # Multiple models for ensemble approach - ordered by accuracy
-        self.models = getattr(config, 'FACE_EMBEDDING_MODELS', [
-            "Facenet512",    # Primary: Highest accuracy, 512-dim embeddings
-            "ArcFace",       # Secondary: Excellent for verification
-            "VGG-Face",      # Tertiary: Good general performance
-            "Facenet"        # Fallback: Standard Facenet
-        ])
-        
-        self.primary_model = self.models[0]
+        self.primary_model = str(getattr(config, "FACE_EMBEDDING_MODEL", "Facenet512"))
+        # Keep legacy public attributes for older integrations. Embedding
+        # extraction uses only ``primary_model``; no ensemble is produced.
+        self.models = list(getattr(config, "FACE_EMBEDDING_MODELS", [self.primary_model]))
+        self.ensemble_enabled = False
         self.detection_model = FACE_RECOGNITION_MODEL
         try:
             saved_model = str(load_settings().get("detection_model", FACE_RECOGNITION_MODEL)).lower()
@@ -79,7 +73,6 @@ class FaceRecognitionEngine:
             logger.warning(f"Could not load detection model setting: {exc}")
         self.detection_backends = getattr(config, 'FACE_DETECTION_BACKENDS', ["opencv", "mtcnn", "retinaface"])
         self.model_cache = {}  # Cache for model loading
-        self.ensemble_enabled = getattr(config, 'FACE_ENSEMBLE_WEIGHTING', True)
         self._aligned_face_crops = OrderedDict()
         self._aligned_face_crops_lock = RLock()
 

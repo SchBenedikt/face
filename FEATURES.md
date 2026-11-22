@@ -78,10 +78,10 @@
 Die KI-basierte Gesichtsanalyse dient ausschließlich zu **Demonstrations- und Forschungszwecken**. 
 Die Ergebnisse sind Schätzungen und sollten nicht für Identifikation, Diskriminierung oder Entscheidungsfindung verwendet werden.
 
-### Rechtliche Hinweise
-- EU/Deutschland: Verarbeitung biometrischer Daten kann der DSGVO (Art. 9) unterliegen
-- Nutzung nur mit entsprechenden Einwilligungen und Rechtsgrundlagen
-- Bei Unsicherheit Rechtsberatung einholen
+### Datenschutz und Rechtsrahmen
+- Gesichtsvektoren werden im konfigurierten Datenverzeichnis gespeichert.
+- Die Anwendung prüft weder Einwilligungen noch rechtliche Voraussetzungen.
+- Kläre vor der Verarbeitung fremder Bilder, welche Regeln für deinen Einsatz gelten.
 
 ## 🚀 Technische Details
 

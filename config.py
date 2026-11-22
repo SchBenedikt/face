@@ -54,16 +54,20 @@ FACE_AUTO_ASSIGN_AMBIGUITY_MARGIN = 0.05
 
 # Face Recognition Quality Settings - Enhanced for better accuracy
 FACE_EMBEDDING_MODEL = "Facenet512"  # Primary DeepFace model for highest quality
-FACE_EMBEDDING_MODELS = ["Facenet512", "ArcFace", "VGG-Face", "Facenet"]  # Ensemble models
+# Retained for compatibility with older integrations. The active pipeline uses
+# FACE_EMBEDDING_MODEL only; it does not combine these candidates.
+FACE_EMBEDDING_MODELS = ["Facenet512", "ArcFace", "VGG-Face", "Facenet"]
 # Bump this whenever the detector, crop or embedding preprocessing changes.
 # Similarity comparisons across pipeline versions are not meaningful.
 EMBEDDING_PIPELINE_VERSION = "facenet512-retinaface-aligned-rgb-base-exif-v5"
 FACE_DETECTION_BACKENDS = ["retinaface", "mtcnn", "opencv"]  # Accuracy-first fallback order
-FACE_PREPROCESSING_ENABLED = True   # Erweiterte Gesichtsvorverarbeitung aktivieren
-FACE_QUALITY_VALIDATION = True     # Embedding-Qualität validieren
-FACE_SIMILARITY_ALGORITHM = "premium"  # "basic", "enhanced" oder "premium" für bessere Genauigkeit
-FACE_ENSEMBLE_WEIGHTING = True     # Use weighted ensemble of multiple models
-FACE_ALIGNMENT_ENABLED = True      # Enable face alignment for better embeddings
+# Deprecated compatibility flags; the active pipeline uses DeepFace-aligned
+# crops, base preprocessing, and cosine search regardless of these values.
+FACE_PREPROCESSING_ENABLED = False
+FACE_QUALITY_VALIDATION = False
+FACE_SIMILARITY_ALGORITHM = "cosine"
+FACE_ENSEMBLE_WEIGHTING = False
+FACE_ALIGNMENT_ENABLED = True
 
 # Advanced similarity settings
 ENSEMBLE_SIMILARITY_WEIGHTS = {
@@ -97,7 +101,8 @@ LAYOUT = "wide"
 # Performance settings
 BATCH_SIZE = 32
 MAX_WORKERS = 4
-EMBEDDING_DIMENSION = 128
+# The active Facenet512 model produces 512 values per face.
+EMBEDDING_DIMENSION = 512
 
 # UI settings
 RESULTS_PER_PAGE = 100  # 100 pro Seite rendert schnell, ohne 500 Bilder je Rerun
