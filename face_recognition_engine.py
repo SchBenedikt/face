@@ -120,7 +120,8 @@ class FaceRecognitionEngine:
             
             # Method 2: Fallback - OpenCV Haar cascades (fastest)
             try:
-                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+                # load_and_preprocess_image returns RGB arrays (Pillow first).
+                gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if len(image.shape) == 3 else image
                 faces = self.face_cascade.detectMultiScale(
                     gray,
                     # Haar is only a fallback when the configured detector is
@@ -221,10 +222,10 @@ class FaceRecognitionEngine:
                 logger.debug(f"Face too small: {face_image.shape}")
                 return None
             
-            # Fast preprocessing - skip advanced processing for speed
-            face_image = self._preprocess_face(face_image)
-            
-            # Speed optimization: Use only primary model (Facenet512)
+            # Keep the detector crop at its original resolution. DeepFace
+            # resizes to the model's actual input size; forcing every crop to
+            # 224x224 and applying CLAHE/blur here discards detail and changes
+            # the model's expected pixel distribution.
             try:
                 embedding = self._extract_single_model_embedding(face_image, self.primary_model)
                 if embedding is not None:
@@ -290,12 +291,6 @@ class FaceRecognitionEngine:
             # you would use dlib or similar for proper landmark detection
             # For now, we'll just ensure the face is properly centered and rotated
             
-            # Convert to RGB for landmark detection
-            if len(face_image.shape) == 3:
-                face_rgb = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
-            else:
-                face_rgb = face_image
-            
             # Use basic alignment based on face region
             height, width = face_image.shape[:2]
             center_x, center_y = width // 2, height // 2
@@ -334,12 +329,23 @@ class FaceRecognitionEngine:
         Extract embedding using a single DeepFace model
         """
         try:
+            # DeepFace's ndarray API accepts BGR arrays. Our image loader and
+            # detector pipeline use RGB, so convert explicitly at this
+            # boundary instead of silently swapping red and blue channels.
+            model_image = (
+                cv2.cvtColor(face_image, cv2.COLOR_RGB2BGR)
+                if face_image.ndim == 3 and face_image.shape[2] == 3
+                else face_image
+            )
             embedding = DeepFace.represent(
-                face_image, 
+                model_image,
                 model_name=model_name, 
                 enforce_detection=False,
                 detector_backend='skip',
-                normalization='ArcFace'
+                # Keep DeepFace's model-compatible default preprocessing.
+                # ArcFace normalization is specific to ArcFace embeddings and
+                # distorts input when the configured model is Facenet512.
+                normalization='base'
             )
             
             if isinstance(embedding, list) and len(embedding) > 0:
@@ -408,14 +414,8 @@ class FaceRecognitionEngine:
         try:
             logger.debug("Using fallback face_recognition method with preprocessing")
             
-            # Convert to RGB for face_recognition
-            if len(face_image.shape) == 3 and face_image.shape[2] == 3:
-                face_rgb = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
-            else:
-                face_rgb = face_image
-            
             face_encodings = face_recognition.face_encodings(
-                face_rgb, 
+                face_image,
                 model="large"  # Use larger, more accurate model
             )
             
@@ -452,9 +452,9 @@ class FaceRecognitionEngine:
             # Apply histogram equalization for better lighting
             if len(face_resized.shape) == 3:
                 # Convert to LAB color space for better equalization
-                lab = cv2.cvtColor(face_resized, cv2.COLOR_BGR2LAB)
+                lab = cv2.cvtColor(face_resized, cv2.COLOR_RGB2LAB)
                 lab[:,:,0] = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)).apply(lab[:,:,0])
-                face_processed = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                face_processed = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
             else:
                 # Grayscale image
                 face_processed = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)).apply(face_resized)
@@ -467,39 +467,6 @@ class FaceRecognitionEngine:
         except Exception as e:
             logger.warning(f"Face preprocessing failed: {e}, using original")
             return face_image
-        """
-        Advanced face preprocessing for better embedding quality
-        
-        Args:
-            face_image: Raw face image
-            
-        Returns:
-            Preprocessed face image
-        """
-        try:
-            # Resize to optimal size for face recognition (224x224 for most models)
-            target_size = (224, 224)
-            face_resized = cv2.resize(face_image, target_size, interpolation=cv2.INTER_LANCZOS4)
-            
-            # Apply histogram equalization for better lighting
-            if len(face_resized.shape) == 3:
-                # Convert to LAB color space for better equalization
-                lab = cv2.cvtColor(face_resized, cv2.COLOR_BGR2LAB)
-                lab[:,:,0] = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)).apply(lab[:,:,0])
-                face_processed = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-            else:
-                # Grayscale image
-                face_processed = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)).apply(face_resized)
-            
-            # Apply gentle gaussian blur to reduce noise
-            face_processed = cv2.GaussianBlur(face_processed, (3, 3), 0.5)
-            
-            return face_processed
-            
-        except Exception as e:
-            logger.warning(f"Face preprocessing failed: {e}, using original")
-            return face_image
-    
     def _advanced_normalize_embedding(self, embedding: np.ndarray) -> np.ndarray:
         """
         Advanced embedding normalization for consistent similarity calculations
@@ -510,32 +477,19 @@ class FaceRecognitionEngine:
         Returns:
             Normalized embedding vector with improved stability
         """
-        try:
-            # Convert to float64 for better numerical precision
-            embedding = embedding.astype(np.float64)
-            
-            # Remove potential outliers using robust normalization
-            # Clip extreme values to 3 standard deviations
-            std_dev = np.std(embedding)
-            mean_val = np.mean(embedding)
-            embedding = np.clip(embedding, mean_val - 3*std_dev, mean_val + 3*std_dev)
-            
-            # L2 normalization (unit vector)
-            norm = np.linalg.norm(embedding)
-            
-            if norm < 1e-10:  # Avoid division by very small numbers
-                logger.warning("Embedding has very small norm, using zero vector")
-                return np.zeros_like(embedding, dtype=np.float32)
-            
-            # Normalize to unit length
-            normalized = embedding / norm
-            
-            # Convert back to float32 for storage efficiency
-            return normalized.astype(np.float32)
-            
-        except Exception as e:
-            logger.error(f"Error in advanced embedding normalization: {e}")
-            return embedding.astype(np.float32)
+        vector = np.asarray(embedding, dtype=np.float32).ravel()
+        if vector.size == 0 or not np.all(np.isfinite(vector)):
+            raise ValueError("Embedding must contain finite values")
+
+        # Do not clip individual coordinates: the embedding model learned the
+        # full feature distribution, and clipping outliers changes identity
+        # geometry. Unit-normalize only, which is also the metric expected by
+        # the vector store's cosine scoring.
+        norm = float(np.linalg.norm(vector))
+        if norm <= 1e-10:
+            logger.warning("Embedding has very small norm")
+            return np.zeros_like(vector, dtype=np.float32)
+        return (vector / norm).astype(np.float32)
     
     def _validate_embedding_quality(self, embedding: np.ndarray) -> bool:
         """
