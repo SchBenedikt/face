@@ -255,19 +255,17 @@ class FaceRecognitionEngine:
             while len(self._aligned_face_crops) > 8:
                 self._aligned_face_crops.popitem(last=False)
 
-    def _take_aligned_face_crop(
+    def _get_aligned_face_crop(
         self, image: np.ndarray, location: Tuple[int, int, int, int]
     ) -> Optional[np.ndarray]:
-        """Consume the aligned crop associated with one image and face box."""
+        """Return the reusable aligned crop associated with one image and box."""
         image_key = id(image)
         with self._aligned_face_crops_lock:
             cached = self._aligned_face_crops.get(image_key)
             if cached is None or cached[0] is not image:
                 return None
-            crop = cached[1].pop(tuple(location), None)
-            if not cached[1]:
-                self._aligned_face_crops.pop(image_key, None)
-            return crop
+            self._aligned_face_crops.move_to_end(image_key)
+            return cached[1].get(tuple(location))
     
     def _filter_valid_faces(self, face_locations: List[Tuple[int, int, int, int]], image_shape: Tuple[int, int]) -> List[Tuple[int, int, int, int]]:
         """
@@ -324,7 +322,7 @@ class FaceRecognitionEngine:
             
             # RetinaFace/MTCNN results include an eye-aligned crop. Use it when
             # available; HOG/CNN and Haar still use a padded source-image box.
-            face_image = self._take_aligned_face_crop(image, face_location)
+            face_image = self._get_aligned_face_crop(image, face_location)
             if face_image is None:
                 padding = 10
                 height, width = image.shape[:2]

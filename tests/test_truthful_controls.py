@@ -74,7 +74,7 @@ def test_deepface_aligned_crop_is_used_for_embedding(monkeypatch):
     monkeypatch.setattr(face_recognition_engine, "face_recognition", None)
 
     def capture_embedding(face_image, model_name):
-        captured["face_image"] = face_image.copy()
+        captured.setdefault("face_images", []).append(face_image.copy())
         captured["model_name"] = model_name
         return np.ones(512, dtype=np.float32)
 
@@ -83,9 +83,13 @@ def test_deepface_aligned_crop_is_used_for_embedding(monkeypatch):
     assert locations == [(25, 85, 83, 30)]
 
     embedding = engine.extract_face_embedding(image, locations[0])
+    repeated_embedding = engine.extract_face_embedding(image, locations[0])
 
     assert embedding is not None
-    np.testing.assert_array_equal(captured["face_image"], aligned_crop)
+    assert repeated_embedding is not None
+    assert len(captured["face_images"]) == 2
+    np.testing.assert_array_equal(captured["face_images"][0], aligned_crop)
+    np.testing.assert_array_equal(captured["face_images"][1], aligned_crop)
     assert captured["model_name"] == engine.primary_model
     assert captured["extract_kwargs"]["align"] is True
     assert captured["extract_kwargs"]["color_face"] == "rgb"
