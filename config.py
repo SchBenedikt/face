@@ -55,7 +55,7 @@ FACE_AUTO_ASSIGN_AMBIGUITY_MARGIN = 0.05
 # Face Recognition Quality Settings - Enhanced for better accuracy
 FACE_EMBEDDING_MODEL = "Facenet512"  # Primary DeepFace model for highest quality
 FACE_EMBEDDING_MODELS = ["Facenet512", "ArcFace", "VGG-Face", "Facenet"]  # Ensemble models
-FACE_DETECTION_BACKENDS = ["opencv", "mtcnn", "retinaface"]  # Multiple detection backends
+FACE_DETECTION_BACKENDS = ["retinaface", "mtcnn", "opencv"]  # Accuracy-first fallback order
 FACE_PREPROCESSING_ENABLED = True   # Erweiterte Gesichtsvorverarbeitung aktivieren
 FACE_QUALITY_VALIDATION = True     # Embedding-Qualität validieren
 FACE_SIMILARITY_ALGORITHM = "premium"  # "basic", "enhanced" oder "premium" für bessere Genauigkeit

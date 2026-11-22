@@ -117,8 +117,15 @@ class FaceRecognitionEngine:
                     return self._filter_valid_faces(face_locations, image.shape[:2])
             except Exception as e:
                 logger.debug(f"face_recognition detection failed: {e}")
-            
-            # Method 2: Fallback - OpenCV Haar cascades (fastest)
+
+            # DeepFace ships detector adapters independently of dlib. Prefer
+            # modern landmark-aware detectors before the Haar cascade when the
+            # optional face_recognition package is missing or returns nothing.
+            deepface_faces = self._detect_faces_with_deepface(image)
+            if deepface_faces:
+                return self._filter_valid_faces(deepface_faces, image.shape[:2])
+
+            # Final fallback - OpenCV Haar cascades (fastest, least robust)
             try:
                 # load_and_preprocess_image returns RGB arrays (Pillow first).
                 gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if len(image.shape) == 3 else image
@@ -151,6 +158,54 @@ class FaceRecognitionEngine:
         except Exception as e:
             logger.error(f"Error in face detection: {e}")
             return []
+
+    def _detect_faces_with_deepface(
+        self, image: np.ndarray
+    ) -> List[Tuple[int, int, int, int]]:
+        """Use configured DeepFace detectors and return top/right/bottom/left boxes."""
+        extract_faces = getattr(DeepFace, "extract_faces", None)
+        if not callable(extract_faces):
+            return []
+
+        try:
+            # DeepFace accepts OpenCV arrays in BGR; app images are RGB.
+            detector_image = (
+                cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                if image.ndim == 3 and image.shape[2] == 3
+                else image
+            )
+            backends = list(dict.fromkeys(self.detection_backends))
+        except Exception as exc:  # noqa: BLE001 - detector fallback must be optional
+            logger.debug("Could not prepare DeepFace detector input: %s", exc)
+            return []
+
+        for backend in backends:
+            try:
+                detections = extract_faces(
+                    img_path=detector_image,
+                    detector_backend=backend,
+                    enforce_detection=False,
+                    align=True,
+                )
+                locations = []
+                for detection in detections or []:
+                    area = detection.get("facial_area") or {}
+                    confidence = float(detection.get("confidence") or 0.0)
+                    if confidence and confidence < 0.65:
+                        continue
+                    x, y = int(area.get("x", 0)), int(area.get("y", 0))
+                    width, height = int(area.get("w", 0)), int(area.get("h", 0))
+                    if width > 0 and height > 0:
+                        locations.append((y, x + width, y + height, x))
+                if locations:
+                    logger.debug(
+                        "DeepFace/%s detected %d face(s)", backend, len(locations)
+                    )
+                    return sorted(locations, key=lambda box: (box[0], box[3]))
+            except Exception as exc:  # noqa: BLE001 - try the next available backend
+                logger.debug("DeepFace/%s face detection failed: %s", backend, exc)
+
+        return []
     
     def _filter_valid_faces(self, face_locations: List[Tuple[int, int, int, int]], image_shape: Tuple[int, int]) -> List[Tuple[int, int, int, int]]:
         """
