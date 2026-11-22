@@ -36,10 +36,10 @@
 - Weist eine bestätigte Gruppe gesammelt einer neuen oder bestehenden Person zu
 
 ### 🧬 **Facial Attribute Analysis (Gesichtsanalyse)**
-- **Alter**: Geschätztes Alter in Jahren (±4.65 Jahre Genauigkeit)
-- **Geschlecht**: Männlich/Weiblich Wahrscheinlichkeiten (97.44% Genauigkeit)
-- **Emotionen**: 7 Emotionsklassen mit Konfidenzwerten
-- **Ethnische Herkunft**: 6 Hauptkategorien mit Wahrscheinlichkeitsverteilung
+- **Alter**: Modellschätzung in Jahren; keine garantierte Genauigkeit
+- **Geschlecht**: Modellschätzung mit den vom Analysemodell unterstützten Klassen
+- **Emotionen**: Modellschätzungen für mehrere Emotionsklassen
+- **Ethnizität**: Modellschätzung aus den vom Analysemodell unterstützten Kategorien
 - Modal-Popup für übersichtliche Darstellung aller Analysedaten
 
 ### 🏷️ **Person Namen System** - NEU!
@@ -89,11 +89,11 @@ Die Ergebnisse sind Schätzungen und sollten nicht für Identifikation, Diskrimi
 - **Face IDs**: Eindeutige Identifikation jedes erkannten Gesichts
 - **Person IDs**: UUID-basierte Personenidentifikation (unabhängig vom Namen)
 - **Metadaten**: Speicherung von Namen, Bildpfad, Position, Zeitstempel
-- **Embeddings**: 128/512-dimensionale Gesichtsvektoren für Ähnlichkeitssuche
+- **Embeddings**: 512-dimensionale Facenet512-Vektoren für die aktive Ähnlichkeitssuche
 
 ### Ähnlichkeitsberechnung
-- Ensemble-Ansatz mit mehreren Metriken (Cosine, Euclidean, Correlation)
-- Konfigurierbare Schwellenwerte (Standard: 68% Cosine für Auto-Namenszuweisung, per `FACE_AUTO_ASSIGN_THRESHOLD` übersteuerbar)
-- Konfidenzwerte für verbesserte Genauigkeit
+- Die aktive Suche vergleicht unit-normalisierte Facenet512-Vektoren mit Cosine-Ähnlichkeit
+- Suchstandard: 0,70 Cosine; automatische Namenszuweisung: 0,68, per `FACE_AUTO_ASSIGN_THRESHOLD` übersteuerbar
+- Ähnlichkeitswerte sind Ranking-Scores, keine Wahrscheinlichkeiten oder bestätigten Identitäten
 
-Alle Funktionen sind vollständig implementiert und einsatzbereit! 🎉
+Gesichts- und Attributerkennung kann falsche Ergebnisse liefern. Für Benchmark-Angaben siehe nur reproduzierbare Messungen mit einem geeigneten, beschrifteten Datensatz.

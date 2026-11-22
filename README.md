@@ -2,14 +2,13 @@
 
 <div align="center">
 
-![Python](https://img.shields.io/badge/python-v3.11+-blue.svg)
-![Streamlit](https://img.shields.io/badge/streamlit-1.32+-red.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
+![Python](https://img.shields.io/badge/python-v3.12-blue.svg)
+![Streamlit](https://img.shields.io/badge/streamlit-1.49+-red.svg)
 ![Issues](https://img.shields.io/github/issues/SchBenedikt/face.svg)
 
-**🚀 State-of-the-art facial recognition system with intelligent search, quality filtering, and advanced analytics**
+**Local face search with Facenet512 embeddings, aligned face crops, and a ChromaDB index**
 
-[📖 Documentation](#documentation) • [⚡ Quick Start](#quick-start) • [🎯 Features](#features) • [🧠 AI Models](#-ai-models--technical-deep-dive) • [🛠️ Installation](#installation) • [🤝 Contributing](#contributing)
+[📖 Documentation](#-documentation) • [⚡ Quick Start](#-quick-start) • [🎯 Features](#-key-features) • [🧠 Models and Search](#-models-and-search) • [🛠️ Installation](#-installation) • [🤝 Contributing](#-contributing)
 
 </div>
 
@@ -18,12 +17,12 @@
 - [🚀 Quick Start](#-quick-start)
 - [🌟 What Makes This Special?](#-what-makes-this-special)
 - [🎯 Key Features](#-key-features)
-- [🧠 AI Models & Technical Deep Dive](#-ai-models--technical-deep-dive)
-- [🏗️ Architecture](#%EF%B8%8F-architecture)
-- [🛠️ Installation](#%EF%B8%8F-installation)
+- [🧠 Models and Search](#-models-and-search)
+- [🏗️ Architecture](#-architecture)
+- [🛠️ Installation](#-installation)
 - [📥 Data Processing Workflow](#-data-processing-workflow)
 - [🎯 Use Cases](#-use-cases)
-- [⚠️ Important Considerations](#%EF%B8%8F-important-considerations)
+- [⚠️ Privacy and limitations](#-privacy-and-limitations)
 - [🤝 Contributing](#-contributing)
 
 ---
@@ -65,23 +64,23 @@ update, only already reprocessed images are searched.
 
 ## 🌟 What Makes This Special?
 
-This isn't just another face recognition tool. It's a **comprehensive facial intelligence platform** that combines cutting-edge AI with practical usability:
+The application provides local face search over images you choose to index:
 
-- **🧠 Multi-Model AI**: Leverages DeepFace, InsightFace, and custom ensemble algorithms
-- **⚡ High-Performance**: Processes thousands of images with optimized batch processing  
-- **🎯 Smart Filtering**: Advanced quality detection eliminates false positives
-- **🔍 Vector Search**: Lightning-fast similarity search through massive face databases
-- **📊 Rich Analytics**: Age, gender, emotion, and ethnicity analysis with confidence scores
-- **🌐 Web Scraping**: Automated image collection with ethical guidelines
+- **🧠 Face Search**: Facenet512 embeddings from DeepFace-detected faces
+- **⚡ Batch Processing**: Index new images or refresh a selected image directory
+- **🎯 Search Filtering**: Adjustable cosine similarity threshold and result filters
+- **🔍 Vector Search**: Similarity search across the locally indexed image collection
+- **📊 Face Analysis**: Optional age, gender, emotion, and ethnicity estimates
+- **🌐 Image Crawler**: Optional interactive image collection from websites
 - **👥 Person Management**: Intelligent name assignment, reviewed identity groups and automatic propagation
 
 ## 🎯 Key Features
 
 ### 🔍 **Advanced Search Engine**
 - **Similarity Search**: Find faces similar to uploaded images
-- **Quality Filtering**: Automatic removal of low-quality/false positive results
+- **Result Filters**: Filter displayed results by cosine similarity, face size, or assigned name
 - **Smart Modes**: High Precision, High Recall, or Balanced search algorithms
-- **Real-time Filtering**: Dynamic result filtering by similarity, size, quality
+- **Real-time Filtering**: Dynamic result filtering by similarity, size, and assigned name
 
 ### 🧠 **AI-Powered Analysis**
 - **Facial Recognition**: Facenet512 embeddings with RetinaFace-first detection and aligned face crops
@@ -90,10 +89,10 @@ This isn't just another face recognition tool. It's a **comprehensive facial int
 - **Search Threshold**: Defaults to 0.70 cosine similarity; adjust it to trade precision for recall
 
 ### ⚡ **High-Performance Processing**
-- **Batch Processing**: Handle multiple images efficiently with multi-threading
-- **Parallel Computing**: Multi-core optimization for maximum speed
-- **Smart Caching**: Avoid redundant computations with intelligent memory management
-- **Memory Management**: Optimized for desktop/laptop hardware
+- **Batch Processing**: Process image directories in configurable batches
+- **Incremental Updates**: Skip already indexed images or refresh a directory
+- **Smart Caching**: Cache face thumbnails and selected image processing results
+- **Local Index**: Keep embeddings and image paths in the configured local data directory
 
 ### 🧩 **Personen & Gruppierung**
 - **Identitätsgruppen**: Unbenannte Gesichter werden per Cosine-Ähnlichkeit gruppiert (Facenet512-Schwelle ~0,68) und erst nach Review zugewiesen
@@ -101,375 +100,29 @@ This isn't just another face recognition tool. It's a **comprehensive facial int
 - **Kalibrierte Ähnlichkeit**: ChromaDBs quadrierte L2-Distanz wird korrekt in Cosine umgerechnet
 
 ### 🌐 **Data Collection & Management**
-- **Web Scraping**: Automated image harvesting from websites with robots.txt compliance
-- **Duplicate Detection**: Intelligent duplicate removal using perceptual hashing
-- **Metadata Management**: Rich data organization and search capabilities
-- **Export/Import**: Flexible data exchange formats (JSON, CSV, SQLite)
+- **Web Scraping**: Optional interactive image crawler
+- **Duplicate Detection**: Find image-file variants before indexing
+- **Metadata Management**: Store image paths, face boxes, and assigned person names
+- **Image Cleanup**: Find and remove duplicate image-file variants
 
-## 🧠 AI Models & Technical Deep Dive
+## 🧠 Models and Search
 
-### 🎯 **Multi-Model Ensemble Architecture**
+### Face detection and embeddings
 
-Our system uses a sophisticated ensemble of **4 state-of-the-art deep learning models**, each optimized for different scenarios and conditions. This approach achieves superior accuracy compared to single-model systems.
+- The optional `face_recognition` package is tried first when installed. DeepFace detection then tries RetinaFace, MTCNN, and OpenCV; Haar cascades are the final fallback.
+- Face crops from DeepFace detectors are aligned and reused for both embedding extraction and the result preview.
+- The active recognition pipeline extracts one 512-dimensional Facenet512 embedding per detected face. Model candidates and ensemble helpers elsewhere in the code are legacy configuration; search does not combine four models.
+- Embeddings are unit-normalized and stored in the local ChromaDB collection. Search converts ChromaDB distances to cosine similarity and ranks indexed images.
+- The default search threshold is 0.70 cosine similarity. This is a starting threshold, not a calibrated probability that two images show the same person. DeepFace's Facenet512 verification threshold is a cosine distance of 0.30, corresponding to cosine similarity 0.70 for normalized vectors. See [DeepFace's threshold configuration](https://github.com/serengil/deepface/blob/master/deepface/config/threshold.py).
+- Search covers only images indexed in this application's database; it does not search the public web.
 
-#### **🔬 Core Models Explained**
+### Index updates
 
-##### **1. 🎯 FaceNet512 (Primary Model)**
-- **Architecture**: Inception ResNet v1 with 512-dimensional embeddings
-- **Training**: VGGFace2 dataset (3.3M images, 9K identities)
-- **Strengths**: Exceptional accuracy on high-quality frontal faces
-- **Use Case**: Primary model for most recognition tasks
+Changes to face detection, alignment, or embedding preprocessing create a new pipeline version. The app excludes older vectors until their source images are reprocessed. Use **Batch Face Processing → Update All Images** for each image directory. Back up the database before a large reindex.
 
-<details>
-<summary>📄 View Implementation Code</summary>
+This repository has no measured LFW accuracy, web-scale retrieval benchmark, or PimEyes comparison. Search quality depends on the source images, face size, pose, lighting, and indexed collection.
 
-```python
-# FaceNet512 Implementation
-def extract_facenet512_embedding(face_image):
-    """
-    FaceNet512 uses triplet loss training:
-    - Anchor: Target face
-    - Positive: Same person, different image  
-    - Negative: Different person
-    
-    Loss = max(0, ||anchor - positive||² - ||anchor - negative||² + margin)
-    """
-    model = DeepFace.build_model("Facenet512")
-    embedding = DeepFace.represent(face_image, model_name="Facenet512")
-    return np.array(embedding[0]["embedding"])  # 512-dimensional vector
-```
-
-</details>
-
-##### **2. 🎭 ArcFace (Angular Margin Model)**
-- **Architecture**: ResNet50 with Additive Angular Margin Loss
-- **Innovation**: Introduces angular margin in the feature space
-- **Strengths**: Superior performance on profile views and varying poses
-- **Use Case**: Challenging angles and pose variations
-
-<details>
-<summary>📄 View Implementation Code</summary>
-
-```python
-# ArcFace Implementation  
-def extract_arcface_embedding(face_image):
-    """
-    ArcFace introduces additive angular margin:
-    - Enhances discriminative power
-    - Better separation between different identities
-    - Robust to pose variations
-    
-    Modified Softmax: cos(θ + margin) instead of cos(θ)
-    """
-    model = DeepFace.build_model("ArcFace") 
-    embedding = DeepFace.represent(face_image, model_name="ArcFace")
-    return np.array(embedding[0]["embedding"])  # 512-dimensional vector
-```
-
-</details>
-
-##### **3. 🖼️ VGG-Face (Robust Recognition)**
-- **Architecture**: VGG16 adapted for face recognition
-- **Training**: VGGFace dataset (2.6M images, 2.6K identities)
-- **Strengths**: Excellent robustness against lighting variations
-- **Use Case**: Poor lighting conditions and older photos
-
-<details>
-<summary>📄 View Implementation Code</summary>
-
-```python
-# VGG-Face Implementation
-def extract_vggface_embedding(face_image):
-    """
-    VGG-Face advantages:
-    - Deep convolutional architecture (16 layers)
-    - Robust feature extraction
-    - Excellent generalization
-    - Strong performance on diverse datasets
-    """
-    model = DeepFace.build_model("VGG-Face")
-    embedding = DeepFace.represent(face_image, model_name="VGG-Face") 
-    return np.array(embedding[0]["embedding"])  # 4096-dimensional vector
-```
-
-</details>
-
-##### **4. ⚡ FaceNet (Speed Optimized)**
-- **Architecture**: Inception v3 with 128-dimensional embeddings
-- **Training**: Original FaceNet training protocol
-- **Strengths**: Fast processing for real-time applications
-- **Use Case**: Quick processing and resource-constrained environments
-
-<details>
-<summary>📄 View Implementation Code</summary>
-
-```python
-# FaceNet Implementation
-def extract_facenet_embedding(face_image):
-    """
-    FaceNet (128D) benefits:
-    - Compact 128-dimensional embeddings
-    - Fast inference time
-    - Lower memory requirements
-    - Good balance of speed vs accuracy
-    """
-    model = DeepFace.build_model("Facenet")
-    embedding = DeepFace.represent(face_image, model_name="Facenet")
-    return np.array(embedding[0]["embedding"])  # 128-dimensional vector
-```
-
-</details>
-
-### 🤖 **Intelligent Ensemble Fusion**
-
-#### **Adaptive Weighting Algorithm**
-
-Our system doesn't use simple averaging. Instead, it employs **adaptive weighting** based on image quality and model confidence:
-
-<details>
-<summary>📄 View Adaptive Weighting Code</summary>
-
-```python
-def calculate_adaptive_weights(image_quality, model_confidences):
-    """
-    Dynamic weight calculation based on:
-    1. Image quality metrics (sharpness, contrast, lighting)
-    2. Individual model confidence scores
-    3. Face pose and angle detection
-    4. Historical model performance on similar images
-    """
-    base_weights = {
-        'Facenet512': 0.40,  # Primary model
-        'ArcFace': 0.30,     # Pose variations
-        'VGG-Face': 0.20,    # Lighting robustness  
-        'Facenet': 0.10      # Speed component
-    }
-    
-    # Adjust based on image quality
-    if image_quality['sharpness'] < 0.3:
-        # Poor sharpness - boost VGG-Face
-        base_weights['VGG-Face'] *= 1.4
-        base_weights['Facenet512'] *= 0.8
-    elif image_quality['sharpness'] > 0.8:
-        # High sharpness - boost FaceNet512
-        base_weights['Facenet512'] *= 1.3
-    
-    # Adjust based on lighting
-    if image_quality['lighting'] < 0.4:
-        # Poor lighting - boost VGG-Face
-        base_weights['VGG-Face'] *= 1.3
-        base_weights['ArcFace'] *= 0.9
-    
-    # Normalize weights to sum to 1.0
-    total_weight = sum(base_weights.values())
-    return {k: v/total_weight for k, v in base_weights.items()}
-```
-
-</details>
-
-#### **Multi-Metric Similarity Calculation**
-
-Beyond simple cosine similarity, we use a **fusion of 4 different similarity metrics**:
-
-<details>
-<summary>📄 View Similarity Calculation Code</summary>
-
-```python
-def calculate_comprehensive_similarity(embedding1, embedding2):
-    """
-    Advanced similarity calculation using multiple metrics:
-    
-    1. Cosine Similarity: Measures angle between vectors
-    2. Euclidean Distance: Direct distance in embedding space  
-    3. Manhattan Distance: L1 norm distance
-    4. Correlation Coefficient: Linear relationship measure
-    """
-    # Normalize embeddings
-    emb1_norm = embedding1 / (np.linalg.norm(embedding1) + 1e-8)
-    emb2_norm = embedding2 / (np.linalg.norm(embedding2) + 1e-8)
-    
-    # 1. Cosine Similarity (primary metric)
-    cosine_sim = np.dot(emb1_norm, emb2_norm)
-    
-    # 2. Euclidean Similarity  
-    euclidean_dist = np.linalg.norm(emb1_norm - emb2_norm)
-    euclidean_sim = 1.0 / (1.0 + euclidean_dist)
-    
-    # 3. Manhattan Similarity
-    manhattan_dist = np.sum(np.abs(emb1_norm - emb2_norm))
-    manhattan_sim = 1.0 - (manhattan_dist / len(emb1_norm))
-    
-    # 4. Correlation Similarity
-    try:
-        correlation = np.corrcoef(emb1_norm, emb2_norm)[0, 1]
-        corr_sim = (correlation + 1.0) / 2.0 if not np.isnan(correlation) else 0.0
-    except:
-        corr_sim = 0.0
-    
-    # Weighted fusion with optimized weights
-    weights = {
-        'cosine': 0.45,      # Most reliable for face embeddings
-        'euclidean': 0.25,   # Good for overall distance
-        'correlation': 0.15, # Captures linear relationships
-        'manhattan': 0.15    # Robust to outliers
-    }
-    
-    primary_similarity = (
-        cosine_sim * weights['cosine'] +
-        euclidean_sim * weights['euclidean'] +
-        corr_sim * weights['correlation'] +
-        manhattan_sim * weights['manhattan']
-    )
-    
-    # Confidence based on consistency across metrics
-    confidence = 1.0 - np.std([cosine_sim, euclidean_sim, corr_sim, manhattan_sim])
-    
-    return {
-        'primary_similarity': primary_similarity,
-        'cosine_similarity': cosine_sim,
-        'euclidean_similarity': euclidean_sim,
-        'confidence_score': confidence,
-        'individual_metrics': {
-            'cosine': cosine_sim,
-            'euclidean': euclidean_sim, 
-            'manhattan': manhattan_sim,
-            'correlation': corr_sim
-        }
-    }
-```
-
-</details>
-
-### 🎭 **Face Detection Backends**
-
-The active detector order depends on optional dlib availability:
-
-- With `face-recognition` installed: configured dlib HOG/CNN first, then
-  DeepFace RetinaFace, MTCNN and OpenCV, followed by OpenCV Haar.
-- Without dlib: DeepFace RetinaFace, MTCNN and OpenCV first, followed by
-  OpenCV Haar. This is the default installation path.
-
-### 🔧 **Quality Assessment Pipeline**
-
-Our comprehensive quality assessment ensures only the best embeddings are used:
-
-<details>
-<summary>📄 View Quality Assessment Code</summary>
-
-```python
-def assess_face_quality(image, face_location):
-    """
-    Multi-dimensional quality assessment:
-    
-    1. Sharpness (Laplacian variance)
-    2. Contrast (standard deviation) 
-    3. Brightness (mean luminance)
-    4. Face size (relative to image)
-    5. Pose estimation (frontal vs profile)
-    6. Occlusion detection
-    """
-    face_crop = extract_face_region(image, face_location)
-    quality_metrics = {}
-    
-    # Convert to grayscale for analysis
-    gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
-    
-    # 1. Sharpness Analysis
-    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-    quality_metrics['sharpness'] = min(laplacian_var / 500.0, 1.0)
-    
-    # 2. Contrast Analysis  
-    contrast = gray.std()
-    quality_metrics['contrast'] = min(contrast / 64.0, 1.0)
-    
-    # 3. Brightness Analysis
-    brightness = gray.mean()
-    optimal_brightness = abs(brightness - 128) / 128  # 128 is optimal
-    quality_metrics['brightness'] = 1.0 - optimal_brightness
-    
-    # 4. Face Size Analysis
-    face_height = face_location[2] - face_location[0]
-    face_width = face_location[1] - face_location[3]
-    face_area = face_height * face_width
-    quality_metrics['size'] = min(face_area / 2500, 1.0)  # Optimal at 50x50+
-    
-    # 5. Pose Estimation (simplified)
-    aspect_ratio = face_width / face_height
-    pose_quality = 1.0 - abs(aspect_ratio - 1.0)  # Closer to 1.0 is better
-    quality_metrics['pose'] = max(0.0, pose_quality)
-    
-    # Overall quality score (weighted average)
-    weights = {
-        'sharpness': 0.3,
-        'contrast': 0.2, 
-        'brightness': 0.2,
-        'size': 0.2,
-        'pose': 0.1
-    }
-    
-    overall_quality = sum(quality_metrics[k] * weights[k] for k in weights)
-    
-    return {
-        'individual_scores': quality_metrics,
-        'overall_quality': overall_quality,
-        'is_high_quality': overall_quality > 0.6,
-        'quality_grade': get_quality_grade(overall_quality)
-    }
-
-def get_quality_grade(score):
-    """Convert quality score to letter grade"""
-    if score >= 0.9: return 'A+'
-    elif score >= 0.8: return 'A'  
-    elif score >= 0.7: return 'B+'
-    elif score >= 0.6: return 'B'
-    elif score >= 0.5: return 'C'
-    else: return 'D'
-```
-
-</details>
-
-### 🎚️ **Processing Modes**
-
-Choose the optimal balance between speed and accuracy:
-
-#### **⚡ Ultra-Fast Mode**
-```python
-ULTRA_FAST_CONFIG = {
-    'detection_backend': 'opencv',      # Haar cascades
-    'models': ['Facenet'],              # Single fast model
-    'embedding_size': 128,              # Compact embeddings
-    'batch_size': 50,                   # Large batches
-    'quality_check': False,             # Skip quality assessment
-    'expected_speed': '~0.5s per image'
-}
-```
-
-#### **⚖️ Balanced Mode (Default)**
-```python
-BALANCED_CONFIG = {
-    'detection_backend': 'cnn',         # CNN detection  
-    'models': ['Facenet512', 'ArcFace'], # Dual model ensemble
-    'embedding_size': 512,              # High-quality embeddings
-    'batch_size': 25,                   # Moderate batches
-    'quality_check': True,              # Basic quality check
-    'expected_speed': '~1.5s per image'
-}
-```
-
-#### **🎯 Premium Mode**
-```python
-PREMIUM_CONFIG = {
-    'detection_backend': 'mtcnn',       # Multi-task CNN
-    'models': ['Facenet512', 'ArcFace', 'VGG-Face', 'Facenet'], # Full ensemble
-    'embedding_size': 512,              # Maximum quality
-    'batch_size': 10,                   # Small batches for accuracy
-    'quality_check': True,              # Comprehensive quality assessment
-    'face_alignment': True,             # Geometric face alignment
-    'expected_speed': '~4s per image'
-}
-```
-
-## 🏗️ Architecture
+## 🛠️ Installation
 
 ### Prerequisites
 - **Python 3.11+** (recommended for best performance)
@@ -499,13 +152,9 @@ pip install -r requirements-optional.txt
 python setup_env.py
 ```
 
-### Advanced Setup with GPU Support
+### Development tools
 ```bash
-# Optional: CUDA build for the GPU-accelerated CLI scripts (the Streamlit app
-# itself runs on the ONNX backend and does not need torch)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-
-# Install development dependencies
+# Install test and formatting tools
 pip install pytest black flake8
 
 # Run tests
@@ -514,164 +163,28 @@ python -m pytest tests/
 
 ## 📥 Data Processing Workflow
 
-Once you have the system installed, here's how to collect and process images for face recognition:
+### Add and index images
 
-### 🌐 **Step 1: Download Images**
+1. Place images in `data/images` (or in `images` under the configured `FACE_DATA_DIR`).
+2. Run `python fast_process.py` to index new images. Use `python fast_process.py --update` to reprocess that directory after changing the recognition pipeline.
+3. To process scraped images or another directory, use **Batch Face Processing** in the Streamlit app, select the directory, and choose **Process New Images Only** or **Update All Images**.
+4. Start the interface with `streamlit run app.py`, open **Face Search**, and upload an image containing a face.
 
-Use the `image-download.py` script to collect images from websites:
+The `image-download.py` crawler is interactive. Run `python image-download.py`, review its prompts, then index the downloaded images with the steps above. It makes requests to external websites; follow their access rules.
 
-```bash
-# Download images from a website
-python image-download.py --url "https://example.com" --output "data/images/example_site"
+### Remove duplicate image files
 
-# Download with specific parameters
-python image-download.py --url "https://example.com" --max-images 100 --min-size 200
-```
-
-**Options:**
-- `--url`: Website URL to scrape images from
-- `--output`: Directory to save downloaded images
-- `--max-images`: Maximum number of images to download (default: 50)
-- `--min-size`: Minimum image size in pixels (default: 100)
-- `--formats`: Image formats to download (jpg,png,webp)
-
-**Important**: Always respect robots.txt and website terms of service!
-
-### ⚡ **Step 2: Process Images for Face Recognition**
-
-Use `fast_process.py` to extract faces from downloaded images:
+`clean_duplicates.py` reports image-file variants by default. Review the report before deleting anything:
 
 ```bash
-# Process all images in a directory
-python fast_process.py --input "data/images" --mode balanced
-
-# Ultra-fast processing (lower quality)
-python fast_process.py --input "data/images" --mode ultra-fast
-
-# Premium processing (highest quality)
-python fast_process.py --input "data/images" --mode premium
+python clean_duplicates.py --dir data/images --report
 ```
 
-**Processing Modes:**
-- **`ultra-fast`**: ~0.5s per image, good for quick testing
-- **`balanced`**: ~1.5s per image, recommended for most use cases  
-- **`premium`**: ~4s per image, best quality for research
+To remove detected image-file duplicates after review, add `--clean`. This cleanup concerns image files; it does not verify embedding quality or identity matches.
 
-**What this does:**
-1. Detects faces in each image
-2. Extracts face embeddings using AI models
-3. Stores embeddings in ChromaDB vector database
-4. Saves metadata (image path, face location, timestamps)
+### Settings and data location
 
-### 🧹 **Step 3: Clean Duplicates**
-
-Remove duplicate and low-quality faces to improve search results:
-
-```bash
-# Remove duplicate faces (similar embeddings)
-python clean_duplicates.py --similarity-threshold 0.95
-
-# Remove low-quality faces
-python clean_duplicates.py --quality-threshold 0.6
-
-# Comprehensive cleanup
-python clean_duplicates.py --full-cleanup
-```
-
-**Cleanup Options:**
-- `--similarity-threshold`: Remove faces above this similarity (0.0-1.0)
-- `--quality-threshold`: Remove faces below this quality score (0.0-1.0) 
-- `--full-cleanup`: Remove duplicates + low quality + orphaned metadata
-- `--dry-run`: Show what would be deleted without actually deleting
-
-### 📊 **Step 4: Verify Results**
-
-Check your database status:
-
-```bash
-# Get database statistics
-python -c "from vector_store import VectorStore; vs = VectorStore(); print(vs.get_collection_stats())"
-
-# Launch web interface to browse results
-streamlit run app.py
-```
-
-### 🔄 **Complete Workflow Example**
-
-Here's a complete example of processing a new image collection:
-
-```bash
-# 1. Download images from a website
-python image-download.py --url "https://example-university.edu/photos" --output "data/images/university" --max-images 200
-
-# 2. Process images to extract faces
-python fast_process.py --input "data/images/university" --mode balanced
-
-# 3. Clean up duplicates and low-quality faces
-python clean_duplicates.py --similarity-threshold 0.9 --quality-threshold 0.7
-
-# 4. Launch web interface to explore results
-streamlit run app.py
-```
-
-### ⚙️ **Advanced Configuration**
-
-Customize processing behavior by editing configuration files:
-
-**`config.py`** - Main system settings:
-```python
-# Face detection settings
-FACE_DETECTION_BACKENDS = ["retinaface", "mtcnn", "opencv"]
-FACE_RECOGNITION_MODEL = "cnn"  # Optional face-recognition/dlib HOG or CNN
-SIMILARITY_THRESHOLD = 0.6
-MIN_FACE_SIZE = 30
-
-# Database settings  
-DATABASE_PATH = "./data/face_vectors.db"
-COLLECTION_NAME = "face_embeddings"
-```
-
-**`fast_config.py`** - Processing mode settings:
-```python
-# Modify processing modes
-ULTRA_FAST_CONFIG = {
-    'detection_backend': 'opencv',
-    'models': ['Facenet'],
-    'batch_size': 50
-}
-```
-
-### 🚨 **Troubleshooting**
-
-**Common Issues:**
-
-1. **"No faces detected"**:
-   - Check image quality and lighting
-   - Try different detection backend in config.py
-   - Verify minimum face size settings
-
-2. **"Memory error during processing"**:
-   - Reduce batch size in fast_config.py
-   - Use ultra-fast mode instead of premium
-   - Process smaller image batches
-
-3. **"Database connection failed"**:
-   - Check if ChromaDB is properly installed
-   - Verify database path permissions
-   - Try deleting and recreating database
-
-4. **"Slow processing speed"**:
-   - Use ultra-fast mode for testing
-   - Reduce image resolution before processing
-   - Check available RAM and CPU usage
-
-### 📋 **Best Practices**
-
-1. **Start Small**: Begin with 10-20 images to test the workflow
-2. **Quality Over Quantity**: Better to have fewer high-quality faces than many poor ones
-3. **Regular Cleanup**: Run duplicate removal after each large batch
-4. **Backup Database**: Copy `data/face_vectors.db` before major changes
-5. **Monitor Resources**: Watch RAM usage during large batch processing
+`config.py` defines the active detector order, Facenet512 model, default search threshold (0.70), and ChromaDB path. `FACE_DATA_DIR` relocates the images and database together. The CLI batch processor handles `IMAGES_DIR`; use the app's batch page to update additional directories.
 
 ## 🎯 Use Cases
 
@@ -681,7 +194,7 @@ ULTRA_FAST_CONFIG = {
 
 ### 🔬 **Research & Development**
 - Computer vision research and algorithm development
-- Face recognition accuracy benchmarking
+- Retrieval experiments on a labeled dataset with documented metrics
 - Academic projects and scientific papers
 - AI model performance evaluation
 
@@ -698,7 +211,7 @@ ULTRA_FAST_CONFIG = {
 - Digital asset management and organization
 - Photo journalism and media production
 - Historical photo analysis and archiving
-- Prototype development for commercial applications
+- Photo archive prototypes using images you are authorized to process
 
 </td>
 </tr>
@@ -707,21 +220,18 @@ ULTRA_FAST_CONFIG = {
 ## 🏗️ Architecture
 
 ```
-┌─ Web Interface (Streamlit)
-├─ Face Recognition Engine (Multi-Model Ensemble)
-├─ Vector Database (ChromaDB with 512D embeddings)  
-├─ Image Processing Pipeline (OpenCV + PIL)
-├─ Quality Management System (BRISQUE + Custom metrics)
-├─ Web Scraping Engine (BeautifulSoup + Requests)
-└─ Analytics & Reporting (Pandas + Plotly)
+Streamlit UI → image loader and face detector → aligned face crop
+            → Facenet512 embedding → ChromaDB cosine-ranked search
 ```
+
+Image crawling is a separate optional workflow. Search runs against the local ChromaDB collection and indexed image paths.
 
 ### Core Components
 
 - **`app.py`** - Main Streamlit web application with modern UI
-- **`face_recognition_engine.py`** - Core AI processing with ensemble methods
+- **`face_recognition_engine.py`** - Face detection, aligned crops, and Facenet512 embeddings
 - **`vector_store.py`** - ChromaDB database management and similarity search
-- **`image_quality_manager.py`** - Quality assessment and enhancement
+- **`image_quality_manager.py`** - Image quality checks used by cleanup workflows
 - **`fast_process.py`** - High-performance batch processing engine
 
 ## 🤝 Contributing
@@ -742,84 +252,16 @@ We welcome contributions! Here's how to get started:
 
 ## 📚 Documentation
 
-- **[User Guide](SYSTEM_DOKUMENTATION.md)** - Complete system overview and usage
 - **[Feature List](FEATURES.md)** - Detailed feature documentation
 - **[Testing Guide](TESTING_GUIDE.md)** - Testing procedures and benchmarks
-- **[API Reference](docs/API.md)** - Programmatic interface documentation
 
-## ⚠️ Important Considerations
+## ⚠️ Privacy and limitations
 
-### 🎓 **Intended Use - Educational & Research Only**
-
-**This system is designed for educational, research, and personal use only.** It should NOT be used for:
-
-❌ **Prohibited Uses:**
-- **Surveillance without consent** (violates privacy laws)
-- **Law enforcement identification** (insufficient accuracy/reliability)
-- **Employment screening** (potential discrimination)
-- **Immigration/border control** (human rights concerns)
-- **Targeting minors** (special protection required)
-- **Commercial profiling** (without explicit consent)
-- **Stalking or harassment** (illegal in most jurisdictions)
-
-✅ **Appropriate Uses:**
-- **Personal photo organization** (your own images)
-- **Academic research** (with proper ethical approval)
-- **Educational demonstrations** (computer vision learning)
-- **Historical photo analysis** (with proper consent/rights)
-- **Art and creative projects** (non-commercial)
-
-### 🏛️ **Legal Framework & Compliance**
-
-#### **🇪🇺 European Union - GDPR Compliance**
-- **Biometric Data Protection**: Under [GDPR Article 9](https://gdpr-info.eu/art-9-gdpr/), biometric data is classified as "special category" data
-- **Explicit Consent Required**: Processing requires explicit, informed consent from data subjects
-- **Data Subject Rights**: Right to erasure, portability, and rectification must be respected
-- **Legal Basis**: [GDPR Article 6](https://gdpr-info.eu/art-6-gdpr/) requires legitimate legal basis for processing
-- **Impact Assessment**: [GDPR Article 35](https://gdpr-info.eu/art-35-gdpr/) may require Data Protection Impact Assessment (DPIA)
-
-#### **🇺🇸 United States - State & Federal Laws**
-- **Illinois BIPA**: [Biometric Information Privacy Act](https://www.ilga.gov/legislation/ilcs/ilcs3.asp?ActID=3004) requires written consent
-- **Texas & Washington**: Similar biometric privacy statutes with consent requirements
-- **California CCPA**: [Consumer Privacy Act](https://oag.ca.gov/privacy/ccpa) grants consumer rights over biometric data
-- **Federal Trade Commission**: [FTC Guidelines](https://www.ftc.gov/business-guidance/privacy-security) on facial recognition practices
-
-#### **🌍 International Considerations**
-- **Canada PIPEDA**: [Personal Information Protection](https://www.priv.gc.ca/en/privacy-topics/privacy-laws-in-canada/the-personal-information-protection-and-electronic-documents-act-pipeda/) requires consent
-- **Australia Privacy Act**: [Biometric recognition guidelines](https://www.oaic.gov.au/) by Office of Australian Information Commissioner
-- **China Cybersecurity Law**: Strict regulations on [biometric data collection](http://www.npc.gov.cn/englishnpc/c23934/202112/1abd8829788946dd9c62f44373219a72.shtml)
-
-### 🔒 **Privacy & Ethics**
-- **Data Protection**: Full GDPR compliance with local-only processing
-- **Consent Management**: Built-in consent tracking and management tools
-- **Bias Awareness**: Active algorithmic bias detection and mitigation
-- **Responsible Use**: Comprehensive ethical guidelines and safeguards
-- **Transparency**: Open-source codebase for full algorithmic transparency
-
-### 🎯 **Technical Limitations & Transparency**
-- **Quality Dependent**: Performance varies significantly with image quality and lighting
-- **Computational Requirements**: Resource-intensive for very large datasets (75K+ faces)
-- **Accuracy Variance**: Performance may vary across demographic groups (potential bias)
-- **False Positives/Negatives**: Not suitable for high-stakes identification scenarios
-- **Legal Compliance**: Users are solely responsible for legal compliance in their jurisdiction
-
-### 🛡️ **Ethical AI Principles**
-
-This project follows established ethical AI principles:
-
-1. **Transparency**: Open-source code allows full inspection of algorithms
-2. **Accountability**: Clear documentation of system capabilities and limitations
-3. **Fairness**: Bias detection and mitigation measures implemented
-4. **Privacy**: Local processing ensures data never leaves user's device
-5. **Human Oversight**: System requires human verification for all decisions
-6. **Beneficence**: Designed to benefit society through education and research
-
-### 📚 **Educational Resources**
-
-- **[Partnership on AI - Facial Recognition Guidelines](https://partnershiponai.org/)**
-- **[IEEE Standards for Ethical AI](https://standards.ieee.org/beyond-standards/innovation/ai-ethics/)**
-- **[MIT Technology Review - Facial Recognition Ethics](https://www.technologyreview.com/topic/facial-recognition/)**
-- **[Electronic Frontier Foundation - Face Recognition](https://www.eff.org/issues/face-recognition)**
+- Images and face embeddings are stored under the configured local data directory. The optional image crawler makes requests to external websites.
+- The app has no built-in consent tracking, legal-compliance checks, or demographic-bias evaluation. You are responsible for deciding which images you may process and for following applicable rules.
+- Face search can return false matches and miss correct matches. Cosine similarity is a ranking score, not a probability or identity confirmation. Do not rely on it for high-stakes decisions.
+- The app searches only its indexed local collection; it is not a public-web face search service.
+- No formal accuracy or fairness benchmark is currently published for this project.
 
 ## 🚀 Roadmap
 
@@ -830,19 +272,9 @@ This project follows established ethical AI principles:
 - [ ] **Advanced Analytics**: Enhanced reporting and visualization dashboard
 - [ ] **Multi-language Support**: Interface internationalization
 
-## 🏆 Recognition & Benchmarks
+## 📏 Performance and Evaluation
 
-### Performance Achievements
-- **99.2% accuracy** on Labeled Faces in the Wild (LFW) benchmark
-- **Sub-second search** through 75,000+ face embeddings
-- **Multi-threading optimization** for up to 4x processing speed improvement
-- **Memory efficiency** with large-scale dataset handling
-
-### Technical Innovation
-- **Adaptive ensemble weighting** based on image quality metrics
-- **Multi-metric similarity fusion** combining cosine, Euclidean, and correlation measures
-- **Privacy-by-design architecture** with local-only processing
-- **Comprehensive bias detection** and fairness metrics
+This repository does not publish a benchmark against LFW, PimEyes, or a 75,000-face collection. The app searches images indexed in the local database. Runtime and retrieval quality depend on the hardware and collection; treat similarity scores as ranking signals and review matches manually.
 
 ## 🏆 Community & Stats
 
@@ -853,14 +285,13 @@ This project follows established ethical AI principles:
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+There is currently no `LICENSE` file in this repository. Check the repository owner's licensing terms before redistribution.
 
 ## 🙏 Acknowledgments
 
 Special thanks to the amazing open-source community:
 
 - **[DeepFace](https://github.com/serengil/deepface)** - Facial analysis framework
-- **[InsightFace](https://github.com/deepinsight/insightface)** - Deep face recognition toolkit
 - **[Streamlit](https://streamlit.io/)** - Web application framework
 - **[ChromaDB](https://www.trychroma.com/)** - Vector database for embeddings
 - **[OpenCV](https://opencv.org/)** - Computer vision library
@@ -870,7 +301,6 @@ Special thanks to the amazing open-source community:
 - **[GitHub Discussions](https://github.com/SchBenedikt/face/discussions)** - Ask questions and share ideas
 - **[Issues](https://github.com/SchBenedikt/face/issues)** - Report bugs and request features
 - **[Wiki](https://github.com/SchBenedikt/face/wiki)** - Comprehensive documentation
-- **[Examples](examples/)** - Code examples and tutorials
 
 ---
 
