@@ -14,10 +14,12 @@ def setup_environment():
     """
     try:
         # Set threading and parallelization settings
-        os.environ['OMP_NUM_THREADS'] = '1'
-        os.environ['MKL_NUM_THREADS'] = '1'
-        os.environ['NUMEXPR_NUM_THREADS'] = '1'
-        os.environ['OPENBLAS_NUM_THREADS'] = '1'
+        # Keep safe defaults, but let operators tune CPU parallelism before
+        # startup instead of silently overwriting their performance settings.
+        os.environ.setdefault('OMP_NUM_THREADS', '1')
+        os.environ.setdefault('MKL_NUM_THREADS', '1')
+        os.environ.setdefault('NUMEXPR_NUM_THREADS', '1')
+        os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
         
         # Set multiprocessing start method for compatibility
         if hasattr(multiprocessing, 'set_start_method'):
@@ -32,8 +34,13 @@ def setup_environment():
         warnings.filterwarnings('ignore', message="pkg_resources is deprecated as an API.*")
         warnings.filterwarnings('ignore', category=DeprecationWarning)
         
-        # Set TensorFlow to use CPU only for better stability
-        os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+        # Do not disable an installed GPU runtime by default. DeepFace can use
+        # ONNX Runtime, TensorFlow, or PyTorch depending on the selected
+        # backend and installed packages. CPU-only mode remains available for
+        # machines with unsupported drivers or for reproducible debugging.
+        force_cpu = os.environ.get('FACE_FORCE_CPU', '').strip().lower()
+        if force_cpu in {'1', 'true', 'yes', 'on'}:
+            os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
         
         # Optimize for CPU performance
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Reduce TensorFlow logging

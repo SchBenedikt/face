@@ -47,6 +47,16 @@ streamlit run app.py
 
 **🎉 That's it!** Open your browser to `http://localhost:8501` and start exploring.
 
+### Performance and hardware
+
+The app preserves the machine's CUDA visibility so a compatible GPU-enabled
+DeepFace runtime can use the GPU. The default lightweight DeepFace install uses
+ONNX Runtime; TensorFlow or PyTorch backends require their corresponding
+DeepFace extras and compatible GPU libraries. Set `FACE_FORCE_CPU=1` before
+launching the app to force CPU mode. CPU thread limits default to `1`, and can
+be overridden with `OMP_NUM_THREADS`, `MKL_NUM_THREADS`,
+`NUMEXPR_NUM_THREADS`, or `OPENBLAS_NUM_THREADS`.
+
 ## 🌟 What Makes This Special?
 
 This isn't just another face recognition tool. It's a **comprehensive facial intelligence platform** that combines cutting-edge AI with practical usability:
