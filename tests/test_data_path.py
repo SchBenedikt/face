@@ -22,7 +22,9 @@ APP_FILE = PROJECT_ROOT / "app.py"
 def test_upload_process_gallery_names_and_search_in_empty_data_dir(tmp_path):
     data_dir = tmp_path / "fresh-data"
     source_image = tmp_path / "synthetic-portrait.jpg"
+    replacement_image = tmp_path / "replacement-portrait.jpg"
     Image.new("RGB", (640, 480), (180, 140, 120)).save(source_image, format="JPEG")
+    Image.new("RGB", (640, 480), (80, 130, 190)).save(replacement_image, format="JPEG")
     assert not data_dir.exists()
 
     script = f"""
@@ -37,6 +39,7 @@ from vector_store import FaceVectorStore
 
 APP = {str(APP_FILE)!r}
 SOURCE = Path({str(source_image)!r})
+REPLACEMENT = Path({str(replacement_image)!r})
 UPLOAD = "📥 Image Upload & Processing"
 GALLERY = "👥 Face Gallery"
 NAMES = "🏷️ Name Gallery"
@@ -161,6 +164,11 @@ assert any("Enhanced Search Results" in value for value in texts(at, "subheader"
 print("SEARCH_RESULTS:", len(results))
 print("SEARCH_TOP:", round(results[0]["similarity"], 4))
 print("SEARCH_IMAGES:", len(images(at)))
+
+# Uploading a different image invalidates detections from the prior query.
+at.file_uploader[0].set_value((REPLACEMENT.name, REPLACEMENT.read_bytes(), "image/jpeg")).run()
+assert not exceptions(at), exceptions(at)
+assert "detected_faces" not in at.session_state, "old query faces survived an upload change"
 print("E2E_OK")
 """
     env = {

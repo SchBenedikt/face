@@ -13,6 +13,7 @@ import csv
 import io
 import streamlit as st
 import asyncio
+import hashlib
 from urllib.parse import urlparse
 import numpy as np
 import cv2
@@ -465,6 +466,16 @@ def face_search_page():
         st.session_state.current_uploaded_file = uploaded_file
     elif 'current_uploaded_file' in st.session_state:
         uploaded_file = st.session_state.current_uploaded_file
+
+    if uploaded_file is not None and st.session_state.get('detected_faces'):
+        detected_data = st.session_state.detected_faces
+        current_digest = hashlib.sha256(uploaded_file.getvalue()).hexdigest()
+        analyzed_digest = detected_data.get('image_sha256')
+        if analyzed_digest is None and detected_data.get('image_data') is not None:
+            analyzed_digest = hashlib.sha256(detected_data['image_data']).hexdigest()
+        if analyzed_digest != current_digest:
+            # Never show faces from an earlier upload beside a new query image.
+            del st.session_state.detected_faces
     
     col1, col2 = st.columns([1, 1])
     
@@ -674,7 +685,7 @@ def analyze_uploaded_image_for_faces(uploaded_file, max_results: int, similarity
             
             # Store detected faces in session state
             st.session_state.detected_faces = {
-                'image_data': uploaded_file.getvalue(),
+                'image_sha256': hashlib.sha256(uploaded_file.getvalue()).hexdigest(),
                 'face_locations': face_locations,
                 'query_image': query_image,
                 'max_results': max_results,
