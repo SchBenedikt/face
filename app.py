@@ -506,19 +506,19 @@ def face_search_page():
                 )
                 
                 similarity_threshold = st.slider(
-                    "Similarity Threshold", 
+                    "Min. cosine similarity",
                     min_value=0.0, 
                     max_value=1.0, 
                     value=float(query_settings["similarity_threshold"]),
                     step=0.05,
                     key="face_search_similarity_threshold",
-                    help="Mindestähnlichkeit für Suchergebnisse. Höhere Werte liefern weniger, dafür engere Treffer."
+                    help="Kosinusähnlichkeit der Facenet512-Vektoren (kein Match-Wahrscheinlichkeitswert). 0,70 ist ein sinnvoller Startwert; niedriger liefert mehr, aber unsicherere Treffer."
                 )
                 
                 # Similarity filter (the old labels called this "quality")
                 quality_filter = st.selectbox(
-                    "🎯 Similarity Filter",
-                    ["All Matches", "Strong Matches (≥70%)", "Medium+ Matches (≥40%)", "Weak Matches (≥30%)"],
+                    "🎯 Cosine filter",
+                    ["All Matches", "Strong cosine (≥70%)", "Medium cosine (≥40%)", "Weak cosine (≥30%)"],
                     index=0,
                     key="face_search_quality_filter",
                     help="Blendet Treffer unterhalb der gewählten Ähnlichkeit aus"
@@ -876,13 +876,13 @@ def apply_advanced_face_filters(faces, search_params):
             
             # Similarity-based filtering; the labels used to promise image
             # quality, but only the similarity score is available here.
-            if search_params['quality_filter'] == "Strong Matches (≥70%)":
+            if search_params['quality_filter'] == "Strong cosine (≥70%)":
                 if face['similarity'] < 0.7 or face_size < 80:
                     continue
-            elif search_params['quality_filter'] == "Medium+ Matches (≥40%)":
+            elif search_params['quality_filter'] == "Medium cosine (≥40%)":
                 if face['similarity'] < 0.4 or face_size < 30:
                     continue
-            elif search_params['quality_filter'] == "Weak Matches (≥30%)":
+            elif search_params['quality_filter'] == "Weak cosine (≥30%)":
                 if face['similarity'] < 0.3:
                     continue
             
@@ -2208,7 +2208,7 @@ def display_search_results(results: List[Dict[str, Any]]):
         
         with col_f1:
             min_similarity_filter = st.slider(
-                "Min Similarity %",
+                "Min cosine similarity %",
                 min_value=0,
                 max_value=100,
                 value=0,
@@ -2225,8 +2225,8 @@ def display_search_results(results: List[Dict[str, Any]]):
         
         with col_f2:
             quality_level = st.selectbox(
-                "Similarity Level",
-                ["All", "Medium+ (≥40%)", "High (≥70%)"],
+                "Cosine similarity level",
+                ["All", "Medium cosine (≥40%)", "High cosine (≥70%)"],
                 index=0,
                 help="Blendet Treffer unterhalb der gewählten Ähnlichkeit aus"
             )
@@ -2266,9 +2266,9 @@ def display_search_results(results: List[Dict[str, Any]]):
             pass
         
         # Similarity filter (the old label called it quality)
-        if quality_level == "High (≥70%)" and result['similarity'] < 0.7:
+        if quality_level == "High cosine (≥70%)" and result['similarity'] < 0.7:
             continue
-        elif quality_level == "Medium+ (≥40%)" and result['similarity'] < 0.4:
+        elif quality_level == "Medium cosine (≥40%)" and result['similarity'] < 0.4:
             continue
         
         # Named faces filter
@@ -2381,7 +2381,6 @@ def display_search_results(results: List[Dict[str, Any]]):
                 face_area = face_width * face_height
 
                 similarity_percentage = face_data['similarity'] * 100
-                confidence_score = face_data.get('confidence_score', face_data['similarity']) * 100
 
                 quality_indicators = []
                 if face_size >= 80:
@@ -2394,17 +2393,14 @@ def display_search_results(results: List[Dict[str, Any]]):
                     quality_indicators.append("✨ Large")
 
                 if similarity_percentage >= 70:
-                    st.success(f"**🎯 {similarity_percentage:.1f}%**")
-                    st.caption(f"🔒 Confidence: {confidence_score:.1f}% | Size: {face_size}px")
+                    st.success(f"**🎯 Cosine similarity: {similarity_percentage:.1f}%**")
                 elif similarity_percentage >= 50:
-                    st.info(f"**✅ {similarity_percentage:.1f}%**")
-                    st.caption(f"📊 Confidence: {confidence_score:.1f}% | Size: {face_size}px")
+                    st.info(f"**✅ Cosine similarity: {similarity_percentage:.1f}%**")
                 elif similarity_percentage >= 30:
-                    st.warning(f"**⚠️ {similarity_percentage:.1f}%**")
-                    st.caption(f"📈 Confidence: {confidence_score:.1f}% | Size: {face_size}px")
+                    st.warning(f"**⚠️ Cosine similarity: {similarity_percentage:.1f}%**")
                 else:
-                    st.error(f"**❓ {similarity_percentage:.1f}%**")
-                    st.caption(f"🔍 Confidence: {confidence_score:.1f}% | Size: {face_size}px")
+                    st.error(f"**❓ Cosine similarity: {similarity_percentage:.1f}%**")
+                st.caption(f"Kein Match-Wahrscheinlichkeitswert | Gesichtsgröße: {face_size}px")
 
                 if quality_indicators:
                     st.caption(" | ".join(quality_indicators))
