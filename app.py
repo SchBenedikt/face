@@ -637,20 +637,20 @@ def load_query_image(uploaded_file):
 
 def analyze_uploaded_image_for_faces(uploaded_file, max_results: int, similarity_threshold: float):
     """Analyze uploaded image and detect all faces"""
-    
-    temp_path = Path("/tmp/query_image.jpg")
-    
+
     with st.spinner("🔍 Analyzing image and detecting faces..."):
         try:
-            # Save uploaded file temporarily
-            with open(temp_path, "wb") as f:
-                f.write(uploaded_file.getvalue())
-            
-            # Load and preprocess image
-            query_image = load_and_preprocess_image(temp_path)
-            
-            if query_image is None:
-                st.error("❌ Error loading image. Supported formats: JPG, PNG, BMP, WEBP")
+            # Decode each upload directly from its own in-memory stream. A
+            # shared /tmp filename allowed concurrent Streamlit sessions to
+            # overwrite each other's query image.
+            uploaded_image, image_error = load_query_image(uploaded_file)
+            if uploaded_image is None:
+                st.error(image_error or "❌ Error loading image. Supported formats: JPG, PNG, BMP, WEBP")
+                return
+
+            query_image = np.asarray(uploaded_image, dtype=np.uint8)
+            if query_image.shape[0] < 50 or query_image.shape[1] < 50:
+                st.error("❌ Das Bild ist zu klein. Bitte ein Bild mit mindestens 50 × 50 Pixeln wählen.")
                 return
             
             # Detect faces
@@ -675,7 +675,6 @@ def analyze_uploaded_image_for_faces(uploaded_file, max_results: int, similarity
                 'query_image': query_image,
                 'max_results': max_results,
                 'similarity_threshold': similarity_threshold,
-                'temp_path': str(temp_path)
             }
             
             st.success(f"✅ {len(face_locations)} face(s) detected! Select the desired face for search on the right.")
@@ -683,10 +682,6 @@ def analyze_uploaded_image_for_faces(uploaded_file, max_results: int, similarity
             
         except Exception as e:
             st.error(f"❌ Error analyzing image: {str(e)}")
-        finally:
-            # Clean up temp file
-            if temp_path.exists():
-                temp_path.unlink()
 
 def show_face_selection_interface():
     """Show interface for selecting which face to search for"""
