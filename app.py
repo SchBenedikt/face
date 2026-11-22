@@ -849,9 +849,13 @@ def search_with_selected_face_enhanced(face_index: int):
                 adjusted_max_results = max_results * 2
             
             # Search for similar faces
+            # Fetch a wider candidate pool so the UI filters can remove small
+            # or weak results without leaving the requested result page empty.
+            requested_results = max(1, adjusted_max_results)
+            candidate_limit = min(500, max(requested_results, requested_results * 5))
             similar_faces = st.session_state.vector_store.search_similar_faces(
                 query_embedding, 
-                n_results=adjusted_max_results,
+                n_results=candidate_limit,
                 min_similarity=adjusted_threshold
             )
             
@@ -860,7 +864,9 @@ def search_with_selected_face_enhanced(face_index: int):
                 filtered_faces = apply_advanced_face_filters(similar_faces, search_params)
                 
                 # Sort results based on selected criteria
-                sorted_faces = sort_search_results(filtered_faces, search_params['sort_by'])
+                sorted_faces = sort_search_results(
+                    filtered_faces, search_params['sort_by']
+                )[:requested_results]
                 
                 # Store results
                 st.session_state.search_results = sorted_faces
@@ -902,39 +908,46 @@ def search_with_selected_face_enhanced(face_index: int):
             st.error(f"❌ Fehler bei der erweiterten Suche: {str(e)}")
 
 def apply_advanced_face_filters(faces, search_params):
-    """Apply advanced quality and size filters to search results"""
+    """Apply score and optional geometry filters without rejecting unknown boxes."""
     filtered_faces = []
     
     for face in faces:
         try:
             metadata = face.get('metadata', {})
-            face_size = 50  # Default face size
-            
-            # Face size filter
-            location_str = metadata.get('location', '0,0,0,0')
-            coords = location_str.split(',')
+            face_width = face_height = None
+            location = metadata.get('location')
+            if isinstance(location, str):
+                coords = location.split(',')
+            elif isinstance(location, (tuple, list)):
+                coords = list(location)
+            else:
+                coords = []
             if len(coords) == 4:
-                top, right, bottom, left = map(int, coords)
-                face_width = right - left
-                face_height = bottom - top
+                try:
+                    top, right, bottom, left = map(int, coords)
+                    if right > left and bottom > top:
+                        face_width = right - left
+                        face_height = bottom - top
+                except (TypeError, ValueError):
+                    pass
+
+            if face_width is not None and face_height is not None:
                 face_size = min(face_width, face_height)
-                
                 if face_size < search_params['min_face_size']:
                     continue
-                
                 # Aspect ratio filter
                 if search_params['aspect_ratio_filter']:
                     aspect_ratio = face_width / max(face_height, 1)
                     if aspect_ratio < 0.5 or aspect_ratio > 2.0:  # Skip extremely wide/tall faces
                         continue
-            
-            # Similarity-based filtering; the labels used to promise image
-            # quality, but only the similarity score is available here.
+
+            # These options are cosine thresholds; face size is controlled by
+            # the separate geometry filter above.
             if search_params['quality_filter'] == "Strong cosine (≥70%)":
-                if face['similarity'] < 0.7 or face_size < 80:
+                if face['similarity'] < 0.7:
                     continue
             elif search_params['quality_filter'] == "Medium cosine (≥40%)":
-                if face['similarity'] < 0.4 or face_size < 30:
+                if face['similarity'] < 0.4:
                     continue
             elif search_params['quality_filter'] == "Weak cosine (≥30%)":
                 if face['similarity'] < 0.3:
