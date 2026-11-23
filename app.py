@@ -27,6 +27,11 @@ import logging
 import tempfile
 import uuid
 from datetime import datetime
+from access_control import (
+    access_decision,
+    allowed_email_addresses,
+    shared_auth_required,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -381,8 +386,59 @@ def show_assignment_history(face_id: str) -> None:
             after = event.get("to_name") or "Unassigned"
             st.caption(f"{event.get('at', 'Unknown time')} · {before} → {after} · {event.get('actor', 'local-user')}")
 
+
+def _authenticated_actor() -> str:
+    """Return the verified OIDC email, or an honest local-only actor label."""
+    try:
+        email = str(getattr(st.user, "email", "") or "").strip()
+        return email or "local-user"
+    except Exception:  # noqa: BLE001 - local mode has no configured identity
+        return "local-user"
+
+
+def _enforce_shared_access_control() -> None:
+    """Gate all app pages and data actions when shared auth is enabled."""
+    required = shared_auth_required()
+    if not required:
+        return
+    allowlist = allowed_email_addresses()
+    try:
+        user = st.user
+        logged_in = bool(user.is_logged_in)
+        email = str(getattr(user, "email", "") or "").strip()
+        email_verified = getattr(user, "email_verified", False) is True
+    except Exception:  # noqa: BLE001 - missing OIDC config fails closed
+        logged_in, email, email_verified = False, "", False
+    decision = access_decision(
+        required=required,
+        logged_in=logged_in,
+        email=email,
+        email_verified=email_verified,
+        allowlist=allowlist,
+    )
+    if decision == "setup_required":
+        st.error(
+            "Shared access is locked: configure FACE_ALLOWED_EMAILS with at least "
+            "one exact email address before enabling FACE_AUTH_REQUIRED."
+        )
+        st.stop()
+    if decision == "login_required":
+        st.title("Sign in required")
+        st.caption("This face library is restricted to approved accounts.")
+        st.button("Sign in", on_click=st.login, type="primary")
+        st.stop()
+    if decision == "not_authorized":
+        st.error(
+            "This account is not authorized to access the face library. "
+            "Use an approved account with a verified email address."
+        )
+        st.button("Sign out", on_click=st.logout)
+        st.stop()
+
 def main():
     """Main application function"""
+
+    _enforce_shared_access_control()
 
     if import_errors:
         st.error("❌ Required dependencies are missing. The app cannot start.")
@@ -425,6 +481,9 @@ def main():
     # Sidebar
     with st.sidebar:
         st.header("Navigation", icon=":material/menu:")
+        if shared_auth_required():
+            st.caption(f"Signed in as {_authenticated_actor()}")
+            st.button("Sign out", on_click=st.logout, key="shared_auth_logout")
         page = st.selectbox(
             "Section", PAGES, key="nav_page", format_func=PAGE_LABELS.__getitem__
         )
@@ -1531,6 +1590,7 @@ def show_name_assignment_modal():
                     person_data,
                     selected_person['person_id'],
                     allow_reassignment=replace_existing_identity,
+                    actor=_authenticated_actor(),
                 )
 
                 if result:
@@ -1621,6 +1681,7 @@ def show_name_assignment_modal():
                     face_id,
                     person_data,
                     allow_reassignment=replace_existing_identity,
+                    actor=_authenticated_actor(),
                 )
 
                 if result:
@@ -1645,7 +1706,9 @@ def show_name_assignment_modal():
     with col1:
         if existing_data.get('full_name'):
             if st.button("Remove name", width='stretch'):
-                if st.session_state.vector_store.remove_person_name(face_id):
+                if st.session_state.vector_store.remove_person_name(
+                    face_id, actor=_authenticated_actor()
+                ):
                     st.success("✅ Name removed.")
                     # Invalidate cached names and gallery metadata
                     invalidate_persons_cache()
@@ -2015,6 +2078,7 @@ def show_name_assignment_tab(face_id, image_path, face_location):
                     person_data,
                     selected_person['person_id'],
                     allow_reassignment=replace_existing_identity,
+                    actor=_authenticated_actor(),
                 )
 
                 if result:
@@ -2068,6 +2132,7 @@ def show_name_assignment_tab(face_id, image_path, face_location):
                     person_data,
                     person_id,
                     allow_reassignment=replace_existing_identity,
+                    actor=_authenticated_actor(),
                 )
 
                 if result:
@@ -5397,6 +5462,7 @@ def _assign_face_group(group: Dict[str, Any], person_data: Dict[str, str], perso
             person_id,
             assignment_source="review_group",
             suggested_similarity=face.get("group_similarity"),
+            actor=_authenticated_actor(),
         ):
             assigned.append(face["face_id"])
     return assigned
@@ -5419,7 +5485,7 @@ def person_groups_page():
         st.info(f"Last reviewed group assignment: {last_assignment.get('person_name', 'person')}.")
         if st.button("Undo last group assignment", key="undo_last_person_group"):
             outcome = st.session_state.vector_store.undo_person_assignments(
-                last_assignment.get("events", {})
+                last_assignment.get("events", {}), actor=_authenticated_actor()
             )
             invalidate_persons_cache()
             invalidate_gallery_cache()
@@ -5727,7 +5793,9 @@ def name_gallery_page():
                         with st.spinner("Removing the name from all faces..."):
                             removed_count = 0
                             for face_id in person['face_ids']:
-                                if st.session_state.vector_store.remove_person_name(face_id):
+                                if st.session_state.vector_store.remove_person_name(
+                                    face_id, actor=_authenticated_actor()
+                                ):
                                     removed_count += 1
 
                             if removed_count > 0:
@@ -5791,7 +5859,9 @@ def name_gallery_page():
                             # Remove photo button
                             if st.button("Remove", key=f"remove_photo_{face_id}", help="Remove this photo from this person.", type="secondary"):
                                 # Remove person name from this specific face
-                                if st.session_state.vector_store.remove_person_name(face_id):
+                                if st.session_state.vector_store.remove_person_name(
+                                    face_id, actor=_authenticated_actor()
+                                ):
                                     st.success(f"Removed the photo from {selected_person_name}.")
                                     invalidate_persons_cache()
                                     invalidate_gallery_cache()

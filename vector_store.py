@@ -1314,6 +1314,7 @@ class FaceVectorStore:
         allow_reassignment: bool = False,
         assignment_source: str = "manual_review",
         suggested_similarity: Optional[float] = None,
+        actor: str = "local-user",
     ) -> Optional[str]:
         """
         Assign extended person data to a face
@@ -1413,7 +1414,7 @@ class FaceVectorStore:
                     suggested_similarity = None
             history.append({
                 "action": "assigned",
-                "actor": "local-user",
+                "actor": str(actor or "local-user")[:254],
                 "at": now,
                 "source": str(assignment_source),
                 "suggested_similarity": suggested_similarity,
@@ -1540,7 +1541,7 @@ class FaceVectorStore:
                 "skipped_ambiguous": 0,
             }
 
-    def remove_person_name(self, face_id: str) -> bool:
+    def remove_person_name(self, face_id: str, *, actor: str = "local-user") -> bool:
         """
         Remove person name assignment from a face
         
@@ -1563,7 +1564,7 @@ class FaceVectorStore:
                 history = []
             history.append({
                 "action": "removed",
-                "actor": "local-user",
+                "actor": str(actor or "local-user")[:254],
                 "at": datetime.now().isoformat(),
                 "from_person_id": metadata.get("person_id", ""),
                 "from_name": metadata.get("full_name", ""),
@@ -1600,7 +1601,12 @@ class FaceVectorStore:
             logger.error(f"Error removing person name from {face_id}: {e}")
             return False
 
-    def undo_person_assignments(self, expected_events: Dict[str, str]) -> Dict[str, Any]:
+    def undo_person_assignments(
+        self,
+        expected_events: Dict[str, str],
+        *,
+        actor: str = "local-user",
+    ) -> Dict[str, Any]:
         """Undo only the exact reviewed assignment events supplied by the UI.
 
         Event timestamps prevent an old group-level undo action from reverting
@@ -1648,7 +1654,7 @@ class FaceVectorStore:
             restored_name = str(latest.get("from_name", "") or "")
             history.append({
                 "action": "undo",
-                "actor": "local-user",
+                "actor": str(actor or "local-user")[:254],
                 "at": now,
                 "undo_of": str(latest.get("at", "")),
                 "from_person_id": str(metadata.get("person_id", "") or ""),

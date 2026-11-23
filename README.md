@@ -57,10 +57,30 @@ first use can download model weights.
 
 By default, Streamlit binds to `127.0.0.1`, so the interface is available only
 from the machine running it. Do not change `server.address` to a network-facing
-address or expose the port through a proxy unless that deployment adds
-authentication and authorization for viewing, exporting, editing, and deleting
-biometric data. Streamlit itself does not provide application-level access
-control here.
+address or expose the port through a proxy unless that deployment enables
+the built-in OIDC gate below or supplies an equivalent authenticated and
+authorized access layer for viewing, exporting, editing, and deleting biometric
+data.
+
+For a shared deployment, configure Streamlit OIDC in the ignored
+`.streamlit/secrets.toml`, then set `FACE_AUTH_REQUIRED=1` and
+`FACE_ALLOWED_EMAILS=alice@example.com,bob@example.com` in the server
+environment. The app denies everyone if the allowlist is empty and allows only
+an exact authenticated, provider-verified email match. Keep OIDC client secrets out of Git and
+limit the deployment to trusted users. When authentication is enabled, the
+authenticated email is recorded in identity-assignment audit events. Local
+mode remains unauthenticated and should stay bound to localhost.
+
+Minimal OIDC secrets configuration (replace every example value):
+
+```toml
+[auth]
+redirect_uri = "https://face.example.com/oauth2callback"
+cookie_secret = "replace-with-a-long-random-secret"
+client_id = "your-oidc-client-id"
+client_secret = "your-oidc-client-secret"
+server_metadata_url = "https://identity.example.com/.well-known/openid-configuration"
+```
 
 ### Performance and hardware
 
@@ -214,9 +234,9 @@ The same checks run on pushes and pull requests through GitHub Actions.
 ## 🔐 Local data deletion
 
 The application stores indexed face embeddings, labels, thumbnails and recovery
-archives locally. It has no built-in sign-in or access control; keep Streamlit
-bound to localhost unless an authenticated and authorized access layer is in
-front of it. In **Settings → Privacy and local data**, you can permanently
+archives locally. By default it has no sign-in; keep Streamlit bound to
+localhost unless you enable OIDC access control above or provide an equivalent
+authenticated and authorized layer. In **Settings → Privacy and local data**, you can permanently
 delete indexed faces and biometric recovery archives. Select the source-image
 option to also remove files referenced by the index and files in the app's
 managed image folders. Images in directories outside the app's managed folders
@@ -334,7 +354,7 @@ We welcome contributions! Here's how to get started:
 
 ## ⚠️ Privacy and limitations
 
-- Images, face embeddings, names, and source metadata are stored under the configured local data directory. The default server bind is local-only. The optional image crawler makes requests to external websites.
+- Images, face embeddings, names, and source metadata are stored under the configured local data directory. The default server bind is local-only. Shared deployments can require OIDC login plus an exact email allowlist with `FACE_AUTH_REQUIRED` and `FACE_ALLOWED_EMAILS`. The optional image crawler makes requests to external websites.
 - The app has no built-in consent tracking, legal-compliance checks, or demographic-bias evaluation. You are responsible for deciding which images you may process and for following applicable rules.
 - There is no automatic retention or expiry policy. Indexed records and managed source images remain until you delete them; separately exported or copied files must be removed where you stored them.
 - The app does not send indexed images or embeddings to a project-operated cloud service. Model packages may download model files during setup, and web import contacts the URLs you enter. Review third-party model and website terms before use.

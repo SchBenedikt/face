@@ -87,6 +87,18 @@ def test_app_boots(seeded_data):
     assert any("Face Search" in title.value for title in at.title)
 
 
+def test_shared_deployment_requires_oidc_sign_in(seeded_data, monkeypatch):
+    monkeypatch.setenv("FACE_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("FACE_ALLOWED_EMAILS", "approved@example.com")
+    at = _app()
+    at.run()
+
+    _assert_no_exception(at)
+    assert any("Sign in required" in title.value for title in at.title)
+    assert any(button.label == "Sign in" for button in at.button)
+    assert not at.sidebar.selectbox
+
+
 @pytest.mark.parametrize(
     "page, needle",
     [

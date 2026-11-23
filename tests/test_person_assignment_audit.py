@@ -17,6 +17,7 @@ def test_person_assignment_and_removal_keep_review_history(seeded_data):
         face_id,
         {"first_name": "Alex", "last_name": "Example"},
         person_id="person-audit-test",
+        actor="alice@example.com",
     ) == "person-audit-test"
 
     assigned = store.get_face_by_id(face_id)["metadata"]
@@ -26,12 +27,14 @@ def test_person_assignment_and_removal_keep_review_history(seeded_data):
     assert first_history[0]["from_name"] == ""
     assert first_history[0]["to_name"] == "Alex Example"
     assert first_history[0]["source"] == "manual_review"
+    assert first_history[0]["actor"] == "alice@example.com"
 
-    assert store.remove_person_name(face_id) is True
+    assert store.remove_person_name(face_id, actor="alice@example.com") is True
     removed = store.get_face_by_id(face_id)["metadata"]
     history = json.loads(removed["assignment_history"])
     assert len(history) == 2
     assert history[1]["action"] == "removed"
+    assert history[1]["actor"] == "alice@example.com"
     assert history[1]["from_name"] == "Alex Example"
     assert removed["full_name"] == ""
 
@@ -60,7 +63,9 @@ def test_undo_assignment_restores_previous_person_fields(seeded_data):
     assigned = store.get_face_by_id(face_id)["metadata"]
     assigned_event = json.loads(assigned["assignment_history"])[-1]
 
-    outcome = store.undo_person_assignments({face_id: assigned_event["at"]})
+    outcome = store.undo_person_assignments(
+        {face_id: assigned_event["at"]}, actor="alice@example.com"
+    )
 
     assert outcome["undone"] == [face_id]
     restored = store.get_face_by_id(face_id)["metadata"]
@@ -70,7 +75,9 @@ def test_undo_assignment_restores_previous_person_fields(seeded_data):
     assert restored["birth_date"] == "1980-01-02"
     assert restored["birth_place"] == "Berlin"
     assert restored["notes"] == "Keep this note"
-    assert json.loads(restored["assignment_history"])[-1]["action"] == "undo"
+    undone_event = json.loads(restored["assignment_history"])[-1]
+    assert undone_event["action"] == "undo"
+    assert undone_event["actor"] == "alice@example.com"
 
 
 def test_old_undo_cannot_overwrite_a_later_assignment(seeded_data):

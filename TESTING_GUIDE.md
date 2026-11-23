@@ -28,6 +28,9 @@ search ranking and thresholds, stable navigation, gallery filtering and
 pagination, person-group suggestions, duplicate deletion and reconciliation,
 portable archive integrity/restore, and batch updates.
 
-Web collection, external deployment authentication, and large-scale face
-accuracy are not currently validated by the suite. Similarity scores are
-ranking signals, not identity probabilities.
+The suite validates crawler URL policy, robots rules, DNS pinning, request
+budgets, and the OIDC/email-allowlist decision logic. It does not connect to a
+live identity provider or crawl external websites. The privacy deletion tests
+exercise index, source-image, derived-data, and recovery-archive removal against
+temporary local stores. Large-scale face accuracy is not currently validated.
+Similarity scores are ranking signals, not identity probabilities.

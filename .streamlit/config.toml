@@ -1,6 +1,6 @@
 [server]
 # Biometric data is local to this machine by default. Shared deployments need
-# an authenticated reverse proxy and explicit authorization controls.
+# OIDC login plus FACE_ALLOWED_EMAILS, or an equivalent authenticated proxy.
 address = "127.0.0.1"
 
 [theme]
