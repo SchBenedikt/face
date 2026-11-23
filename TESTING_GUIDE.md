@@ -21,6 +21,9 @@ python .github/scripts/check_repository_artifacts.py
 GitHub Actions runs these checks on pushes to `main` and pull requests targeting
 `main`, on Ubuntu with Python 3.11 and 3.12.
 
+See [Repository hygiene](REPOSITORY_HYGIENE.md) for the artifact guard's scope
+and a coordinated history-cleanup procedure.
+
 ## Coverage
 
 The suite covers local upload and search flows, embedding pipeline compatibility,
