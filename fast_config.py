@@ -12,7 +12,8 @@ from config import (
     VECTOR_DB_PATH,
     COLLECTION_NAME,
 )
+from utils import IMAGE_EXTENSIONS
 
 # A modest batch size limits memory use without changing recognition quality.
 BATCH_SIZE = 10
-SUPPORTED_FORMATS = [".jpg", ".jpeg", ".png", ".bmp", ".webp"]
+SUPPORTED_FORMATS = sorted(IMAGE_EXTENSIONS)

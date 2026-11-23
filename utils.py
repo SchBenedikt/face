@@ -13,6 +13,11 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Keep image discovery, validation, uploads and batch indexing aligned.
+IMAGE_EXTENSIONS = frozenset({
+    ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff", ".gif",
+})
+
 def load_and_preprocess_image(image_path: Union[str, Path]) -> Optional[np.ndarray]:
     """
     Load and preprocess an image for face recognition with enhanced error handling
@@ -136,8 +141,7 @@ def is_valid_image_file(file_path: Union[str, Path]) -> bool:
             return False
         
         # Check extension
-        valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tiff', '.tif', '.gif'}
-        if file_path.suffix.lower() not in valid_extensions:
+        if file_path.suffix.lower() not in IMAGE_EXTENSIONS:
             return False
         
         # Check magic bytes for proper image format validation
@@ -244,10 +248,8 @@ def get_image_files(directory: Union[str, Path], validate: bool = True) -> List[
         return []
         
     image_files = []
-    valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tiff'}
-    
     for file_path in directory.rglob('*'):
-        if file_path.is_file() and file_path.suffix.lower() in valid_extensions:
+        if file_path.is_file() and file_path.suffix.lower() in IMAGE_EXTENSIONS:
             if not validate or is_valid_image_file(file_path):
                 image_files.append(file_path)
                 

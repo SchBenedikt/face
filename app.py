@@ -57,7 +57,8 @@ except Exception as exc:  # noqa: BLE001
 
 from duplicate_detector import delete_duplicate_files, duplicate_detector
 from utils import (
-    load_and_preprocess_image, load_uploaded_image, create_thumbnail, get_image_files, parse_face_location
+    IMAGE_EXTENSIONS, load_and_preprocess_image, load_uploaded_image,
+    create_thumbnail, get_image_files, parse_face_location
 )
 from ui_cache import face_thumbnail
 from async_utils import run_coroutine
@@ -68,7 +69,7 @@ from config import (
     IMAGES_DIR, SCRAPED_DIR, FACE_GROUPING_THRESHOLD
 )
 
-IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+IMAGE_SUFFIXES = tuple(sorted(IMAGE_EXTENSIONS))
 
 PAGES = [
     "🔍 Face Search",
