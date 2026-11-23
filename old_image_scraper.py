@@ -15,10 +15,12 @@ import time
 import hashlib
 import re
 import xml.etree.ElementTree as ET
+import urllib.robotparser
 
 from config import SCRAPED_DIR, MAX_IMAGES_PER_SITE, SUPPORTED_IMAGE_FORMATS
 from utils import is_valid_image_file, calculate_image_hash
 from duplicate_detector import duplicate_detector
+from scraper_safety import approved_public_url
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,6 +40,8 @@ class AdvancedImageScraper:
         self.downloaded_hashes: Set[str] = set()
         self.visited_pages: Set[str] = set()
         self.discovered_urls: Set[str] = set()
+        self.approved_hosts: Set[str] = set()
+        self.robots_parser: Optional[urllib.robotparser.RobotFileParser] = None
         self.session_stats = {
             "pages_visited": 0,
             "pages_discovered": 0,
@@ -107,9 +111,6 @@ class AdvancedImageScraper:
                     '--disable-dev-shm-usage',
                     '--disable-gpu',
                     '--disable-extensions',
-                    '--disable-web-security',  # Allow cross-origin requests
-                    '--allow-running-insecure-content',
-                    '--ignore-certificate-errors',
                 ]
             )
             
@@ -120,11 +121,21 @@ class AdvancedImageScraper:
                 viewport={"width": 1920, "height": 1080},
                 java_script_enabled=True,
                 accept_downloads=False,
-                ignore_https_errors=True
+                ignore_https_errors=False
             )
             
             # Create page from context
             page = await context.new_page()
+
+            async def guard_request(route):
+                allowed, reason = await self._url_is_allowed(route.request.url)
+                if allowed:
+                    await route.continue_()
+                else:
+                    logger.warning("Blocked crawler request: %s", reason)
+                    await route.abort()
+
+            await page.route("**/*", guard_request)
             
             # Set longer timeout for complex sites
             page.set_default_timeout(60000)
@@ -134,6 +145,45 @@ class AdvancedImageScraper:
         except Exception as e:
             logger.error(f"Error setting up browser: {e}")
             raise
+
+    async def _url_is_allowed(self, url: str, *, check_robots: bool = True) -> tuple[bool, str]:
+        allowed, reason = await asyncio.to_thread(
+            approved_public_url, url, self.approved_hosts
+        )
+        if not allowed:
+            return allowed, reason
+        if check_robots and self.robots_parser is not None:
+            if not self.robots_parser.can_fetch("FaceImageCollector", url):
+                return False, "robots.txt disallows this URL."
+        return True, ""
+
+    async def _set_approved_host_and_robots(self, base_url: str) -> tuple[bool, str]:
+        host = (urlparse(base_url).hostname or "").casefold().rstrip(".")
+        if not host:
+            return False, "The URL does not contain a hostname."
+        self.approved_hosts = {host}
+        self.robots_parser = None
+        allowed, reason = await self._url_is_allowed(base_url, check_robots=False)
+        if not allowed:
+            return False, reason
+
+        robots_url = urljoin(base_url, "/robots.txt")
+        robots_allowed, reason = await self._url_is_allowed(robots_url, check_robots=False)
+        if not robots_allowed:
+            return False, reason
+        parser = urllib.robotparser.RobotFileParser()
+        parser.set_url(robots_url)
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(robots_url, allow_redirects=False) as response:
+                if response.status == 200:
+                    parser.parse((await response.text()).splitlines())
+                elif response.status in (404, 410):
+                    parser.parse(["User-agent: *", "Allow: /"])
+                else:
+                    return False, f"robots.txt could not be checked (HTTP {response.status})."
+        self.robots_parser = parser
+        return True, ""
     
     async def discover_all_pages(self, base_url: str, page: Page) -> Set[str]:
         """
@@ -199,7 +249,9 @@ class AdvancedImageScraper:
                 for path in sitemap_paths:
                     try:
                         sitemap_url = urljoin(base_url, path)
-                        async with session.get(sitemap_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                        if not (await self._url_is_allowed(sitemap_url))[0]:
+                            continue
+                        async with session.get(sitemap_url, timeout=aiohttp.ClientTimeout(total=30), allow_redirects=False) as response:
                             if response.status == 200:
                                 content = await response.text()
                                 
@@ -277,8 +329,10 @@ class AdvancedImageScraper:
             Set of URLs
         """
         try:
+            if not (await self._url_is_allowed(sitemap_url))[0]:
+                return set()
             async with aiohttp.ClientSession() as session:
-                async with session.get(sitemap_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                async with session.get(sitemap_url, timeout=aiohttp.ClientTimeout(total=30), allow_redirects=False) as response:
                     if response.status == 200:
                         content = await response.text()
                         return await self._parse_sitemap_xml_content(content)
@@ -410,9 +464,11 @@ class AdvancedImageScraper:
                     try:
                         dir_url = urljoin(base_url, path)
                         logger.info(f"Checking directory: {dir_url}")
+                        if not (await self._url_is_allowed(dir_url))[0]:
+                            continue
                         
                         # Try to access directory listing
-                        async with session.get(dir_url, timeout=aiohttp.ClientTimeout(total=20)) as response:
+                        async with session.get(dir_url, timeout=aiohttp.ClientTimeout(total=20), allow_redirects=False) as response:
                             if response.status == 200:
                                 content = await response.text()
                                 
@@ -498,8 +554,10 @@ class AdvancedImageScraper:
                 try:
                     upload_path = f'/wp-content/uploads/{year}/{month}/'
                     dir_url = urljoin(base_url, upload_path)
+                    if not (await self._url_is_allowed(dir_url))[0]:
+                        continue
                     
-                    async with session.get(dir_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    async with session.get(dir_url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=False) as response:
                         if response.status == 200:
                             content = await response.text()
                             month_images = self._extract_images_from_directory_html(content, dir_url)
@@ -1010,7 +1068,13 @@ class AdvancedImageScraper:
         except Exception:
             return False
     
-    async def download_image(self, session: aiohttp.ClientSession, url: str, output_dir: Path) -> bool:
+    async def download_image(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        output_dir: Path,
+        _attempt: int = 0,
+    ) -> bool:
         """
         Download a single image with exact original quality preservation
         
@@ -1023,6 +1087,8 @@ class AdvancedImageScraper:
             True if successful, False otherwise
         """
         try:
+            if not (await self._url_is_allowed(url))[0]:
+                return False
             # Create filename from URL
             parsed = urlparse(url)
             filename = Path(parsed.path).name
@@ -1046,7 +1112,16 @@ class AdvancedImageScraper:
                 'Referer': url  # Some sites require referer
             }
             
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as response:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30), allow_redirects=False) as response:
+                if response.status in (429, 500, 502, 503, 504) and _attempt < 2:
+                    retry_after = response.headers.get("Retry-After", "")
+                    response.release()
+                    try:
+                        delay = min(5.0, max(0.5, float(retry_after)))
+                    except ValueError:
+                        delay = 0.5 * (2 ** _attempt)
+                    await asyncio.sleep(delay)
+                    return await self.download_image(session, url, output_dir, _attempt + 1)
                 if response.status == 200:
                     # Get the raw content WITHOUT any modifications
                     content = await response.read()
@@ -1169,6 +1244,11 @@ class AdvancedImageScraper:
             Scraping results
         """
         try:
+            safe, reason = await self._set_approved_host_and_robots(url)
+            if not safe:
+                return {"success": False, "url": url, "error": reason, "images_downloaded": 0}
+            max_images = max(1, min(int(max_images or MAX_IMAGES_PER_SITE), 500))
+
             # Create output directory
             domain = urlparse(url).netloc.replace('.', '_')
             output_dir = SCRAPED_DIR / domain
@@ -1195,7 +1275,10 @@ class AdvancedImageScraper:
                 all_image_urls = set(directory_images)
                 
                 # Limit pages to crawl to prevent excessive scraping
-                pages_to_crawl = list(all_pages)[:50]  # Limit to 50 pages
+                pages_to_crawl = [
+                    page_url for page_url in list(all_pages)[:50]
+                    if (await self._url_is_allowed(page_url))[0]
+                ]
                 
                 for i, page_url in enumerate(pages_to_crawl):
                     try:
@@ -1230,13 +1313,16 @@ class AdvancedImageScraper:
                         continue
                 
                 # Convert to list and update stats
-                image_urls = list(all_image_urls)
+                image_urls = [
+                    image_url for image_url in all_image_urls
+                    if (await self._url_is_allowed(image_url))[0]
+                ]
                 self.session_stats["images_found"] = len(image_urls)
                 
                 logger.info(f"Total unique images discovered: {len(image_urls)}")
                 
                 # Phase 4: Apply image limit if specified
-                if max_images > 0 and len(image_urls) > max_images:
+                if len(image_urls) > max_images:
                     image_urls = image_urls[:max_images]
                     logger.info(f"Limiting to {max_images} images from {len(image_urls)} found")
                 else:
@@ -1244,7 +1330,7 @@ class AdvancedImageScraper:
                 
                 # Phase 5: Download all discovered images with duplicate detection
                 logger.info("Phase 5: Downloading images...")
-                connector = aiohttp.TCPConnector(limit=10)
+                connector = aiohttp.TCPConnector(limit=2, limit_per_host=2)
                 timeout = aiohttp.ClientTimeout(total=300)
                 
                 async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
@@ -1361,6 +1447,11 @@ class AdvancedImageScraper:
             Enhanced scraping results
         """
         try:
+            safe, reason = await self._set_approved_host_and_robots(url)
+            if not safe:
+                return {"success": False, "url": url, "error": reason, "images_downloaded": 0}
+            max_images = max(1, min(int(max_images or MAX_IMAGES_PER_SITE), 500))
+
             # Create output directory
             domain = urlparse(url).netloc.replace('.', '_')
             output_dir = SCRAPED_DIR / domain
@@ -1465,7 +1556,9 @@ class AdvancedImageScraper:
             robots_url = urljoin(base_url, "/robots.txt")
             async with aiohttp.ClientSession() as session:
                 try:
-                    async with session.get(robots_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if not (await self._url_is_allowed(robots_url, check_robots=False))[0]:
+                        return discovered
+                    async with session.get(robots_url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=False) as response:
                         if response.status == 200:
                             robots_content = await response.text()
                             sitemap_urls = re.findall(r'Sitemap:\s*(.+)', robots_content, re.IGNORECASE)

@@ -219,8 +219,17 @@ def parse_scrape_urls(raw: str) -> tuple:
             continue
         with_scheme = candidate if "://" in candidate else f"https://{candidate}"
         parsed = urlparse(with_scheme)
-        host = parsed.netloc.split("@")[-1].split(":")[0]
-        if parsed.scheme in ("http", "https") and "." in host and " " not in host:
+        host = parsed.hostname or ""
+        if (
+            parsed.scheme in ("http", "https")
+            and "." in host
+            and " " not in host
+            and not parsed.username
+            and not parsed.password
+        ):
+            if len(valid) >= 10:
+                invalid.append(candidate)
+                continue
             valid.append(with_scheme)
         else:
             invalid.append(candidate)
@@ -3388,7 +3397,10 @@ def web_scraping_page():
     """Web scraping page"""
 
     st.header("🌐 Web Image Scraping")
-    st.warning("⚠️ Please ensure you have permission to scrape images from websites and comply with their terms of service.")
+    st.warning(
+        "Only scrape images from domains and for purposes you are authorized to use. "
+        "The crawler is restricted to the hostname entered, follows robots.txt, and blocks private-network targets."
+    )
 
     tab1, tab2 = st.tabs(["Scrape New Sites", "Scraped Images"])
 
@@ -3417,9 +3429,15 @@ def web_scraping_page():
         with col2:
             auto_process = st.checkbox(
                 "Auto-process scraped images",
-                value=True,
+                value=False,
                 help="Automatically process scraped images for face detection"
             )
+
+        confirm_authorization = st.checkbox(
+            "I confirm that I am authorized to collect images from the entered website(s).",
+            value=False,
+            key="scrape_authorization_confirmed",
+        )
 
         # Show duplicate detection status.
         st.info("🔍 **Duplicate detection is on:** Existing images are skipped automatically")
@@ -3434,6 +3452,8 @@ def web_scraping_page():
                 )
             elif not urls:
                 st.error("Please enter at least one URL")
+            elif not confirm_authorization:
+                st.error("Confirm that you are authorized to collect images before starting web import.")
             elif st.session_state.image_scraper is None:
                 st.error(
                     "Web import is unavailable because old_image_scraper could not "

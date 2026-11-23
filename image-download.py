@@ -1205,6 +1205,13 @@ async def download_and_filter_images():
         pass
 
 async def main():
+    print(
+        "The legacy image-download crawler is disabled because it does not "
+        "enforce the current domain, robots.txt, and network-safety rules. "
+        "Use the Streamlit Web import page for a bounded, consent-confirmed import."
+    )
+    return
+
     start = time.time()
     
     # Check if URLs already exist

@@ -237,6 +237,19 @@ def test_search_rejects_unreadable_upload(seeded_data):
     assert any("not a readable image" in value for value in errors), errors
 
 
+def test_web_import_requires_explicit_authorization(seeded_data):
+    at = _app()
+    at.run()
+    _goto(at, "web_import")
+    next(box for box in at.text_area if "Enter website URLs" in box.label).set_value(
+        "https://example.test/gallery"
+    ).run()
+    next(button for button in at.button if "Start Scraping" in button.label).click().run()
+
+    _assert_no_exception(at)
+    assert any("Confirm that you are authorized" in str(item.value) for item in at.error)
+
+
 def test_uploaded_image_uses_safe_data_path_without_shared_tmp_file(seeded_data):
     from io import BytesIO
 

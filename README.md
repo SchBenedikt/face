@@ -202,7 +202,12 @@ The same checks run on pushes and pull requests through GitHub Actions.
 3. To process scraped images or another directory, use **Batch Face Processing** in the Streamlit app, select the directory, and choose **Process New Images Only** or **Update All Images**.
 4. Start the interface with `streamlit run app.py`, open **Face Search**, and upload an image containing a face.
 
-The `image-download.py` crawler is interactive. Run `python image-download.py`, review its prompts, then index the downloaded images with the steps above. It makes requests to external websites; follow their access rules.
+The legacy `image-download.py` crawler is disabled because it does not enforce
+the current network-safety rules. Use **Web import** in the Streamlit app. It
+requires an explicit authorization confirmation, applies a finite image cap,
+honors the entered hostname and its `robots.txt` rules, and blocks private or
+special-use network addresses. Only the exact hostname you enter is crawled;
+CDNs and other subdomains require separate authorization and entry.
 
 ### Remove duplicate image files
 
