@@ -46,6 +46,77 @@ except (ImportError, AttributeError):
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+_PERSON_METADATA_FIELDS = (
+    "person_id",
+    "first_name",
+    "middle_names",
+    "last_name",
+    "full_name",
+    "birth_date",
+    "birth_place",
+    "notes",
+    "name_assigned_at",
+)
+
+
+def _face_box(value: Any) -> Optional[Tuple[int, int, int, int]]:
+    """Parse a face box stored as ``top,right,bottom,left``."""
+    try:
+        if isinstance(value, str):
+            coordinates = [int(part.strip()) for part in value.split(",")]
+        elif isinstance(value, (list, tuple)):
+            coordinates = [int(part) for part in value]
+        else:
+            return None
+        if len(coordinates) != 4:
+            return None
+        top, right, bottom, left = coordinates
+        return (top, right, bottom, left) if right > left and bottom > top else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _face_box_iou(
+    first: Optional[Tuple[int, int, int, int]],
+    second: Optional[Tuple[int, int, int, int]],
+) -> float:
+    """Return intersection-over-union for two ``top,right,bottom,left`` boxes."""
+    if first is None or second is None:
+        return 0.0
+    top = max(first[0], second[0])
+    right = min(first[1], second[1])
+    bottom = min(first[2], second[2])
+    left = max(first[3], second[3])
+    intersection = max(0, bottom - top) * max(0, right - left)
+    if not intersection:
+        return 0.0
+    first_area = (first[2] - first[0]) * (first[1] - first[3])
+    second_area = (second[2] - second[0]) * (second[1] - second[3])
+    return intersection / float(first_area + second_area - intersection)
+
+
+def _preserve_face_metadata(
+    existing: Dict[str, Any], incoming: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Keep a saved name only when the refreshed detection is the same face."""
+    preserved = dict(existing)
+    if not any(preserved.get(field) for field in _PERSON_METADATA_FIELDS):
+        return preserved
+
+    overlap = _face_box_iou(
+        _face_box(existing.get("location")),
+        _face_box(incoming.get("location")),
+    )
+    if overlap < 0.35:
+        for field in _PERSON_METADATA_FIELDS:
+            preserved.pop(field, None)
+        logger.warning(
+            "Dropped a saved person label while refreshing a face whose box "
+            "overlap was too low (IoU %.3f)",
+            overlap,
+        )
+    return preserved
+
 class FaceVectorStore:
     """
     Vector database for storing and searching face embeddings
@@ -214,8 +285,11 @@ class FaceVectorStore:
             embedding_list = vector.tolist()
             
             existing_metadata = self._metadata_for_existing_ids([face_id])
+            preserved_metadata = _preserve_face_metadata(
+                existing_metadata.get(face_id, {}), metadata
+            )
             full_metadata = {
-                **existing_metadata.get(face_id, {}),
+                **preserved_metadata,
                 **metadata,
                 "added_at": datetime.now().isoformat(),
                 "embedding_dimension": len(vector),
@@ -270,8 +344,11 @@ class FaceVectorStore:
             existing_metadata = self._metadata_for_existing_ids(face_ids)
             full_metadatas = []
             for face_id, metadata, vector in zip(face_ids, metadatas, vectors):
+                preserved_metadata = _preserve_face_metadata(
+                    existing_metadata.get(str(face_id), {}), metadata
+                )
                 full_metadata = {
-                    **existing_metadata.get(str(face_id), {}),
+                    **preserved_metadata,
                     **metadata,
                     "added_at": datetime.now().isoformat(),
                     "embedding_dimension": int(vector.size),

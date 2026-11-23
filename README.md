@@ -122,6 +122,8 @@ The application provides local face search over images you choose to index:
 
 Changes to face detection, alignment, or embedding preprocessing create a new pipeline version. The app excludes older vectors until their source images are reprocessed. Use **Batch Face Processing → Update All Images** for each image directory. Back up the database before a large reindex.
 
+When reprocessing a face, an existing person label is kept only if the new detection box overlaps the old box by at least 0.35 IoU. If detector ordering changes and a face ID now points to a different box, the stale person label is cleared and logged as a warning instead of being transferred to the wrong face.
+
 This repository has no measured LFW accuracy, web-scale retrieval benchmark, or PimEyes comparison. Search quality depends on the source images, face size, pose, lighting, and indexed collection.
 
 ## 🛠️ Installation
