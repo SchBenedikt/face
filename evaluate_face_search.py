@@ -71,10 +71,12 @@ def evaluate(
     max_images: int = 2000,
     seed: int = 42,
     thresholds: tuple[float, ...] = (0.3, 0.5, 0.7, 0.8),
+    max_error_examples: int = 50,
 ) -> dict[str, Any]:
     identities = _select_images(_labeled_images(root), max_images, seed)
     engine = FaceRecognitionEngine()
     labels: list[str] = []
+    vector_paths: list[str] = []
     vectors: list[np.ndarray] = []
     counts = {"images_considered": sum(map(len, identities.values())), "unreadable": 0,
               "no_face": 0, "multiple_faces": 0, "embedding_errors": 0}
@@ -109,6 +111,7 @@ def evaluate(
                 counts["embedding_errors"] += 1
                 continue
             labels.append(identity)
+            vector_paths.append(str(path))
             vectors.append(vector / norm)
 
     counts["elapsed_seconds"] = round(time.monotonic() - started, 2)
@@ -131,9 +134,13 @@ def evaluate(
     queries = 0
     top1_hits = 0
     top5_hits = 0
+    top1_error_count = 0
+    top1_errors: list[dict[str, Any]] = []
     ann_top1_hits = 0
     ann_top5_hits = 0
     ann_queries = 0
+    ann_top1_error_count = 0
+    ann_top1_errors: list[dict[str, Any]] = []
     ann_index_seconds = 0.0
     for query_index, identity in enumerate(labels):
         candidates = scores[query_index].copy()
@@ -146,6 +153,21 @@ def evaluate(
         ranked_labels = label_array[candidate_indices]
         top1_hits += int(ranked_labels[0] == identity)
         top5_hits += int(np.any(ranked_labels == identity))
+        if ranked_labels[0] != identity:
+            top1_error_count += 1
+            if len(top1_errors) < max_error_examples:
+                same_identity_indices = np.flatnonzero(label_array == identity)
+                same_identity_indices = same_identity_indices[same_identity_indices != query_index]
+                top1_errors.append({
+                    "query_path": vector_paths[query_index],
+                    "true_identity": identity,
+                    "top1_path": vector_paths[int(candidate_indices[0])],
+                    "top1_identity": str(ranked_labels[0]),
+                    "top1_cosine": float(scores[query_index, candidate_indices[0]]),
+                    "best_same_identity_cosine": float(
+                        np.max(scores[query_index, same_identity_indices])
+                    ),
+                })
 
     # Check the application's actual ChromaDB/HNSW retrieval path as well as
     # exhaustive cosine ranking. Exclude each query's own indexed vector and
@@ -157,8 +179,8 @@ def evaluate(
         store = FaceVectorStore(db_path=temporary_index)
         face_ids = [f"benchmark_face_{index}" for index in range(len(vectors))]
         metadatas = [
-            {"image_path": str(index), "identity": identity}
-            for index, identity in enumerate(labels)
+            {"image_path": image_path, "identity": identity}
+            for image_path, identity in zip(vector_paths, labels)
         ]
         written = store.add_face_embeddings_batch(face_ids, vectors, metadatas)
         if written != len(vectors):
@@ -175,6 +197,16 @@ def evaluate(
             neighbor_labels = [hit["metadata"].get("identity") for hit in neighbors]
             ann_top1_hits += int(neighbor_labels[0] == identity)
             ann_top5_hits += int(identity in neighbor_labels)
+            if neighbor_labels[0] != identity:
+                ann_top1_error_count += 1
+                if len(ann_top1_errors) < max_error_examples:
+                    ann_top1_errors.append({
+                        "query_path": vector_paths[query_index],
+                        "true_identity": identity,
+                        "top1_path": neighbors[0]["metadata"].get("image_path"),
+                        "top1_identity": neighbor_labels[0],
+                        "top1_cosine": float(neighbors[0]["cosine_similarity"]),
+                    })
         del store
     ann_index_seconds = round(time.monotonic() - ann_started, 2)
 
@@ -196,9 +228,13 @@ def evaluate(
         "queries": queries,
         "top1": top1_hits / queries if queries else None,
         "top5": top5_hits / queries if queries else None,
+        "top1_error_count": top1_error_count,
+        "top1_errors": top1_errors,
         "ann_queries": ann_queries,
         "chroma_top1": ann_top1_hits / ann_queries if ann_queries else None,
         "chroma_top5": ann_top5_hits / ann_queries if ann_queries else None,
+        "chroma_top1_error_count": ann_top1_error_count,
+        "chroma_top1_errors": ann_top1_errors,
         "chroma_index_and_query_seconds": ann_index_seconds,
         "same_identity_pairs": int(len(same_scores)),
         "different_identity_pairs": int(len(different_scores)),
@@ -239,6 +275,22 @@ def evaluate_lfw_people(
 
     # Reuse the directory evaluator as the single implementation of face
     # detection, ranking, and pair metrics. Generated images are temporary.
+    source_root = cache_path / "lfw_home" / "lfw_funneled"
+    source_files: list[Path] = []
+    for person_directory in sorted(path for path in source_root.iterdir() if path.is_dir()):
+        person_files = sorted(path for path in person_directory.iterdir() if path.is_file())
+        if len(person_files) >= min_faces_per_person:
+            source_files.extend(person_files)
+    if len(source_files) != len(data.images):
+        raise RuntimeError("Could not map sampled images to the LFW source cache")
+    # sklearn deterministically shuffles LFW images with RandomState(42).
+    source_order = np.arange(len(source_files))
+    np.random.RandomState(42).shuffle(source_order)
+    source_path_for_index = {
+        index: str(source_files[int(source_position)].resolve())
+        for index, source_position in enumerate(source_order)
+    }
+    source_path_for_image: dict[str, str] = {}
     with tempfile.TemporaryDirectory(prefix="face-lfw-retrieval-") as temporary:
         root = Path(temporary)
         sampled_count = 0
@@ -250,13 +302,25 @@ def evaluate_lfw_people(
                 if np.issubdtype(image.dtype, np.floating) and image.size and np.nanmax(image) <= 1.0:
                     image = image * 255.0
                 image = np.clip(image, 0, 255).astype(np.uint8)
-                Image.fromarray(image).save(identity_dir / f"{image_index:04d}.jpg", quality=95)
+                temporary_image = identity_dir / f"{image_index:04d}.jpg"
+                Image.fromarray(image).save(temporary_image, quality=95)
+                source_path_for_image[str(temporary_image.resolve())] = (
+                    source_path_for_index[int(dataset_index)]
+                )
                 sampled_count += 1
 
         result = evaluate(root, max_images=0, seed=seed, thresholds=thresholds)
 
+    for field in ("top1_errors", "chroma_top1_errors"):
+        for error in result.get(field, []):
+            for path_field in ("query_path", "top1_path"):
+                source_path = source_path_for_image.get(error.get(path_field))
+                if source_path is not None:
+                    error[path_field] = source_path
+
     result.update({
         "dataset": "LFW people retrieval sample",
+        "evaluation_crop": "LFW default center crop (y=70:195, x=78:172)",
         "seed": seed,
         "min_faces_per_person": min_faces_per_person,
         "sampled_images": sampled_count,
