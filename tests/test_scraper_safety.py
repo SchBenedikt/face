@@ -171,7 +171,10 @@ def test_multiple_urls_share_one_host_image_budget(monkeypatch):
     scraper = module.AdvancedImageScraper()
     requested = []
 
-    async def fake_scrape(url, limit, *, _reset_budget=True):
+    async def fake_scrape(
+        url, limit, *, _reset_budget=True, authorization_confirmed=False
+    ):
+        assert authorization_confirmed is True
         requested.append(limit)
         return {"success": True, "url": url, "images_found": limit, "images_downloaded": limit}
 
@@ -179,8 +182,29 @@ def test_multiple_urls_share_one_host_image_budget(monkeypatch):
     results = asyncio.run(scraper.scrape_multiple_websites(
         ["https://example.test/a", "https://example.test/b", "https://example.test/c"],
         max_images_per_site=3,
+        authorization_confirmed=True,
     ))
 
     assert requested == [3]
     assert results[1]["images_found"] == 0
     assert "budget was exhausted" in results[1]["error"]
+
+
+def test_scraper_entry_points_require_authorization_confirmation():
+    from old_image_scraper import AdvancedImageScraper
+
+    scraper = AdvancedImageScraper()
+    results = asyncio.run(scraper.scrape_multiple_websites(
+        ["https://example.test/gallery"]
+    ))
+    single = asyncio.run(scraper.scrape_website("https://example.test/gallery"))
+    enhanced = asyncio.run(
+        scraper.scrape_website_enhanced("https://example.test/gallery")
+    )
+
+    assert results[0]["success"] is False
+    assert single["success"] is False
+    assert enhanced["success"] is False
+    assert all("authorization" in result["error"].lower() for result in (
+        results[0], single, enhanced
+    ))

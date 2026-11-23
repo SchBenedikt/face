@@ -45,6 +45,7 @@ def delete_local_biometric_data(
     removed_derived = 0
     removed_backups = 0
     removed_auxiliary_files = 0
+    provenance_files_removed = 0
     index_cleared = False
     try:
         if store is None:
@@ -95,6 +96,28 @@ def delete_local_biometric_data(
                             errors.append(f"Could not delete {child}: {exc}")
                 except OSError as exc:
                     errors.append(f"Could not inspect {directory}: {exc}")
+
+        # Source provenance is app-generated metadata, so remove it even when
+        # the user elects to keep original image files.
+        for source_path in source_paths:
+            sidecar = source_path.with_name(source_path.name + ".provenance.json")
+            try:
+                if sidecar.is_symlink() or sidecar.is_file():
+                    sidecar.unlink(missing_ok=True)
+                    provenance_files_removed += 1
+            except OSError as exc:
+                errors.append(f"Could not remove image provenance {sidecar}: {exc}")
+        if not delete_source_images:
+            for raw_directory in managed_image_directories:
+                directory = Path(raw_directory).expanduser()
+                if not directory.exists() or directory.is_symlink():
+                    continue
+                try:
+                    for sidecar in directory.rglob("*.provenance.json"):
+                        sidecar.unlink(missing_ok=True)
+                        provenance_files_removed += 1
+                except OSError as exc:
+                    errors.append(f"Could not clear provenance in {directory}: {exc}")
 
         for raw_directory in derived_directories:
             try:
@@ -153,6 +176,7 @@ def delete_local_biometric_data(
         "derived_entries_removed": removed_derived,
         "backup_files_removed": removed_backups,
         "auxiliary_files_removed": removed_auxiliary_files,
+        "provenance_files_removed": provenance_files_removed,
     }
     if errors:
         result["error"] = "Local data deletion was incomplete: " + "; ".join(errors)

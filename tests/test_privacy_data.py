@@ -37,6 +37,8 @@ def test_full_privacy_delete_removes_index_images_archives_and_derived_data(tmp_
     source = tmp_path / "external-library" / "portrait.jpg"
     source.parent.mkdir()
     source.write_bytes(b"private image")
+    sidecar = source.with_name(source.name + ".provenance.json")
+    sidecar.write_text("{\"source_url\": \"https://example.test/image.jpg\"}")
     managed = tmp_path / "data" / "images"
     managed.mkdir(parents=True)
     (managed / "unindexed.jpg").write_bytes(b"unindexed image")
@@ -73,6 +75,7 @@ def test_full_privacy_delete_removes_index_images_archives_and_derived_data(tmp_
     assert outcome["auxiliary_files_removed"] == 1
     assert store.collection.count() == 0
     assert not source.exists()
+    assert not sidecar.exists()
     assert not (managed / "unindexed.jpg").exists()
     assert not archive.exists()
     assert not (derived / "cache.npy").exists()
@@ -85,6 +88,8 @@ def test_index_only_privacy_delete_keeps_original_source_images(tmp_path):
     source = tmp_path / "external-library" / "portrait.jpg"
     source.parent.mkdir()
     source.write_bytes(b"private image")
+    sidecar = source.with_name(source.name + ".provenance.json")
+    sidecar.write_text("{\"source_url\": \"https://example.test/image.jpg\"}")
     backup = tmp_path / "data" / "pipeline_backups"
     backup.mkdir(parents=True)
     (backup / "index.zip").write_bytes(b"biometric backup")
@@ -103,6 +108,7 @@ def test_index_only_privacy_delete_keeps_original_source_images(tmp_path):
     assert outcome["images_removed"] == 0
     assert store.collection.count() == 0
     assert source.read_bytes() == b"private image"
+    assert not sidecar.exists()
     assert not (backup / "index.zip").exists()
 
 

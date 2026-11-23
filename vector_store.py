@@ -27,6 +27,7 @@ from config import (
     FACE_AUTO_ASSIGN_AMBIGUITY_MARGIN,
 )
 from face_grouping import centroid_of, group_embeddings
+from image_provenance import read_image_provenance
 from settings_store import (
     active_embedding_pipeline_metadata,
     active_embedding_pipeline_version,
@@ -380,9 +381,11 @@ class FaceVectorStore:
             preserved_metadata = _preserve_face_metadata(
                 existing_metadata.get(face_id, {}), metadata
             )
+            provenance = read_image_provenance(metadata.get("image_path", ""))
             full_metadata = {
                 **preserved_metadata,
                 **metadata,
+                **provenance,
                 **self._embedding_pipeline_metadata,
                 "added_at": datetime.now().isoformat(),
                 "embedding_dimension": len(vector),
@@ -449,9 +452,11 @@ class FaceVectorStore:
                 preserved_metadata = _preserve_face_metadata(
                     existing_metadata.get(str(face_id), {}), metadata
                 )
+                provenance = read_image_provenance(metadata.get("image_path", ""))
                 full_metadata = {
                     **preserved_metadata,
                     **metadata,
+                    **provenance,
                     **self._embedding_pipeline_metadata,
                     "added_at": datetime.now().isoformat(),
                     "embedding_dimension": int(vector.size),

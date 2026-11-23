@@ -66,6 +66,7 @@ from duplicate_detector import delete_duplicate_files, duplicate_detector
 from duplicate_backup import create_duplicate_backup, restore_duplicate_backup
 from portable_export import create_face_export, restore_face_export
 from privacy_data import delete_local_biometric_data
+from image_provenance import read_image_provenance
 from utils import (
     IMAGE_EXTENSIONS, load_and_preprocess_image, load_uploaded_image,
     create_thumbnail, get_image_files, parse_face_location
@@ -385,6 +386,22 @@ def show_assignment_history(face_id: str) -> None:
             before = event.get("from_name") or "Unassigned"
             after = event.get("to_name") or "Unassigned"
             st.caption(f"{event.get('at', 'Unknown time')} · {before} → {after} · {event.get('actor', 'local-user')}")
+
+
+def display_image_provenance(image_path: str | Path) -> None:
+    """Show recorded web source and the user's authorization confirmation."""
+    provenance = read_image_provenance(image_path)
+    source_url = str(provenance.get("source_url", "") or "").strip()
+    if provenance.get("source_type") != "web_import" or not source_url:
+        return
+    key = hashlib.sha256(str(image_path).encode("utf-8")).hexdigest()[:16]
+    st.link_button("Open original source", source_url, key=f"source_link_{key}")
+    collected_at = str(provenance.get("collected_at", "") or "Unknown time")
+    confirmation = (
+        "User confirmed authorization" if provenance.get("authorization_confirmed")
+        else "Authorization was not confirmed"
+    )
+    st.caption(f"Collected {collected_at} · {confirmation}")
 
 
 def _authenticated_actor() -> str:
@@ -1795,6 +1812,7 @@ def show_face_info_modal():
     # Header info
     st.markdown(f"**🆔 Face ID:** `{face_id[:20]}...`")
     st.markdown(f"**File:** `{image_path.name}`")
+    display_image_provenance(image_path)
     show_assignment_history(face_id)
 
     # Tabs for different information types
@@ -3641,7 +3659,9 @@ def scrape_websites(urls: List[str], max_images: int, auto_process: bool):
             # Run async scraping; asyncio.run() shuts the loop down cleanly
             # instead of closing it while Playwright tasks are still pending.
             results = run_coroutine(
-                st.session_state.image_scraper.scrape_multiple_websites(urls, max_images)
+                st.session_state.image_scraper.scrape_multiple_websites(
+                    urls, max_images, authorization_confirmed=True
+                )
             )
 
             # Display results
@@ -3707,6 +3727,7 @@ def display_scraped_images():
                             if thumbnail is not None:
                                 st.image(thumbnail, width='stretch', alt=f"Scraped image: {image_path.name}")
                                 st.caption(f"{image_path.name}")
+                                display_image_provenance(image_path)
                         except Exception:
                             st.error("Failed to load")
 
@@ -5095,7 +5116,8 @@ def improved_web_scraping_page():
                             max_images=max_images,
                             crawl_depth=crawl_depth if deep_crawl else 1,
                             quality_priority=quality_priority,
-                            timeout=timeout
+                            timeout=timeout,
+                            authorization_confirmed=True,
                         )
                     )
 
@@ -5264,6 +5286,7 @@ def display_scraped_images_enhanced():
 
                             # Enhanced image info
                             st.caption(f"📁 {image_path.name}")
+                            display_image_provenance(image_path)
                             if image_path.stat().st_size:
                                 size_kb = image_path.stat().st_size / 1024
                                 st.caption(f"💾 {size_kb:.1f} KB")

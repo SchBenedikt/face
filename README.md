@@ -256,9 +256,13 @@ the current network-safety rules. Use **Web import** in the Streamlit app. It
 requires an explicit authorization confirmation, applies a finite image cap,
 honors the entered hostname and its `robots.txt` rules, paces and caps outbound
 requests per host, and blocks private or special-use network addresses. It
-follows links and sitemap entries without guessing common directories. Only
-the exact hostname you enter is crawled; CDNs and other subdomains require
-separate authorization and entry. DNS rebinding is not independently guarded.
+follows links and sitemap entries without guessing common directories. HTTP
+and browser traffic is pinned to the validated public address to block DNS
+rebinding. Each saved image records its source URL, collection time, and your
+authorization confirmation; the record is also copied into the face index.
+Only the exact hostname you enter is crawled; CDNs and other subdomains require
+separate authorization and entry. The app records your confirmation but cannot
+verify legal consent on its own.
 
 ### Remove duplicate image files
 
@@ -359,7 +363,7 @@ We welcome contributions! Here's how to get started:
 - The app has no built-in consent tracking, legal-compliance checks, or demographic-bias evaluation. You are responsible for deciding which images you may process and for following applicable rules.
 - There is no automatic retention or expiry policy. Indexed records and managed source images remain until you delete them; separately exported or copied files must be removed where you stored them.
 - The app does not send indexed images or embeddings to a project-operated cloud service. Model packages may download model files during setup, and web import contacts the URLs you enter. Review third-party model and website terms before use.
-- Privacy settings can remove the local index, cached thumbnails, duplicate-file path/hash metadata, derived embedding files, and local recovery archives. Source images are removed only when you select that option; external copies and manually exported archives are outside the app's control.
+- Privacy settings can remove the local index, cached thumbnails, duplicate-file path/hash metadata, web-source provenance, derived embedding files, and local recovery archives. Source images are removed only when you select that option; external copies and manually exported archives are outside the app's control.
 - Face search can return false matches and miss correct matches. Cosine similarity is a ranking score, not a probability or identity confirmation. Do not rely on it for high-stakes decisions.
 - The app searches only its indexed local collection; it is not a public-web face search service.
 - No formal accuracy or fairness benchmark is currently published for this project.

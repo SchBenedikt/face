@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from settings_store import active_embedding_pipeline_metadata
+from image_provenance import write_image_provenance
 from vector_store import FaceVectorStore
 
 
@@ -37,3 +38,30 @@ def test_pipeline_identity_fields_persist_in_collection_and_face_rows(tmp_path):
     assert reopened.collection.get(
         ids=["metadata-face"], include=["metadatas"]
     )["metadatas"][0]["embedding_model"] == expected["embedding_model"]
+
+
+def test_web_source_provenance_is_saved_with_indexed_face_metadata(tmp_path):
+    image = tmp_path / "portrait.jpg"
+    image.write_bytes(b"synthetic image bytes")
+    record = write_image_provenance(
+        image,
+        source_url="https://example.test/photos/portrait.jpg",
+        authorization_confirmed=True,
+    )
+    store = FaceVectorStore(
+        db_path=str(tmp_path / "vectors"),
+        collection_name="provenance_metadata",
+    )
+    vector = np.zeros(512, dtype=np.float32)
+    vector[0] = 1.0
+
+    assert store.add_face_embedding(
+        "provenance-face",
+        vector,
+        {"face_id": "provenance-face", "image_path": str(image)},
+    )
+    metadata = store.get_face_by_id("provenance-face")["metadata"]
+    assert metadata["source_type"] == "web_import"
+    assert metadata["source_url"] == record["source_url"]
+    assert metadata["collected_at"] == record["collected_at"]
+    assert metadata["authorization_confirmed"] is True

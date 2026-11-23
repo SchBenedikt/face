@@ -22,6 +22,7 @@ import urllib.robotparser
 from config import SCRAPED_DIR, MAX_IMAGES_PER_SITE, SUPPORTED_IMAGE_FORMATS
 from utils import is_valid_image_file, calculate_image_hash
 from duplicate_detector import duplicate_detector
+from image_provenance import provenance_path, write_image_provenance
 from scraper_safety import (
     HostRequestBudget,
     approved_public_url,
@@ -1085,6 +1086,8 @@ class AdvancedImageScraper:
         url: str,
         output_dir: Path,
         _attempt: int = 0,
+        *,
+        authorization_confirmed: bool = False,
     ) -> bool:
         """
         Download a single image with exact original quality preservation
@@ -1098,6 +1101,9 @@ class AdvancedImageScraper:
             True if successful, False otherwise
         """
         try:
+            if not authorization_confirmed:
+                logger.warning("Refused web image download without authorization confirmation")
+                return False
             if not await self._request_is_allowed(url):
                 return False
             # Create filename from URL
@@ -1132,7 +1138,13 @@ class AdvancedImageScraper:
                     except ValueError:
                         delay = 0.5 * (2 ** _attempt)
                     await asyncio.sleep(delay)
-                    return await self.download_image(session, url, output_dir, _attempt + 1)
+                    return await self.download_image(
+                        session,
+                        url,
+                        output_dir,
+                        _attempt + 1,
+                        authorization_confirmed=authorization_confirmed,
+                    )
                 if response.status == 200:
                     # Get the raw content WITHOUT any modifications
                     content = await response.read()
@@ -1142,9 +1154,24 @@ class AdvancedImageScraper:
                         logger.debug(f"Image too small ({len(content)} bytes): {url}")
                         return False
                     
+                    # Persist source and authorization provenance before the
+                    # image becomes part of the managed collection.
+                    try:
+                        write_image_provenance(
+                            output_path,
+                            source_url=url,
+                            authorization_confirmed=authorization_confirmed,
+                        )
+                    except OSError as provenance_error:
+                        logger.error("Could not record image provenance for %s: %s", url, provenance_error)
+                        output_path.unlink(missing_ok=True)
+                        return False
+
                     # Session-based duplicate detection (for current session)
                     content_hash = hashlib.md5(content).hexdigest()
                     if content_hash in self.downloaded_hashes:
+                        output_path.unlink(missing_ok=True)
+                        provenance_path(output_path).unlink(missing_ok=True)
                         self.session_stats["duplicates_skipped"] += 1
                         return False
                     
@@ -1168,6 +1195,7 @@ class AdvancedImageScraper:
                         # Check for duplicates using file-based detection AFTER saving
                         if duplicate_detector.is_duplicate(output_path):
                             output_path.unlink()  # Remove duplicate
+                            provenance_path(output_path).unlink(missing_ok=True)
                             self.session_stats["duplicates_skipped"] += 1
                             return False
                         
@@ -1244,7 +1272,12 @@ class AdvancedImageScraper:
             return False
     
     async def scrape_website(
-        self, url: str, max_images: int = MAX_IMAGES_PER_SITE, *, _reset_budget: bool = True
+        self,
+        url: str,
+        max_images: int = MAX_IMAGES_PER_SITE,
+        *,
+        _reset_budget: bool = True,
+        authorization_confirmed: bool = False,
     ) -> Dict[str, Any]:
         """
         Comprehensive website scraping with advanced image discovery
@@ -1257,6 +1290,13 @@ class AdvancedImageScraper:
             Scraping results
         """
         try:
+            if not authorization_confirmed:
+                return {
+                    "success": False,
+                    "url": url,
+                    "error": "Confirm authorization before collecting images.",
+                    "images_downloaded": 0,
+                }
             if _reset_budget:
                 self.request_budget.reset()
             safe, reason = await self._set_approved_host_and_robots(url)
@@ -1351,7 +1391,12 @@ class AdvancedImageScraper:
                     # Create download tasks
                     tasks = []
                     for img_url in image_urls:
-                        task = self.download_image(session, img_url, output_dir)
+                        task = self.download_image(
+                            session,
+                            img_url,
+                            output_dir,
+                            authorization_confirmed=authorization_confirmed,
+                        )
                         tasks.append(task)
                     
                     # Execute downloads with progress tracking
@@ -1395,7 +1440,13 @@ class AdvancedImageScraper:
                 "stats": self.session_stats.copy()
             }
     
-    async def scrape_multiple_websites(self, urls: List[str], max_images_per_site: int = MAX_IMAGES_PER_SITE) -> List[Dict[str, Any]]:
+    async def scrape_multiple_websites(
+        self,
+        urls: List[str],
+        max_images_per_site: int = MAX_IMAGES_PER_SITE,
+        *,
+        authorization_confirmed: bool = False,
+    ) -> List[Dict[str, Any]]:
         """
         Scrape images from multiple websites
         
@@ -1408,6 +1459,16 @@ class AdvancedImageScraper:
         """
         results = []
         max_images_per_site = max(1, min(int(max_images_per_site), 500))
+        if not authorization_confirmed:
+            return [
+                {
+                    "success": False,
+                    "url": url,
+                    "error": "Confirm authorization before collecting images.",
+                    "images_downloaded": 0,
+                }
+                for url in urls
+            ]
         self.request_budget.reset()
         host_image_counts: dict[str, int] = {}
         
@@ -1434,7 +1495,12 @@ class AdvancedImageScraper:
                     "images_found": 0,
                 })
                 continue
-            result = await self.scrape_website(url, remaining, _reset_budget=False)
+            result = await self.scrape_website(
+                url,
+                remaining,
+                _reset_budget=False,
+                authorization_confirmed=authorization_confirmed,
+            )
             host_image_counts[host] = host_image_counts.get(host, 0) + int(result.get("images_found", 0))
             results.append(result)
             
@@ -1460,8 +1526,16 @@ class AdvancedImageScraper:
         return sorted(scraped_images)
 
 
-    async def scrape_website_enhanced(self, url: str, max_images: int = 0, crawl_depth: int = 3, 
-                                     quality_priority: str = "Highest", timeout: int = 30) -> Dict[str, Any]:
+    async def scrape_website_enhanced(
+        self,
+        url: str,
+        max_images: int = 0,
+        crawl_depth: int = 3,
+        quality_priority: str = "Highest",
+        timeout: int = 30,
+        *,
+        authorization_confirmed: bool = False,
+    ) -> Dict[str, Any]:
         """
         Enhanced website scraping with advanced options
         
@@ -1476,6 +1550,13 @@ class AdvancedImageScraper:
             Enhanced scraping results
         """
         try:
+            if not authorization_confirmed:
+                return {
+                    "success": False,
+                    "url": url,
+                    "error": "Confirm authorization before collecting images.",
+                    "images_downloaded": 0,
+                }
             self.request_budget.reset()
             safe, reason = await self._set_approved_host_and_robots(url)
             if not safe:
@@ -1548,7 +1629,11 @@ class AdvancedImageScraper:
                 
                 # Phase 3: Enhanced downloading
                 logger.info("Phase 3: Enhanced downloading...")
-                successful_downloads = await self.download_images_enhanced(image_urls, output_dir)
+                successful_downloads = await self.download_images_enhanced(
+                    image_urls,
+                    output_dir,
+                    authorization_confirmed=authorization_confirmed,
+                )
                 
                 return {
                     "success": True,
@@ -1639,9 +1724,17 @@ class AdvancedImageScraper:
         # Sort by quality score (highest first)
         return sorted(image_urls, key=quality_score, reverse=True)
 
-    async def download_images_enhanced(self, image_urls: List[str], output_dir: Path) -> int:
+    async def download_images_enhanced(
+        self,
+        image_urls: List[str],
+        output_dir: Path,
+        *,
+        authorization_confirmed: bool = False,
+    ) -> int:
         """Enhanced image downloading with better progress tracking"""
-        
+        if not authorization_confirmed:
+            logger.warning("Refused web image download without authorization confirmation")
+            return 0
         if not image_urls:
             return 0
             
@@ -1654,7 +1747,12 @@ class AdvancedImageScraper:
             
             # Create download tasks
             for url in image_urls:
-                task = self.download_image(session, url, output_dir)
+                task = self.download_image(
+                    session,
+                    url,
+                    output_dir,
+                    authorization_confirmed=authorization_confirmed,
+                )
                 tasks.append(task)
             
             # Execute with progress tracking
