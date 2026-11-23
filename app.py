@@ -14,6 +14,7 @@ import io
 import streamlit as st
 import asyncio
 import hashlib
+import json
 from urllib.parse import urlparse
 import numpy as np
 import cv2
@@ -314,6 +315,23 @@ def faces_to_csv(faces) -> str:
             metadata.get("added_at", ""),
         ])
     return buffer.getvalue()
+
+
+def show_assignment_history(face_id: str) -> None:
+    """Show the per-face review trail for identity changes when available."""
+    try:
+        face = st.session_state.vector_store.get_face_by_id(face_id)
+        raw_history = (face or {}).get("metadata", {}).get("assignment_history", "[]")
+        history = json.loads(raw_history) if isinstance(raw_history, str) else []
+    except (TypeError, ValueError, AttributeError):
+        history = []
+    if not history:
+        return
+    with st.expander("Identity assignment history"):
+        for event in reversed(history):
+            before = event.get("from_name") or "Unassigned"
+            after = event.get("to_name") or "Unassigned"
+            st.caption(f"{event.get('at', 'Unknown time')} · {before} → {after} · {event.get('actor', 'local-user')}")
 
 def main():
     """Main application function"""
@@ -1649,6 +1667,7 @@ def show_face_info_modal():
     # Header info
     st.markdown(f"**🆔 Face ID:** `{face_id[:20]}...`")
     st.markdown(f"**File:** `{image_path.name}`")
+    show_assignment_history(face_id)
 
     # Tabs for different information types
     tab1, tab2, tab3 = st.tabs(["Full image", "Face analysis", "Assign name"])

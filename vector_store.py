@@ -1344,6 +1344,32 @@ class FaceVectorStore:
                 name_parts.append(last_name)
             full_name = ' '.join(name_parts)
             
+            # Keep a per-face, append-only record of identity edits. Chroma
+            # metadata accepts strings but not nested lists, so serialize the
+            # event list as JSON. This records the previous value as well as
+            # the user-reviewed replacement and supports later manual undo.
+            existing_face = self.get_face_by_id(face_id)
+            if not existing_face:
+                return None
+            existing_metadata = existing_face.get("metadata") or {}
+            try:
+                history = json.loads(existing_metadata.get("assignment_history", "[]"))
+            except (TypeError, ValueError):
+                history = []
+            if not isinstance(history, list):
+                history = []
+            now = datetime.now().isoformat()
+            history.append({
+                "action": "assigned",
+                "actor": "local-user",
+                "at": now,
+                "from_person_id": existing_metadata.get("person_id", ""),
+                "from_name": existing_metadata.get("full_name", ""),
+                "to_person_id": person_id,
+                "to_name": full_name,
+                "reviewed": True,
+            })
+
             # Update face metadata with extended person info
             person_metadata = {
                 'person_id': person_id,
@@ -1354,7 +1380,8 @@ class FaceVectorStore:
                 'birth_date': birth_date,
                 'birth_place': birth_place,
                 'notes': notes,
-                'name_assigned_at': datetime.now().isoformat()
+                'name_assigned_at': now,
+                'assignment_history': json.dumps(history, ensure_ascii=False),
             }
             
             success = self.update_face_metadata(face_id, person_metadata)
@@ -1468,6 +1495,26 @@ class FaceVectorStore:
             True if successful, False otherwise
         """
         try:
+            existing_face = self.get_face_by_id(face_id)
+            if not existing_face:
+                return False
+            metadata = existing_face.get("metadata") or {}
+            try:
+                history = json.loads(metadata.get("assignment_history", "[]"))
+            except (TypeError, ValueError):
+                history = []
+            if not isinstance(history, list):
+                history = []
+            history.append({
+                "action": "removed",
+                "actor": "local-user",
+                "at": datetime.now().isoformat(),
+                "from_person_id": metadata.get("person_id", ""),
+                "from_name": metadata.get("full_name", ""),
+                "to_person_id": "",
+                "to_name": "",
+                "reviewed": True,
+            })
             # Remove all person-related metadata (use empty strings instead of None for ChromaDB compatibility)
             removal_metadata = {
                 'person_id': '',
@@ -1479,7 +1526,8 @@ class FaceVectorStore:
                 'birth_place': '',
                 'notes': '',
                 'name_assigned_at': '',
-                'name_removed_at': datetime.now().isoformat()
+                'name_removed_at': datetime.now().isoformat(),
+                'assignment_history': json.dumps(history, ensure_ascii=False),
             }
             
             return self.update_face_metadata(face_id, removal_metadata)
