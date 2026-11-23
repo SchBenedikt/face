@@ -17,6 +17,26 @@ about 933 MiB, so files removed in earlier commits may remain in history. A
 history rewrite is a separate coordinated operation; a passing tree check does
 not shrink existing clones or the hosted object store.
 
+## Start with an empty local index
+
+The app creates its ChromaDB collection on first startup. To verify the empty
+database path without touching an existing library, point `FACE_DATA_DIR` at a
+new directory before launching the app:
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
+python setup_env.py
+export FACE_DATA_DIR="$(mktemp -d)"
+python -c 'from config import VECTOR_DB_PATH, COLLECTION_NAME; from vector_store import FaceVectorStore; store = FaceVectorStore(); stats = store.get_collection_stats(); print("Initialized {} at {}; faces={}".format(COLLECTION_NAME, VECTOR_DB_PATH, stats["total_faces"]))'
+streamlit run app.py
+```
+
+The new index starts with zero faces. Add images only after confirming you have
+the right to process them. Keep the temporary data directory if you want to
+retain that library; remove it only when you intend to delete that local data.
+
 ## Coordinated history rewrite
 
 Before rewriting history:
