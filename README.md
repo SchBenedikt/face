@@ -155,7 +155,7 @@ The application provides local face search over images you choose to index:
 ### 🧩 **People and grouping**
 - **Identity groups**: Unlabeled faces are grouped by cosine similarity (Buffalo_L starting threshold: 0.35) and assigned only after review
 - **Name management**: Assigning a name labels only the selected face; similar faces can be reviewed and assigned together from the groups page
-- **Calibrated similarity**: ChromaDB's squared L2 distance is converted to cosine similarity correctly
+- **Cosine similarity math**: ChromaDB's squared L2 distance is converted to cosine similarity correctly
 
 ### 🌐 **Data Collection & Management**
 - **Web Scraping**: Optional interactive image crawler
@@ -171,11 +171,71 @@ The application provides local face search over images you choose to index:
 - Face crops from DeepFace detectors are aligned and reused for both embedding extraction and the result preview.
 - The active recognition pipeline extracts one 512-dimensional embedding per detected face using the model selected in **Settings**. Buffalo_L is the default; ArcFace is available for pose-heavy collections. Each index version includes its model, and switching models requires **Update All Images** before searching. The app does not mix vectors from different model spaces.
 - Embeddings are unit-normalized and stored in the local ChromaDB collection. Search converts ChromaDB distances to cosine similarity and ranks indexed images.
-- On a balanced LFW people sample (299 embedded images, 62 identities, seed 2026), Buffalo_L reached 99.7% Top-1 and 99.7% Top-5 retrieval (one error); FaceNet512 reached 98.3% Top-1 and 99.3% Top-5 (five errors). Across all 576 same-identity and 43,975 different-identity pairs from the same images, Buffalo_L at 0.40 had 87.2% same-person recall and 0/43,975 different-person false accepts. At 0.30 it had 95.5% recall and 10/43,975 false accepts. FaceNet512 at 0.60 had 82.8% recall and 58/43,975 false accepts. For reviewed identity grouping with margin 0.04, threshold 0.35 produced 70 clusters, 94.8% same-identity pair recall, and 0/43,975 false pairs; threshold 0.30 raised recall to 96.5% but introduced 25 false pairs. These matched measurements support Buffalo_L, a 0.40 search threshold, and a separate 0.35 group-suggestion threshold. Pair observations share images and are correlated; they are not independent probabilities or the official cross-validated LFW protocol, and they do not establish accuracy on other collections.
-- In an earlier LFW center-crop sample (299 images, seed 42), both models reached 99.3% Top-1; Buffalo_L had two errors and FaceNet512 had two errors. A separate 200-pair full-frame sample (seed 42) gave Buffalo_L 187/200 same-person accepts and 0/200 different-person accepts at 0.30, versus FaceNet512 185/200 and 0/200 at 0.50. These samples differ in crop and pair construction; use them as supporting diagnostics, not match-probability guarantees.
-- To repeat the matched retrieval comparison, install optional `scikit-learn` and run `.venv/bin/python evaluate_face_search.py --lfw-people --max-images 300 --seed 2026`. Both evaluators use the active model selected in **Settings** unless `--model` explicitly overrides it. Pair evaluation: `.venv/bin/python evaluate_lfw_pairs.py --pairs-per-class 200`; specify `--thresholds` to inspect other operating points. LFW downloads are cached outside the repository.
-- To measure vector-store performance separately from face detection and recognition, run `.venv/bin/python benchmark_vector_search.py`. With 512-dimensional synthetic vectors in a temporary local Chroma index, this environment measured 1,000-vector search at 8.6 ms p50 / 13.1 ms p95 and 10,000-vector search at 25.3 / 33.7 ms; their index builds took 0.43 and 5.25 seconds. A matched 10,000-vector run (same seed and 500-row batches) improved build time from 20.41 to 7.86 seconds after batching stale-row cleanup. A 100,000-vector index built in 81.8 seconds and searched at 166.4 / 189.3 ms p50 / p95 (50 results, 100 queries). These are one-run local measurements; random vectors do not establish identity accuracy and timings depend on hardware and storage.
-- Search covers only images indexed in this application's database; it does not search the public web.
+
+### Face-search quality on diagnostic datasets
+
+These measurements show how the tested pipeline ranked known identities on
+public datasets. They are diagnostics, not a guarantee for another collection.
+**Top-1** means the first result had the correct identity; **Top-5** means the
+correct identity appeared among the first five. **Recall** is the share of
+same-person pairs accepted at a threshold; **false-accept rate** is the share
+of different-person pairs accepted. None of these values is the probability
+that an individual search result is the same person. **AUC** summarizes how
+well scores separate same-person and different-person pairs across thresholds;
+**EER** is the point where false-accept and false-reject rates are equal.
+
+| Dataset and task | Model / operating point | Measured result |
+| --- | --- | --- |
+| LFW retrieval sample: 299 embedded images, 62 identities, seed 2026 | Buffalo_L | Top-1 99.7% (1 error); Top-5 99.7% |
+| Same LFW retrieval sample | FaceNet512 | Top-1 98.3% (5 errors); Top-5 99.3% |
+| LFW pair comparison: 576 same-person and 43,975 different-person pairs | Buffalo_L, threshold 0.40 | Same-person recall 87.2%; 0 different-person accepts in this sample |
+| Same LFW pairs | Buffalo_L, threshold 0.30 | Recall 95.5%; 10/43,975 different-person pairs accepted (0.023%) |
+| Same LFW pairs | FaceNet512, threshold 0.60 | Recall 82.8%; 58/43,975 different-person pairs accepted (0.132%) |
+| LFW sample: 299 images, 62 identities, seed 2026 | ArcFace | Top-1 98.0%; Top-5 99.3%. At threshold 0.40: recall 83.2%; false-accept rate 0.273% |
+| CFP frontal/profile comparison: 995 valid pairs from 10 folds | ArcFace | AUC 0.861; EER 22.8%. At threshold 0.40: 110/499 same-person and 1/496 different-person pairs accepted |
+| Same CFP pairs | Buffalo_L | AUC 0.796; EER 28.7%. At threshold 0.40: 1/499 same-person and 0/496 different-person pairs accepted |
+
+The CFP sample requested 1,000 pairs (50 same-person and 50 different-person
+pairs in each fold); embedding succeeded for 1,696 of 1,699 usable images.
+The LFW sample favors Buffalo_L for this retrieval task. CFP shows a harder
+pose-change case: at the tested 0.40 threshold, both models miss many genuine
+pairs. Threshold 0.40 is therefore a starting setting supported by these
+particular LFW diagnostics, not a universal or individually calibrated
+confidence level. Image pairs share source images, so their errors are
+correlated; the LFW sample is not the official cross-validated protocol.
+These datasets do not establish performance for every age, demographic,
+camera, pose, or user collection. Review results manually and do not use them
+as identity proof or for high-stakes decisions.
+
+An earlier LFW center-crop sample (299 images, seed 42) gave both models 99.3%
+Top-1 retrieval. A separate 200-pair full-frame sample gave Buffalo_L 187/200
+same-person accepts and 0/200 different-person accepts at threshold 0.30;
+FaceNet512 gave 185/200 and 0/200 at 0.50. The crop and pair construction
+differ from the table above, so these are supporting diagnostics only.
+
+To repeat the matched retrieval comparison, install optional `scikit-learn`
+and run `.venv/bin/python evaluate_face_search.py --lfw-people --max-images
+300 --seed 2026`. Pair evaluation: `.venv/bin/python evaluate_lfw_pairs.py
+--pairs-per-class 200`; specify `--thresholds` to inspect other operating
+points. LFW downloads are cached outside the repository.
+
+### Vector-search runtime
+
+This benchmark isolates ChromaDB retrieval with synthetic 512-dimensional
+vectors. Each size uses 100 queries requesting up to 50 neighbors. It does not
+include image loading, face detection, or embedding generation, and random
+vectors do not measure identity accuracy.
+
+| Indexed vectors | Query latency p50 | Query latency p95 |
+| ---: | ---: | ---: |
+| 1,000 | 8.6 ms | 13.1 ms |
+| 10,000 | 25.3 ms | 33.7 ms |
+| 100,000 | 166.4 ms | 189.3 ms |
+
+These are one-run local measurements and depend on hardware and storage. Repeat
+them with `.venv/bin/python benchmark_vector_search.py` on the target machine.
+Search covers only images indexed in this application's database; it does not
+search the public web.
 
 ### Index updates
 
@@ -187,7 +247,7 @@ When reprocessing a face, existing person labels follow a one-to-one match betwe
 
 These LFW diagnostics do not establish web-scale retrieval performance or a comparison with PimEyes. Search quality depends on the source images, face size, pose, lighting, and indexed collection.
 
-A larger, seed-fixed CFP frontal-profile diagnostic sampled 50 same and 50 different pairs from each of the 10 official folds (1,000 requested pairs). The current detection/embedding pipeline scored 995 pairs from 1,696 of 1,699 usable images. ArcFace reached AUC 0.861 / EER 22.8%; Buffalo_L reached AUC 0.796 / EER 28.7%. At the 0.40 search threshold, ArcFace accepted 110/499 genuine pairs and 1/496 different-person pairs; Buffalo_L accepted 1/499 and 0/496. On the matched 299-image LFW sample (62 identities, seed 2026), ArcFace reached 98.0% Top-1 / 99.3% Top-5, with 83.2% same-person recall and 0.273% different-person false accepts at 0.40. Buffalo_L reached 99.7% Top-1 / Top-5, with 87.2% recall and 0/43,975 false accepts. The pose robustness and frontal precision trade off; this evidence does not support a single global model switch.
+A larger CFP diagnostic requested 50 same and 50 different pairs from each of 10 official folds (1,000 requested pairs). The current detection/embedding pipeline scored 995 pairs using 1,696 of 1,699 usable images. The table above reports its AUC, EER, and 0.40 operating-point results. On the matched 299-image LFW sample, ArcFace reached 98.0% Top-1 / 99.3% Top-5 retrieval; at 0.40 it had 83.2% same-person recall and a 0.273% different-person false-accept rate. The trade-off between pose robustness and frontal retrieval means these results do not support one model as best for every collection.
 
 A controlled ArcFace preprocessing pilot sampled 10 same and 10 different pairs from each CFP fold (seed 20261123). On the same detections and 199 valid pairs, DeepFace's ArcFace-specific pixel normalization scored AUC 0.867 / EER 21.6%, while the current `base` normalization scored AUC 0.869 / EER 21.1%. At cosine 0.40, they accepted 21/99 and 26/99 genuine pairs, respectively, with 0/100 different pairs accepted by either. This nested pilot does not support changing ArcFace preprocessing; crop and pose handling remain the stronger areas to investigate. Its small pair sample does not establish deployment-wide false-accept rates.
 
