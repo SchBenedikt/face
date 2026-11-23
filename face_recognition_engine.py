@@ -128,7 +128,7 @@ class FaceRecognitionEngine:
             try:
                 if face_recognition is None:
                     raise RuntimeError(
-                        "face_recognition nicht verfügbar "
+                        "face_recognition is unavailable "
                         f"({_FACE_RECOGNITION_IMPORT_ERROR})"
                     )
                 face_locations = face_recognition.face_locations(

@@ -55,21 +55,21 @@ def defaults() -> Dict[str, Any]:
 def _coerce(name: str, raw: Any) -> Any:
     default, kind, minimum, maximum = SCHEMA[name]
     if isinstance(raw, bool):
-        raise ValueError("Wahrheitswerte sind hier nicht erlaubt")
+        raise ValueError("Boolean values are not allowed")
     if kind is str:
         value = str(raw).strip().lower()
         allowed = CHOICES.get(name)
         if allowed and value not in allowed:
-            raise ValueError(f"muss einer von {', '.join(allowed)} sein")
+            raise ValueError(f"must be one of {', '.join(allowed)}")
         return value
     if kind is float:
         value = float(str(raw).strip().replace(",", "."))
     else:
         if isinstance(raw, float) and not raw.is_integer():
-            raise ValueError("muss eine ganze Zahl sein")
+            raise ValueError("must be a whole number")
         value = int(str(raw).strip())
     if not minimum <= value <= maximum:
-        raise ValueError(f"muss zwischen {minimum:g} und {maximum:g} liegen")
+        raise ValueError(f"must be between {minimum:g} and {maximum:g}")
     return value
 
 
@@ -79,7 +79,7 @@ def validate_settings(values: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str,
     errors: Dict[str, str] = {}
 
     if not isinstance(values, dict):
-        return clean, {"_": "Einstellungen müssen ein Objekt sein"}
+        return clean, {"_": "Settings must be an object"}
 
     for name in SCHEMA:
         if name not in values:
@@ -200,6 +200,6 @@ def save_settings(values: Dict[str, Any]) -> Tuple[bool, Dict[str, str]]:
             if os.path.exists(temporary):
                 os.unlink(temporary)
     except OSError as exc:
-        return False, {"_": f"Konnte die Einstellungen nicht speichern: {exc}"}
+        return False, {"_": f"Could not save settings: {exc}"}
 
     return True, {}

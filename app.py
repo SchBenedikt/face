@@ -103,12 +103,6 @@ PAGE_LABELS = {
     "⚙️ Settings": "Settings",
 }
 
-SIMILARITY_FILTER_LABELS = {
-    "All Matches": "All matches",
-    "Strong cosine (≥70%)": "Strong (≥70%)",
-    "Medium cosine (≥40%)": "Medium (≥40%)",
-    "Weak cosine (≥30%)": "Low (≥30%)",
-}
 SEARCH_MODE_LABELS = {
     "Balanced": "Balanced",
     "High Precision": "High precision",
@@ -564,16 +558,6 @@ def face_search_page():
                     )
                 )
 
-                # Similarity filter (the old labels called this "quality")
-                quality_filter = st.selectbox(
-                    "Additional similarity filter",
-                    ["All Matches", "Strong cosine (≥70%)", "Medium cosine (≥40%)", "Weak cosine (≥30%)"],
-                    index=0,
-                    key="face_search_quality_filter",
-                    format_func=SIMILARITY_FILTER_LABELS.__getitem__,
-                    help="Hide results below the selected similarity score."
-                )
-
             with col_b:
                 # Face Size Filter
                 min_face_size = st.slider(
@@ -640,7 +624,6 @@ def face_search_page():
                 "Detect faces", type="primary", icon=":material/face:"
             ):
                 # Store search parameters in session state for enhanced search
-                st.session_state.quality_filter = quality_filter
                 st.session_state.min_face_size = min_face_size
                 st.session_state.search_mode = search_mode
                 st.session_state.sort_by = sort_by
@@ -862,9 +845,6 @@ def search_with_selected_face_enhanced(face_index: int):
 
     # Get advanced search parameters from session state
     search_params = {
-        'quality_filter': st.session_state.get(
-            'face_search_quality_filter', st.session_state.get('quality_filter', 'All Matches')
-        ),
         'min_face_size': int(st.session_state.get(
             'face_search_min_face_size', st.session_state.get('min_face_size', 30)
         )),
@@ -881,7 +861,7 @@ def search_with_selected_face_enhanced(face_index: int):
 
     selected_face_location = face_locations[face_index]
 
-    with st.spinner(f"🔍 Enhanced search for Face {face_index + 1} with quality filters..."):
+    with st.spinner(f"🔍 Searching indexed faces for face {face_index + 1}..."):
         try:
             # Extract embedding for selected face
             query_embedding = st.session_state.face_engine.extract_face_embedding(query_image, selected_face_location)
@@ -915,6 +895,7 @@ def search_with_selected_face_enhanced(face_index: int):
             # Apply advanced filters
             if similar_faces:
                 filtered_faces = apply_advanced_face_filters(similar_faces, search_params)
+                eligible_count = len(filtered_faces)
 
                 # Sort results based on selected criteria
                 sorted_faces = sort_search_results(
@@ -923,32 +904,31 @@ def search_with_selected_face_enhanced(face_index: int):
 
                 # Store results
                 st.session_state.search_results = sorted_faces
+                st.session_state.current_page = 1
 
                 # Show enhanced results summary
                 if sorted_faces:
-                    original_count = len(similar_faces)
-                    filtered_count = len(sorted_faces)
                     avg_similarity = sum(face['similarity'] for face in sorted_faces) / len(sorted_faces)
-                    top_similarity = sorted_faces[0]['similarity'] if sorted_faces else 0
+                    top_similarity = max(face['similarity'] for face in sorted_faces)
 
                     st.success(f"""
                     🎯 **Enhanced Search Results for Face {face_index + 1}**
 
-                    📊 **Quality Metrics:**
-                    - Original Results: {original_count}
-                    - After Quality Filtering: {filtered_count}
-                    - Top Similarity: {top_similarity*100:.1f}%
-                    - Average Similarity: {avg_similarity*100:.1f}%
+                    📊 **Search summary:**
+                    - Candidates retrieved: {len(similar_faces)}
+                    - Candidates after filters: {eligible_count}
+                    - Results displayed: {len(sorted_faces)}
+                    - Highest displayed similarity: {top_similarity*100:.1f}%
+                    - Average displayed similarity: {avg_similarity*100:.1f}%
                     - Search Mode: {search_params['search_mode']}
-                    - Quality Filter: {search_params['quality_filter']}
+                    - Minimum similarity: {adjusted_threshold:.0%}
                     """)
                 else:
                     st.warning(f"""
-                    ⚠️ **No high-quality matches found for Face {face_index + 1}**
+                    ⚠️ **No faces match the current filters for face {face_index + 1}**
 
                     **Try adjusting:**
                     - Lower similarity threshold (currently: {similarity_threshold*100:.0f}%)
-                    - Change quality filter to "All Quality"
                     - Switch to "High Recall" search mode
                     - Reduce minimum face size filter
                     """)
@@ -996,16 +976,6 @@ def apply_advanced_face_filters(faces, search_params):
 
             # These options are cosine thresholds; face size is controlled by
             # the separate geometry filter above.
-            if search_params['quality_filter'] == "Strong cosine (≥70%)":
-                if face['similarity'] < 0.7:
-                    continue
-            elif search_params['quality_filter'] == "Medium cosine (≥40%)":
-                if face['similarity'] < 0.4:
-                    continue
-            elif search_params['quality_filter'] == "Weak cosine (≥30%)":
-                if face['similarity'] < 0.3:
-                    continue
-
             filtered_faces.append(face)
 
         except Exception as e:
@@ -2316,8 +2286,8 @@ def display_search_results(results: List[Dict[str, Any]]):
         return
 
     # Real-time filtering options
-    with st.expander("🔧 Filter Results", expanded=False):
-        col_f1, col_f2, col_f3 = st.columns(3)
+    with st.expander("🔧 Filter and sort results", expanded=False):
+        col_f1, col_f2 = st.columns(2)
 
         with col_f1:
             min_similarity_filter = st.slider(
@@ -2337,20 +2307,13 @@ def display_search_results(results: List[Dict[str, Any]]):
             )
 
         with col_f2:
-            quality_level = st.selectbox(
-                "Cosine similarity level",
-                ["All", "Medium cosine (≥40%)", "High cosine (≥70%)"],
-                index=0,
-                help="Hide results below the selected similarity threshold."
-            )
-
             show_named_only = st.checkbox(
                 "Named Faces Only",
                 value=False,
                 help="Show only faces with assigned names"
             )
 
-        with col_f3:
+        with col_f2:
             sort_order = st.selectbox(
                 "Sort By",
                 ["Similarity ↓", "Similarity ↑", "Size ↓", "Size ↑", "Name A-Z"],
@@ -2377,12 +2340,6 @@ def display_search_results(results: List[Dict[str, Any]]):
                     continue
         except:
             pass
-
-        # Similarity filter (the old label called it quality)
-        if quality_level == "High cosine (≥70%)" and result['similarity'] < 0.7:
-            continue
-        elif quality_level == "Medium cosine (≥40%)" and result['similarity'] < 0.4:
-            continue
 
         # Named faces filter
         if show_named_only:
@@ -2416,6 +2373,9 @@ def display_search_results(results: List[Dict[str, Any]]):
     # Show filter results summary
     if len(filtered_results) != len(results):
         st.info(f"📋 Filtered: {len(filtered_results)} of {len(results)} results shown (filtered out {len(results) - len(filtered_results)})")
+    if not filtered_results:
+        st.info("No results match these filters. Lower the similarity or face-size filter to see more results.")
+        return
 
     # Display options
     col1, col2 = st.columns([3, 1])
@@ -2436,26 +2396,30 @@ def display_search_results(results: List[Dict[str, Any]]):
             st.info(f"Displaying all {len(results)} results")
     else:
         # Pagination
-        total_pages = (len(results) - 1) // RESULTS_PER_PAGE + 1
+        total_pages = max(1, (len(results) + RESULTS_PER_PAGE - 1) // RESULTS_PER_PAGE)
+        current_page = min(
+            max(1, int(st.session_state.get("current_page", 1))), total_pages
+        )
+        st.session_state.current_page = current_page
 
         if total_pages > 1:
             col1, col2, col3 = st.columns([1, 2, 1])
 
             with col1:
-                if st.button("⬅️ Previous") and st.session_state.current_page > 1:
-                    st.session_state.current_page -= 1
+                if st.button("⬅️ Previous") and current_page > 1:
+                    st.session_state.current_page = current_page - 1
                     st.rerun()
 
             with col2:
-                st.write(f"Page {st.session_state.current_page} of {total_pages}")
+                st.write(f"Page {current_page} of {total_pages}")
 
             with col3:
-                if st.button("➡️ Next") and st.session_state.current_page < total_pages:
-                    st.session_state.current_page += 1
+                if st.button("➡️ Next") and current_page < total_pages:
+                    st.session_state.current_page = current_page + 1
                     st.rerun()
 
         # Calculate page slice
-        start_idx = (st.session_state.current_page - 1) * RESULTS_PER_PAGE
+        start_idx = (current_page - 1) * RESULTS_PER_PAGE
         end_idx = start_idx + RESULTS_PER_PAGE
         page_results = results[start_idx:end_idx]
 
@@ -2505,15 +2469,8 @@ def display_search_results(results: List[Dict[str, Any]]):
                 if face_area > 6400:
                     quality_indicators.append("✨ Large")
 
-                if similarity_percentage >= 70:
-                    st.success(f"**🎯 Cosine similarity: {similarity_percentage:.1f}%**")
-                elif similarity_percentage >= 50:
-                    st.info(f"**✅ Cosine similarity: {similarity_percentage:.1f}%**")
-                elif similarity_percentage >= 30:
-                    st.warning(f"**⚠️ Cosine similarity: {similarity_percentage:.1f}%**")
-                else:
-                    st.error(f"**❓ Cosine similarity: {similarity_percentage:.1f}%**")
-                st.caption(f"Not a match probability | face size: {face_size}px")
+                st.metric("Cosine similarity", f"{similarity_percentage:.1f}%")
+                st.caption(f"Ranking score, not a match probability · face size: {face_size}px")
 
                 if quality_indicators:
                     st.caption(" | ".join(quality_indicators))
@@ -2524,8 +2481,8 @@ def display_search_results(results: List[Dict[str, Any]]):
                 if person_name:
                     st.success(f"👤 **{person_name}**")
 
-                if st.button("ℹ️ Details", key=f"info_{i}", help="Open full image, analyze face, or assign a name.", width='stretch'):
-                    face_id = face_data.get('face_id', face_data.get('id', f"face_{i}"))
+                face_id = face_data.get('face_id', face_data.get('id', f"face_{i}"))
+                if st.button("ℹ️ Details", key=f"search_result_details_{face_id}", help="Open full image, analyze face, or assign a name.", width='stretch'):
                     st.session_state.info_face_id = face_id
                     st.session_state.info_image_path = image_path
                     st.session_state.info_face_location = location

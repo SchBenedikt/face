@@ -27,7 +27,7 @@ for directory in [DATA_DIR, IMAGES_DIR, EMBEDDINGS_DIR, SCRAPED_DIR]:
     try:
         directory.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        print(f"Warnung: Verzeichnis {directory} konnte nicht angelegt werden: {exc}")
+        print(f"Warning: Could not create directory {directory}: {exc}")
 
 # Face recognition settings
 FACE_RECOGNITION_MODEL = "cnn"  # "hog" (schneller) oder "cnn" (genauer)

@@ -94,10 +94,10 @@ The application provides local face search over images you choose to index:
 - **Smart Caching**: Cache face thumbnails and selected image processing results
 - **Local Index**: Keep embeddings and image paths in the configured local data directory
 
-### 🧩 **Personen & Gruppierung**
-- **Identitätsgruppen**: Unbenannte Gesichter werden per Cosine-Ähnlichkeit gruppiert (Buffalo_L-Startschwelle 0,35) und erst nach Review zugewiesen
-- **Namensverwaltung**: Eine Namenszuweisung beschriftet nur das ausgewählte Gesicht; ähnliche Gesichter können in der Gruppenansicht geprüft und gemeinsam zugewiesen werden
-- **Kalibrierte Ähnlichkeit**: ChromaDBs quadrierte L2-Distanz wird korrekt in Cosine umgerechnet
+### 🧩 **People and grouping**
+- **Identity groups**: Unlabeled faces are grouped by cosine similarity (Buffalo_L starting threshold: 0.35) and assigned only after review
+- **Name management**: Assigning a name labels only the selected face; similar faces can be reviewed and assigned together from the groups page
+- **Calibrated similarity**: ChromaDB's squared L2 distance is converted to cosine similarity correctly
 
 ### 🌐 **Data Collection & Management**
 - **Web Scraping**: Optional interactive image crawler
