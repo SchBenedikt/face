@@ -1154,24 +1154,10 @@ class AdvancedImageScraper:
                         logger.debug(f"Image too small ({len(content)} bytes): {url}")
                         return False
                     
-                    # Persist source and authorization provenance before the
-                    # image becomes part of the managed collection.
-                    try:
-                        write_image_provenance(
-                            output_path,
-                            source_url=url,
-                            authorization_confirmed=authorization_confirmed,
-                        )
-                    except OSError as provenance_error:
-                        logger.error("Could not record image provenance for %s: %s", url, provenance_error)
-                        output_path.unlink(missing_ok=True)
-                        return False
-
                     # Session-based duplicate detection (for current session)
                     content_hash = hashlib.md5(content).hexdigest()
                     if content_hash in self.downloaded_hashes:
                         output_path.unlink(missing_ok=True)
-                        provenance_path(output_path).unlink(missing_ok=True)
                         self.session_stats["duplicates_skipped"] += 1
                         return False
                     
@@ -1190,6 +1176,23 @@ class AdvancedImageScraper:
                         if not self._quick_image_validation(output_path):
                             logger.debug(f"Image validation failed: {url}")
                             output_path.unlink()  # Remove invalid file
+                            return False
+
+                        # Persist source and authorization provenance before
+                        # the image becomes part of the managed collection.
+                        try:
+                            write_image_provenance(
+                                output_path,
+                                source_url=url,
+                                authorization_confirmed=authorization_confirmed,
+                            )
+                        except OSError as provenance_error:
+                            logger.error(
+                                "Could not record image provenance for %s: %s",
+                                url,
+                                provenance_error,
+                            )
+                            output_path.unlink(missing_ok=True)
                             return False
                         
                         # Check for duplicates using file-based detection AFTER saving
