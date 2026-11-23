@@ -177,6 +177,41 @@ def active_embedding_model() -> str:
     )
 
 
+def active_embedding_pipeline_metadata(
+    model_name: str | None = None,
+    detection_model: str | None = None,
+) -> Dict[str, Any]:
+    """Return scalar fields that describe the active vector/index contract."""
+    model = str(model_name or active_embedding_model())
+    detector = str(
+        detection_model
+        if detection_model is not None
+        else load_settings().get("detection_model", "cnn")
+    ).lower()
+    if detector not in CHOICES["detection_model"]:
+        detector = "cnn"
+    try:
+        installed_deepface_version = package_version("deepface")
+    except PackageNotFoundError:
+        installed_deepface_version = "unavailable"
+    try:
+        import face_recognition  # noqa: F401 - availability selects a fallback
+        dlib_detector = detector
+    except Exception:  # noqa: BLE001 - optional dependency
+        dlib_detector = "unavailable"
+    return {
+        "embedding_model_family": "DeepFace",
+        "embedding_model": model,
+        "embedding_model_version": installed_deepface_version,
+        "embedding_dimension": int(config.EMBEDDING_DIMENSION),
+        "embedding_preprocessing_version": str(config.EMBEDDING_PIPELINE_VERSION),
+        "embedding_normalization": "l2",
+        "face_detector_pipeline": "DeepFace:RetinaFace/MTCNN/OpenCV",
+        "face_detector_fallback": f"face_recognition:{dlib_detector};OpenCV:Haar",
+        "index_schema_version": "face-index-v1",
+    }
+
+
 def active_grouping_threshold() -> float:
     """Return an evidence-based starting threshold for the selected model."""
     override = os.environ.get("FACE_GROUPING_THRESHOLD")

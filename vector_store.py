@@ -27,7 +27,11 @@ from config import (
     FACE_AUTO_ASSIGN_AMBIGUITY_MARGIN,
 )
 from face_grouping import centroid_of, group_embeddings
-from settings_store import active_embedding_pipeline_version, active_grouping_threshold
+from settings_store import (
+    active_embedding_pipeline_metadata,
+    active_embedding_pipeline_version,
+    active_grouping_threshold,
+)
 from similarity import (
     cosine_from_chroma_distance,
     normalise_embedding,
@@ -197,6 +201,7 @@ class FaceVectorStore:
         self._cache_timestamp = None
         self._pipeline_status_cache = None
         self._embedding_pipeline_version = active_embedding_pipeline_version()
+        self._embedding_pipeline_metadata = active_embedding_pipeline_metadata()
         
         # Check for cache reset marker
         self._check_cache_reset_marker()
@@ -213,6 +218,10 @@ class FaceVectorStore:
         # Get or create collection
         try:
             self.collection = self.client.get_collection(name=collection_name)
+            existing_metadata = dict(self.collection.metadata or {})
+            if existing_metadata.get("embedding_pipeline_version") == self._embedding_pipeline_version:
+                existing_metadata.update(self._embedding_pipeline_metadata)
+                self.collection.modify(metadata=existing_metadata)
             logger.info(f"Loaded existing collection: {collection_name}")
         except Exception:
             self.collection = self.client.create_collection(
@@ -220,6 +229,7 @@ class FaceVectorStore:
                 configuration={"hnsw": {"space": "l2"}},
                 metadata={
                     "description": "Face embeddings for similarity search",
+                    **self._embedding_pipeline_metadata,
                     "embedding_pipeline_version": self._embedding_pipeline_version,
                     "embedding_pipeline_complete": True,
                 }
@@ -231,6 +241,7 @@ class FaceVectorStore:
         version = active_embedding_pipeline_version()
         if version != self._embedding_pipeline_version:
             self._embedding_pipeline_version = version
+            self._embedding_pipeline_metadata = active_embedding_pipeline_metadata()
             self._pipeline_status_cache = None
 
     def get_embedding_pipeline_status(self) -> Dict[str, Any]:
@@ -292,6 +303,7 @@ class FaceVectorStore:
             and bool(metadata.get("embedding_pipeline_complete"))
         )
         metadata.update({
+            **self._embedding_pipeline_metadata,
             "embedding_pipeline_version": self._embedding_pipeline_version,
             "embedding_pipeline_complete": was_complete,
         })
@@ -302,6 +314,7 @@ class FaceVectorStore:
         """Mark the index complete after every available source image is reprocessed."""
         metadata = dict(self.collection.metadata or {})
         metadata.update({
+            **self._embedding_pipeline_metadata,
             "embedding_pipeline_version": self._embedding_pipeline_version,
             "embedding_pipeline_complete": True,
         })
@@ -370,6 +383,7 @@ class FaceVectorStore:
             full_metadata = {
                 **preserved_metadata,
                 **metadata,
+                **self._embedding_pipeline_metadata,
                 "added_at": datetime.now().isoformat(),
                 "embedding_dimension": len(vector),
                 "embedding_pipeline_version": self._embedding_pipeline_version,
@@ -438,6 +452,7 @@ class FaceVectorStore:
                 full_metadata = {
                     **preserved_metadata,
                     **metadata,
+                    **self._embedding_pipeline_metadata,
                     "added_at": datetime.now().isoformat(),
                     "embedding_dimension": int(vector.size),
                     "embedding_pipeline_version": self._embedding_pipeline_version,

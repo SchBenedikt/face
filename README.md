@@ -96,9 +96,10 @@ When the face detector or embedding preprocessing changes, the app marks old
 vectors as incompatible and excludes them from similarity results. In **Batch
 Face Processing**, run **Update All Images** for **Images and subfolders** and
 for **Scraped Images** to rebuild the complete searchable index. During that
-update, only already reprocessed images are searched. Index identity includes
-the selected model, DeepFace package version, detector settings, preprocessing
-version, and the 512-dimensional L2-normalized vector contract. Export a
+update, only already reprocessed images are searched. Collection and face
+metadata record the model family/name/package version, detector settings,
+preprocessing version, the 512-dimensional L2-normalized vector contract, and
+the index schema version. Export a
 portable ZIP with embeddings before upgrading the recognition runtime or
 rebuilding an index if you need a recoverable snapshot.
 
