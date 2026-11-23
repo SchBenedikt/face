@@ -118,7 +118,28 @@ def test_settings_report_the_effective_face_detector(seeded_data):
     assert "RetinaFace" in joined
     assert "MTCNN" in joined
     assert any("Setup checklist and diagnostics" in item.label for item in at.expander)
+    assert any("Advanced settings" in item.label for item in at.expander)
+    assert any("Delete biometric data and backups" in item.label for item in at.expander)
     assert any("Check embedding model availability" in item.label for item in at.button)
+
+
+def test_setup_model_check_reports_missing_weights(seeded_data):
+    class MissingModel:
+        def _extract_single_model_embedding(self, sample, model_name):
+            raise RuntimeError("weights unavailable in offline setup")
+
+    at = _app()
+    at.session_state["face_engine"] = MissingModel()
+    at.run()
+    _goto(at, "⚙️ Settings")
+    next(button for button in at.button if "Check embedding model availability" in button.label).click().run()
+
+    _assert_no_exception(at)
+    assert any(
+        "Model check failed: RuntimeError" in str(item.value)
+        and "weights unavailable" in str(item.value)
+        for item in at.error
+    ), [str(item.value) for item in at.error]
 
 
 def test_face_gallery_renders_cached_thumbnails(seeded_data):
@@ -438,5 +459,51 @@ def test_settings_can_change_the_detection_model(seeded_data, isolated_settings_
 
     from settings_store import load_settings
 
+    if load_settings()["detection_model"] != "hog":
+        confirm = next(
+            item for item in at.checkbox
+            if "saved this backup outside the app data folder" in item.label
+        )
+        confirm.set_value(True).run()
+        next(button for button in at.button if "Save settings" in button.label).click().run()
+        _assert_no_exception(at)
+
     assert any("Settings saved" in str(message.value) for message in at.success)
     assert load_settings()["detection_model"] == "hog"
+
+
+def test_model_change_requires_downloadable_searchable_backup(seeded_data, isolated_settings_file):
+    at = _app()
+    at.run()
+    _goto(at, "⚙️ Settings")
+
+    model_select = next(
+        element for element in at.selectbox
+        if "Face search embedding model" in element.label
+    )
+    model_select.set_value("ArcFace")
+    next(button for button in at.button if "Save settings" in button.label).click().run()
+    _assert_no_exception(at)
+
+    from settings_store import load_settings
+
+    assert load_settings()["embedding_model"] == "buffalo_l"
+    assert any("A searchable backup was created" in str(item.value) for item in at.success)
+    backup = at.session_state["pipeline_change_backup"]
+    assert Path(backup["backup_path"]).is_file()
+    confirm = next(
+        item for item in at.checkbox
+        if "saved this backup outside the app data folder" in item.label
+    )
+    confirm.set_value(True).run()
+    _assert_no_exception(at)
+
+    model_select = next(
+        element for element in at.selectbox
+        if "Face search embedding model" in element.label
+    )
+    assert model_select.value == "ArcFace"
+    next(button for button in at.button if "Save settings" in button.label).click().run()
+    _assert_no_exception(at)
+    assert load_settings()["embedding_model"] == "arcface"
+    assert any("needs an update" in str(item.value) for item in at.warning)

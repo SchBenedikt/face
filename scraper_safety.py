@@ -58,15 +58,39 @@ def approved_public_url(
         if parsed.scheme.casefold() == "https" and parsed.port not in (None, 443):
             return False, "HTTPS is allowed only on port 443."
 
-        try:
-            addresses = {ipaddress.ip_address(host)}
-        except ValueError:
-            addresses = {
-                ipaddress.ip_address(result[4][0].split("%", 1)[0])
-                for result in resolver(host, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
-            }
-        if not addresses or any(not address.is_global for address in addresses):
+        addresses = public_addresses_for_host(
+            host,
+            parsed.port or (443 if parsed.scheme == "https" else 80),
+            resolver=resolver,
+        )
+        if not addresses:
             return False, "The URL resolves to a private or special-use network address."
         return True, ""
     except (OSError, ValueError) as exc:
         return False, f"The URL host could not be safely resolved: {exc}"
+
+
+def public_addresses_for_host(
+    host: str,
+    port: int,
+    *,
+    resolver=socket.getaddrinfo,
+) -> list[str]:
+    """Resolve a host once and return only a fully public address set.
+
+    Callers can pin outbound clients to these results so DNS cannot change
+    between validation and connection (DNS rebinding).
+    """
+    try:
+        addresses = {ipaddress.ip_address(host.split("%", 1)[0])}
+    except ValueError:
+        addresses = {
+            ipaddress.ip_address(result[4][0].split("%", 1)[0])
+            for result in resolver(host, port, type=socket.SOCK_STREAM)
+        }
+    if not addresses or any(not address.is_global for address in addresses):
+        return []
+    return sorted(
+        (str(address) for address in addresses),
+        key=lambda address: (":" in address, address),
+    )

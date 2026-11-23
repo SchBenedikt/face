@@ -116,6 +116,25 @@ def test_similar_faces_are_suggestions_until_individually_reviewed(tmp_path):
     assert result["skipped_ambiguous"] == 0
 
 
+def test_legacy_auto_assignment_api_never_writes_similar_identities(tmp_path):
+    store = _make_store(tmp_path)
+    store.assign_person_name(
+        "A0",
+        {"first_name": "Anna", "last_name": "Test"},
+        person_id="person-a",
+    )
+
+    assigned_count = store.auto_assign_similar_faces(
+        "A0", similarity_threshold=0.65
+    )
+
+    assert assigned_count == 0
+    assert {face["face_id"] for face in store.get_faces_by_person_id("person-a")} == {"A0"}
+    for face_id in set(FACES_A) - {"A0"}:
+        face = store.get_face_by_id(face_id)
+        assert not (face["metadata"].get("person_id") or "").strip()
+
+
 def test_ambiguous_face_is_never_named_without_confirmation(tmp_path):
     store = _make_store(tmp_path)
     basis = _basis()

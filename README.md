@@ -48,6 +48,13 @@ streamlit run app.py
 
 **🎉 That's it!** Open your browser to `http://localhost:8501` and start exploring.
 
+On an empty installation, choose **Add local images** or open **Import images**,
+select images you are authorized to process, and start indexing. The completion
+summary reports processed images and detected faces; then choose **Search
+indexed faces** to try a local face search. The **Settings** checklist checks
+storage and index readiness. The model check runs only when requested because
+first use can download model weights.
+
 By default, Streamlit binds to `127.0.0.1`, so the interface is available only
 from the machine running it. Do not change `server.address` to a network-facing
 address or expose the port through a proxy unless that deployment adds
@@ -144,7 +151,7 @@ The application provides local face search over images you choose to index:
 
 ### Index updates
 
-Changes to face detection, alignment, or embedding preprocessing create a new pipeline version. The app excludes older vectors until their source images are reprocessed. Use **Batch Face Processing → Update All Images** for each image directory. Back up the database before a large reindex.
+Changes to face detection, alignment, or embedding preprocessing create a new pipeline version. The app excludes older vectors until their source images are reprocessed. Before saving a pipeline change, **Settings** creates an embedding-inclusive backup and requires you to download it and confirm that you saved a copy outside the app data folder. The local archive is stored in `FACE_DATA_DIR/pipeline_backups` (or `data/pipeline_backups` by default) and contains sensitive biometric embeddings and metadata, but not original images. To recover the old index, switch back to the matching pipeline and restore the archive through **Face library → Restore a portable ZIP**. Reindexing is resumable: use **Batch processing → Update All Images** for each image directory.
 
 Changing from FaceNet512 to Buffalo_L invalidates the old embeddings. Reprocess each image directory before searching. A saved, unchanged FaceNet512 default threshold of 0.65 migrates to Buffalo_L's 0.40 starting threshold; other saved thresholds are retained.
 
@@ -203,6 +210,18 @@ python .github/scripts/check_repository_artifacts.py
 The same checks run on pushes and pull requests through GitHub Actions.
 
 ## 📥 Data Processing Workflow
+
+## 🔐 Local data deletion
+
+The application stores indexed face embeddings, labels, thumbnails and recovery
+archives locally. It has no built-in sign-in or access control; keep Streamlit
+bound to localhost unless an authenticated and authorized access layer is in
+front of it. In **Settings → Privacy and local data**, you can permanently
+delete indexed faces and biometric recovery archives. Select the source-image
+option to also remove files referenced by the index and files in the app's
+managed image folders. Images in directories outside the app's managed folders
+are removed only when that option is selected. Use a separately saved backup
+if you may need to recover the library later.
 
 ### Add and index images
 
@@ -317,8 +336,9 @@ We welcome contributions! Here's how to get started:
 
 - Images, face embeddings, names, and source metadata are stored under the configured local data directory. The default server bind is local-only. The optional image crawler makes requests to external websites.
 - The app has no built-in consent tracking, legal-compliance checks, or demographic-bias evaluation. You are responsible for deciding which images you may process and for following applicable rules.
+- There is no automatic retention or expiry policy. Indexed records and managed source images remain until you delete them; separately exported or copied files must be removed where you stored them.
 - The app does not send indexed images or embeddings to a project-operated cloud service. Model packages may download model files during setup, and web import contacts the URLs you enter. Review third-party model and website terms before use.
-- Removing a face record does not by itself erase the original image file or every derived copy. Manage the configured data directory and backups as sensitive data.
+- Privacy settings can remove the local index, cached thumbnails, derived embedding files, and local recovery archives. Source images are removed only when you select that option; external copies and manually exported archives are outside the app's control.
 - Face search can return false matches and miss correct matches. Cosine similarity is a ranking score, not a probability or identity confirmation. Do not rely on it for high-stakes decisions.
 - The app searches only its indexed local collection; it is not a public-web face search service.
 - No formal accuracy or fairness benchmark is currently published for this project.

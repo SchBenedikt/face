@@ -1305,7 +1305,16 @@ class FaceVectorStore:
     
     # Person Name Assignment Functions
     
-    def assign_person_name(self, face_id: str, person_data: Dict[str, str], person_id: Optional[str] = None) -> Optional[str]:
+    def assign_person_name(
+        self,
+        face_id: str,
+        person_data: Dict[str, str],
+        person_id: Optional[str] = None,
+        *,
+        allow_reassignment: bool = False,
+        assignment_source: str = "manual_review",
+        suggested_similarity: Optional[float] = None,
+    ) -> Optional[str]:
         """
         Assign extended person data to a face
         
@@ -1352,6 +1361,13 @@ class FaceVectorStore:
             if not existing_face:
                 return None
             existing_metadata = existing_face.get("metadata") or {}
+            current_person_id = str(existing_metadata.get("person_id", "") or "")
+            if current_person_id and current_person_id != person_id and not allow_reassignment:
+                logger.warning(
+                    "Refused person reassignment for %s without explicit confirmation",
+                    face_id,
+                )
+                return None
             try:
                 history = json.loads(existing_metadata.get("assignment_history", "[]"))
             except (TypeError, ValueError):
@@ -1376,10 +1392,31 @@ class FaceVectorStore:
                 "birth_place": birth_place,
                 "notes": notes,
             }
+            # A person ID is a shared identity key. Reject edits that would
+            # silently split one person's name or details across face rows.
+            for person_face in self.get_faces_by_person_id(str(person_id)):
+                other_metadata = person_face.get("metadata") or {}
+                if any(
+                    str(other_metadata.get(key, "") or "") != value
+                    for key, value in to_fields.items()
+                ):
+                    logger.warning(
+                        "Refused inconsistent details for person %s on face %s",
+                        person_id,
+                        face_id,
+                    )
+                    return None
+
+            if suggested_similarity is not None:
+                suggested_similarity = float(suggested_similarity)
+                if not np.isfinite(suggested_similarity):
+                    suggested_similarity = None
             history.append({
                 "action": "assigned",
                 "actor": "local-user",
                 "at": now,
+                "source": str(assignment_source),
+                "suggested_similarity": suggested_similarity,
                 "from_person_id": existing_metadata.get("person_id", ""),
                 "from_name": existing_metadata.get("full_name", ""),
                 "from_fields": from_fields,
@@ -1773,7 +1810,7 @@ class FaceVectorStore:
                             
                             # Create full name
                             name_parts = [p.strip() for p in [first_name, middle_names, last_name] if p.strip()]
-                            full_name = ' '.join(name_parts) if name_parts else 'Unbekannt'
+                            full_name = ' '.join(name_parts) if name_parts else 'Unknown person'
                             
                             persons[person_id] = {
                                 'person_id': person_id,
@@ -1998,62 +2035,23 @@ class FaceVectorStore:
         """
         return self.search_similar_faces(query_embedding, n_results, min_similarity)
     
-    def auto_assign_similar_faces(self, face_id: str, similarity_threshold: float = FACE_AUTO_ASSIGN_THRESHOLD) -> int:
+    def auto_assign_similar_faces(
+        self,
+        face_id: str,
+        similarity_threshold: float = FACE_AUTO_ASSIGN_THRESHOLD,
+    ) -> int:
+        """Deprecated safe shim: similarity never writes an identity.
+
+        Keep the legacy call signature for integrations, but require users to
+        review each proposed match in the app before assigning a person.
         """
-        Automatically assign person name to faces with high similarity (>threshold)
-        
-        Args:
-            face_id: Reference face with assigned person
-            similarity_threshold: Minimum cosine similarity to auto-assign (default 0.68)
-            
-        Returns:
-            Number of faces that were auto-assigned
-        """
-        try:
-            # Get the reference face
-            reference_face = self.get_face_by_id(face_id)
-            if not reference_face or not reference_face['metadata'].get('person_id'):
-                return 0
-            
-            # Extract all person data from reference face
-            metadata = reference_face['metadata']
-            person_data = {
-                'first_name': metadata.get('first_name', ''),
-                'middle_names': metadata.get('middle_names', ''),
-                'last_name': metadata.get('last_name', ''),
-                'birth_date': metadata.get('birth_date', ''),
-                'birth_place': metadata.get('birth_place', ''),
-                'notes': metadata.get('notes', '')
-            }
-            person_id = metadata['person_id']
-            
-            # Find similar faces using the correct method
-            similar_faces = self.search_similar_faces(
-                reference_face['embedding'],
-                n_results=1000,  # Check many faces
-                min_similarity=similarity_threshold
-            )
-            
-            assigned_count = 0
-            for similar_face in similar_faces:
-                # Skip if already has person assigned or is the reference face
-                if (similar_face['face_id'] != face_id and 
-                    not similar_face['metadata'].get('person_id')):
-                    
-                    # Auto-assign the same person with all data
-                    success = self.assign_person_name(
-                        similar_face['face_id'],
-                        person_data,
-                        person_id
-                    )
-                    if success:
-                        assigned_count += 1
-                        
-            return assigned_count
-            
-        except Exception as e:
-            logger.error(f"Error auto-assigning similar faces for {face_id}: {e}")
-            return 0
+        logger.warning(
+            "Ignored automatic identity propagation for %s (threshold %.3f); "
+            "review candidate faces before assigning a person",
+            face_id,
+            float(similarity_threshold),
+        )
+        return 0
     
     def search_faces_by_name(self, search_term: str) -> List[Dict[str, Any]]:
         """

@@ -128,7 +128,10 @@ def load_settings() -> Dict[str, Any]:
     return values
 
 
-def active_embedding_pipeline_version(model_name: str | None = None) -> str:
+def active_embedding_pipeline_version(
+    model_name: str | None = None,
+    detection_model: str | None = None,
+) -> str:
     """Return the pipeline id for the detector this installation will use.
 
     The embedding model is part of the index identity. DeepFace alignment is
@@ -146,13 +149,19 @@ def active_embedding_pipeline_version(model_name: str | None = None) -> str:
         deepface_version = "unavailable"
     # The index identity records the installed encoder implementation and the
     # vector contract, in addition to the model and image preprocessing ID.
-    base_version = f"{base_version}-deepface-{deepface_version}-dim512-l2norm-v1"
+    # Bump the schema suffix when Chroma metadata or vector storage semantics
+    # change. This keeps same-shaped embeddings from silently crossing schemas.
+    base_version = f"{base_version}-deepface-{deepface_version}-dim512-l2norm-v1-index-schema-v1"
     try:
         import face_recognition  # noqa: F401 - availability selects the path
     except Exception:  # noqa: BLE001 - optional dlib stack may be unavailable
         return base_version
 
-    model = str(load_settings().get("detection_model", "cnn")).lower()
+    model = str(
+        detection_model
+        if detection_model is not None
+        else load_settings().get("detection_model", "cnn")
+    ).lower()
     if model not in CHOICES["detection_model"]:
         model = "cnn"
     return f"{base_version}-dlib-{model}"

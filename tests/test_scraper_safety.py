@@ -7,6 +7,8 @@ import importlib.util
 from pathlib import Path
 import urllib.robotparser
 
+import pytest
+
 from scraper_safety import HostRequestBudget, approved_public_url
 
 
@@ -73,6 +75,10 @@ def test_crawler_applies_robots_disallow_rules(monkeypatch):
         return True, ""
 
     monkeypatch.setattr("old_image_scraper.approved_public_url", allow_public)
+    monkeypatch.setattr(
+        "old_image_scraper.public_addresses_for_host",
+        lambda host, port: ["93.184.216.34"],
+    )
     scraper = AdvancedImageScraper()
     scraper.approved_hosts = {"example.test"}
     parser = urllib.robotparser.RobotFileParser()
@@ -87,8 +93,25 @@ def test_crawler_applies_robots_disallow_rules(monkeypatch):
     assert "robots.txt" in blocked_result[1]
 
 
-def test_legacy_bulk_crawler_entry_point_is_disabled(capsys):
-    script = Path(__file__).resolve().parents[1] / "image-download.py"
+def test_http_connector_resolves_only_the_pinned_approved_address():
+    from old_image_scraper import _PinnedHostResolver
+
+    resolver = _PinnedHostResolver("example.test", "93.184.216.34")
+    result = asyncio.run(resolver.resolve("example.test", 443))
+    assert result[0]["host"] == "93.184.216.34"
+    assert result[0]["family"] == socket.AF_INET
+
+    try:
+        asyncio.run(resolver.resolve("internal.example.test", 443))
+    except OSError as exc:
+        assert "only permits the approved hostname" in str(exc)
+    else:
+        raise AssertionError("unapproved hosts must not resolve through the pinned connector")
+
+
+@pytest.mark.parametrize("script_name", ["image.py", "image-download.py"])
+def test_legacy_bulk_crawler_entry_point_is_disabled(capsys, script_name):
+    script = Path(__file__).resolve().parents[1] / script_name
     spec = importlib.util.spec_from_file_location("legacy_image_download", script)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -98,7 +121,7 @@ def test_legacy_bulk_crawler_entry_point_is_disabled(capsys):
 
     output = capsys.readouterr().out
     assert "is disabled" in output
-    assert "network-safety rules" in output
+    assert "Web import" in output
 
 
 def test_host_request_budget_stops_at_limit_and_tracks_hosts_separately():

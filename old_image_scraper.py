@@ -10,20 +10,50 @@ from pathlib import Path
 from typing import List, Dict, Set, Optional, Any
 from urllib.parse import urljoin, urlparse, urlunsplit
 import logging
+import ipaddress
 from tqdm import tqdm
 import time
 import hashlib
 import re
+import socket
 import xml.etree.ElementTree as ET
 import urllib.robotparser
 
 from config import SCRAPED_DIR, MAX_IMAGES_PER_SITE, SUPPORTED_IMAGE_FORMATS
 from utils import is_valid_image_file, calculate_image_hash
 from duplicate_detector import duplicate_detector
-from scraper_safety import HostRequestBudget, approved_public_url
+from scraper_safety import (
+    HostRequestBudget,
+    approved_public_url,
+    public_addresses_for_host,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class _PinnedHostResolver(aiohttp.abc.AbstractResolver):
+    """Resolve only the explicitly approved host to its validated IP address."""
+
+    def __init__(self, hostname: str, address: str):
+        self.hostname = hostname.casefold().rstrip(".")
+        self.address = address
+
+    async def resolve(self, host, port=0, family=socket.AF_UNSPEC):
+        if str(host).casefold().rstrip(".") != self.hostname:
+            raise OSError("The crawler resolver only permits the approved hostname.")
+        address_family = socket.AF_INET6 if ":" in self.address else socket.AF_INET
+        return [{
+            "hostname": host,
+            "host": self.address,
+            "port": port,
+            "family": address_family,
+            "proto": 0,
+            "flags": socket.AI_NUMERICHOST,
+        }]
+
+    async def close(self):
+        return None
 
 class AdvancedImageScraper:
     """
@@ -41,6 +71,8 @@ class AdvancedImageScraper:
         self.visited_pages: Set[str] = set()
         self.discovered_urls: Set[str] = set()
         self.approved_hosts: Set[str] = set()
+        self.pinned_host: str = ""
+        self.pinned_address: str = ""
         self.robots_parser: Optional[urllib.robotparser.RobotFileParser] = None
         self.request_budget = HostRequestBudget()
         self.session_stats = {
@@ -105,14 +137,24 @@ class AdvancedImageScraper:
             playwright = await async_playwright().start()
             
             # Launch browser with optimized settings for comprehensive crawling
+            launch_args = [
+                '--no-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--disable-extensions',
+            ]
+            try:
+                literal_address = ipaddress.ip_address(self.pinned_host)
+            except ValueError:
+                literal_address = None
+            if self.pinned_host and not literal_address and self.pinned_address:
+                launch_args.append(
+                    f"--host-resolver-rules=MAP {self.pinned_host} {self.pinned_address}"
+                )
+
             browser = await playwright.chromium.launch(
                 headless=True,
-                args=[
-                    '--no-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
-                    '--disable-extensions',
-                ]
+                args=launch_args,
             )
             
             # Create context with realistic user agent
@@ -122,7 +164,8 @@ class AdvancedImageScraper:
                 viewport={"width": 1920, "height": 1080},
                 java_script_enabled=True,
                 accept_downloads=False,
-                ignore_https_errors=False
+                ignore_https_errors=False,
+                service_workers="block",
             )
             
             # Create page from context
@@ -161,6 +204,13 @@ class AdvancedImageScraper:
                 return False, "robots.txt disallows this URL."
         return True, ""
 
+    def _pinned_connector(self, **options) -> aiohttp.TCPConnector:
+        """Build an aiohttp connector pinned to the approved public address."""
+        resolver = None
+        if self.pinned_host and self.pinned_address:
+            resolver = _PinnedHostResolver(self.pinned_host, self.pinned_address)
+        return aiohttp.TCPConnector(resolver=resolver, **options)
+
     async def _request_is_allowed(self, url: str, *, check_robots: bool = True) -> bool:
         """Validate and consume one paced request from the hostname budget."""
         allowed, _reason = await self._url_is_allowed(url, check_robots=check_robots)
@@ -177,6 +227,24 @@ class AdvancedImageScraper:
         allowed, reason = await self._url_is_allowed(base_url, check_robots=False)
         if not allowed:
             return False, reason
+        parsed = urlparse(base_url)
+        addresses = await asyncio.to_thread(
+            public_addresses_for_host,
+            host,
+            parsed.port or (443 if parsed.scheme == "https" else 80),
+        )
+        if not addresses:
+            return False, "The approved hostname has no public address to pin."
+        try:
+            ipaddress.ip_address(host)
+            self.pinned_host = host
+            self.pinned_address = host
+        except ValueError:
+            ipv4_addresses = [address for address in addresses if ":" not in address]
+            if not ipv4_addresses:
+                return False, "Secure crawling requires an approved public IPv4 address."
+            self.pinned_host = host
+            self.pinned_address = ipv4_addresses[0]
 
         robots_url = urljoin(base_url, "/robots.txt")
         robots_allowed, reason = await self._url_is_allowed(robots_url, check_robots=False)
@@ -185,7 +253,9 @@ class AdvancedImageScraper:
         parser = urllib.robotparser.RobotFileParser()
         parser.set_url(robots_url)
         timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with aiohttp.ClientSession(
+            connector=self._pinned_connector(), timeout=timeout
+        ) as session:
             if not await self._request_is_allowed(robots_url, check_robots=False):
                 return False, "The approved host request budget was exhausted."
             async with session.get(robots_url, allow_redirects=False) as response:
@@ -258,7 +328,7 @@ class AdvancedImageScraper:
                 '/robots.txt'  # Will parse for sitemap references
             ]
             
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(connector=self._pinned_connector()) as session:
                 for path in sitemap_paths:
                     try:
                         sitemap_url = urljoin(base_url, path)
@@ -344,7 +414,7 @@ class AdvancedImageScraper:
         try:
             if not await self._request_is_allowed(sitemap_url):
                 return set()
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(connector=self._pinned_connector()) as session:
                 async with session.get(sitemap_url, timeout=aiohttp.ClientTimeout(total=30), allow_redirects=False) as response:
                     if response.status == 200:
                         content = await response.text()
@@ -1274,7 +1344,7 @@ class AdvancedImageScraper:
                 
                 # Phase 5: Download all discovered images with duplicate detection
                 logger.info("Phase 5: Downloading images...")
-                connector = aiohttp.TCPConnector(limit=2, limit_per_host=2)
+                connector = self._pinned_connector(limit=2, limit_per_host=2)
                 timeout = aiohttp.ClientTimeout(total=300)
                 
                 async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
@@ -1513,7 +1583,7 @@ class AdvancedImageScraper:
         try:
             # Check robots.txt for additional sitemaps
             robots_url = urljoin(base_url, "/robots.txt")
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(connector=self._pinned_connector()) as session:
                 try:
                     if not await self._request_is_allowed(robots_url, check_robots=False):
                         return discovered
@@ -1576,7 +1646,7 @@ class AdvancedImageScraper:
             return 0
             
         successful_downloads = 0
-        connector = aiohttp.TCPConnector(limit=15)
+        connector = self._pinned_connector(limit=15)
         timeout = aiohttp.ClientTimeout(total=300)
         
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:

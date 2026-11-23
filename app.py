@@ -60,6 +60,7 @@ except Exception as exc:  # noqa: BLE001
 from duplicate_detector import delete_duplicate_files, duplicate_detector
 from duplicate_backup import create_duplicate_backup, restore_duplicate_backup
 from portable_export import create_face_export, restore_face_export
+from privacy_data import delete_local_biometric_data
 from utils import (
     IMAGE_EXTENSIONS, load_and_preprocess_image, load_uploaded_image,
     create_thumbnail, get_image_files, parse_face_location
@@ -67,6 +68,7 @@ from utils import (
 from ui_cache import face_thumbnail
 from async_utils import run_coroutine
 from settings_store import (
+    active_embedding_pipeline_version,
     active_embedding_model,
     active_grouping_threshold,
     load_settings,
@@ -173,6 +175,50 @@ def show_embedding_pipeline_status() -> None:
         )
 
 
+def create_pipeline_change_backup(store: Any) -> Dict[str, Any]:
+    """Persist a searchable, embedding-inclusive backup of a complete index."""
+    if store is None:
+        return {"success": False, "error": "The vector database is unavailable."}
+    status = store.get_embedding_pipeline_status()
+    if not status.get("compatible") or not status.get("complete"):
+        return {
+            "success": False,
+            "error": "Only a complete index compatible with the active pipeline can be backed up for migration.",
+        }
+    face_count = int(store.collection.count())
+    if face_count <= 0:
+        return {"success": False, "error": "There are no indexed faces to back up."}
+    try:
+        archive_data = create_face_export(
+            store.collection,
+            store._embedding_pipeline_version,
+            include_embeddings=True,
+            include_images=False,
+        )
+        backup_directory = DATA_DIR / "pipeline_backups"
+        backup_directory.mkdir(parents=True, exist_ok=True)
+        version_hash = hashlib.sha256(
+            store._embedding_pipeline_version.encode("utf-8")
+        ).hexdigest()[:12]
+        backup_path = backup_directory / (
+            f"face-index-{version_hash}-{datetime.now().strftime('%Y%m%dT%H%M%S%f')}.zip"
+        )
+        with tempfile.NamedTemporaryFile(
+            prefix=".face-index-backup-", suffix=".tmp", dir=backup_directory,
+            delete=False,
+        ) as temporary:
+            temporary.write(archive_data)
+            temporary_path = Path(temporary.name)
+        os.replace(temporary_path, backup_path)
+        return {
+            "success": True,
+            "backup_path": str(backup_path),
+            "pipeline_version": store._embedding_pipeline_version,
+            "face_count": face_count,
+        }
+    except Exception as exc:  # noqa: BLE001 - report backup failures before index mutation
+        logger.exception("Could not create embedding pipeline backup")
+        return {"success": False, "error": f"Could not create the index backup: {exc}"}
 def discover_image_directories() -> List[Any]:
     """Return the (label, path) pairs the batch processor can work on.
 
@@ -1397,6 +1443,13 @@ def show_name_assignment_modal():
             'person_id': metadata.get('person_id', '')
         }
         st.info(f"✅ **Current name:** {existing_data['full_name']}")
+        replace_existing_identity = st.checkbox(
+            "I confirm that changing this face's person assignment is intentional.",
+            key=f"confirm_reassign_{face_id}",
+            help="Without confirmation, this face keeps its current person label.",
+        )
+    else:
+        replace_existing_identity = False
 
     # Get all existing persons for selection
     all_persons = get_cached_all_persons()  # Use cached version
@@ -1474,7 +1527,10 @@ def show_name_assignment_modal():
                 }
 
                 result = st.session_state.vector_store.assign_person_name(
-                    face_id, person_data, selected_person['person_id']
+                    face_id,
+                    person_data,
+                    selected_person['person_id'],
+                    allow_reassignment=replace_existing_identity,
                 )
 
                 if result:
@@ -1535,7 +1591,7 @@ def show_name_assignment_modal():
             )
 
         notes = st.text_area(
-            "Notizen:",
+            "Notes:",
             value=existing_data.get('notes', ''),
             help="Additional notes about this person.",
             key="new_notes",
@@ -1561,7 +1617,11 @@ def show_name_assignment_modal():
                     'notes': (notes or '').strip()
                 }
 
-                result = st.session_state.vector_store.assign_person_name(face_id, person_data)
+                result = st.session_state.vector_store.assign_person_name(
+                    face_id,
+                    person_data,
+                    allow_reassignment=replace_existing_identity,
+                )
 
                 if result:
                     st.success("Person created and assigned.")
@@ -1889,6 +1949,13 @@ def show_name_assignment_tab(face_id, image_path, face_location):
             'person_id': metadata.get('person_id', '')
         }
         st.info(f"✅ **Current name:** {existing_data['full_name']}")
+        replace_existing_identity = st.checkbox(
+            "I confirm that changing this face's person assignment is intentional.",
+            key=f"tab_confirm_reassign_{face_id}",
+            help="Without confirmation, this face keeps its current person label.",
+        )
+    else:
+        replace_existing_identity = False
 
     # Get all existing persons for selection
     all_persons = get_cached_all_persons()  # Use cached version
@@ -1936,12 +2003,18 @@ def show_name_assignment_tab(face_id, image_path, face_location):
             if st.button("✅ Assign this person", type="primary", width='stretch', key="tab_assign_existing"):
                 person_data = {
                     'first_name': selected_person['first_name'],
+                    'middle_names': selected_person.get('middle_names', ''),
                     'last_name': selected_person['last_name'],
-                    'person_id': selected_person['person_id']
+                    'birth_date': selected_person.get('birth_date', ''),
+                    'birth_place': selected_person.get('birth_place', ''),
+                    'notes': selected_person.get('notes', ''),
                 }
 
                 result = st.session_state.vector_store.assign_person_name(
-                    face_id, person_data, selected_person['person_id']
+                    face_id,
+                    person_data,
+                    selected_person['person_id'],
+                    allow_reassignment=replace_existing_identity,
                 )
 
                 if result:
@@ -1991,7 +2064,10 @@ def show_name_assignment_tab(face_id, image_path, face_location):
                 person_id = str(uuid.uuid4())
 
                 result = st.session_state.vector_store.assign_person_name(
-                    face_id, person_data, person_id
+                    face_id,
+                    person_data,
+                    person_id,
+                    allow_reassignment=replace_existing_identity,
                 )
 
                 if result:
@@ -4036,7 +4112,53 @@ def settings_page():
 
     current_settings = load_settings()
 
-    st.subheader("Editable settings")
+    with st.expander("Embedding model change backup", expanded=False):
+        st.caption(
+            "Changing the encoder or effective detector requires a full reindex. "
+            "A searchable backup lets you restore the previous index after switching back. "
+            "It contains biometric embeddings and metadata, but not original images."
+        )
+        backup_state = st.session_state.get("pipeline_change_backup") or {}
+        pipeline_status = store.get_embedding_pipeline_status() if store is not None else {}
+        indexed_faces = int(pipeline_status.get("total_faces", 0))
+        if indexed_faces and pipeline_status.get("compatible") and pipeline_status.get("complete"):
+            if st.button("Prepare current index backup", key="prepare_pipeline_backup"):
+                outcome = create_pipeline_change_backup(store)
+                if outcome.get("success"):
+                    st.session_state.pipeline_change_backup = outcome
+                    st.session_state["confirm_pipeline_backup"] = False
+                    backup_state = outcome
+                    st.success("Backup is ready. Download it and keep a copy outside the app data folder.")
+                else:
+                    st.error(outcome.get("error", "Could not create the index backup."))
+        elif indexed_faces:
+            st.info("Finish or restore the current index update before creating a migration backup.")
+
+        backup_path = Path(str(backup_state.get("backup_path") or ""))
+        backup_is_current = (
+            backup_path.is_file()
+            and backup_state.get("pipeline_version") == getattr(store, "_embedding_pipeline_version", None)
+            and int(backup_state.get("face_count", -1)) == indexed_faces
+        )
+        if backup_is_current:
+            st.download_button(
+                "Download searchable index backup",
+                data=backup_path.read_bytes(),
+                file_name=backup_path.name,
+                mime="application/zip",
+                key="download_pipeline_backup",
+            )
+            st.checkbox(
+                "I saved this backup outside the app data folder.",
+                key="confirm_pipeline_backup",
+                help="The local copy is on the same machine as the database. Keep a separate copy before changing the face pipeline.",
+            )
+            st.caption(f"Local backup: {backup_path}")
+        elif backup_state:
+            st.warning("The saved backup no longer matches the current index. Create a fresh backup before changing pipelines.")
+
+    st.subheader("Simple settings")
+    st.caption("Start with the recommended face model and search threshold. Defaults are ready for most personal libraries.")
     st.caption(f"Saved to: {settings_path()}")
 
     with st.form("settings_form"):
@@ -4044,6 +4166,7 @@ def settings_page():
             "Face search embedding model",
             options=["Buffalo_L", "ArcFace"],
             index=0 if current_settings["embedding_model"] == "buffalo_l" else 1,
+            key="settings_embedding_model",
             help=(
                 "Buffalo_L is more conservative on frontal portraits. ArcFace found "
                 "more profile matches in the CFP sample but also more false accepts, "
@@ -4059,31 +4182,67 @@ def settings_page():
             step=0.05,
             help="Minimum similarity for search results (0 = everything, 1 = identical)",
         )
-        max_results = st.number_input(
-            "Maximum results",
-            min_value=1,
-            max_value=200,
-            value=int(current_settings["max_results"]),
-            step=1,
-            help="Maximum results per search",
-        )
-        batch_size = st.number_input(
-            "Batch size",
-            min_value=1,
-            max_value=256,
-            value=int(current_settings["batch_size"]),
-            step=1,
-            help="Images per batch during processing",
-        )
-        detection_model = st.selectbox(
-            "Fallback face detector",
-            options=["hog", "cnn"],
-            index=1 if current_settings["detection_model"] == "cnn" else 0,
-            help="HOG is faster; CNN may detect more faces. This applies only when face_recognition is installed.",
-        )
+        with st.expander("Advanced settings", expanded=False):
+            st.caption("Adjust processing limits and the optional fallback detector.")
+            max_results = st.number_input(
+                "Maximum results",
+                min_value=1,
+                max_value=200,
+                value=int(current_settings["max_results"]),
+                step=1,
+                help="Maximum results per search",
+            )
+            batch_size = st.number_input(
+                "Batch size",
+                min_value=1,
+                max_value=256,
+                value=int(current_settings["batch_size"]),
+                step=1,
+                help="Images per batch during processing",
+            )
+            detection_model = st.selectbox(
+                "Fallback face detector",
+                options=["hog", "cnn"],
+                index=1 if current_settings["detection_model"] == "cnn" else 0,
+                help="HOG is faster; CNN may detect more faces. This applies only when face_recognition is installed.",
+            )
         submitted = st.form_submit_button("💾 Save settings", type="primary")
 
     if submitted:
+        store = st.session_state.get("vector_store")
+        requested_pipeline = active_embedding_pipeline_version(
+            model_name=embedding_model.lower(),
+            detection_model=detection_model,
+        )
+        pipeline_change = (
+            store is not None
+            and int(store.collection.count()) > 0
+            and requested_pipeline != store._embedding_pipeline_version
+        )
+        if pipeline_change:
+            backup_state = st.session_state.get("pipeline_change_backup") or {}
+            backup_path = Path(str(backup_state.get("backup_path") or ""))
+            backup_ready = (
+                backup_path.is_file()
+                and backup_state.get("pipeline_version") == store._embedding_pipeline_version
+                and int(backup_state.get("face_count", -1)) == int(store.collection.count())
+            )
+            if not backup_ready:
+                outcome = create_pipeline_change_backup(store)
+                if not outcome.get("success"):
+                    st.error(outcome.get("error", "Create a complete index backup before changing the model."))
+                    return
+                st.session_state.pipeline_change_backup = outcome
+                st.session_state["confirm_pipeline_backup"] = False
+                st.session_state.settings_flash = (
+                    "A searchable backup was created. Download it, save a separate copy, "
+                    "and confirm before submitting the pipeline change again."
+                )
+                st.rerun()
+            if not st.session_state.get("confirm_pipeline_backup", False):
+                st.error("Download the searchable backup, save it outside the app data folder, and confirm before changing the face pipeline.")
+                return
+
         saved, errors = save_settings({
             "embedding_model": embedding_model.lower(),
             "similarity_threshold": similarity_threshold,
@@ -4197,6 +4356,59 @@ def settings_page():
     - ChromaDB for vector similarity search
     - Playwright for web scraping
     """)
+
+    st.divider()
+    st.subheader("Privacy and local data")
+    with st.expander("Delete biometric data and backups"):
+        st.warning(
+            "This permanently clears indexed face records, person labels, cached thumbnails, "
+            "and local recovery archives. It cannot be undone."
+        )
+        delete_sources = st.checkbox(
+            "Also delete original images in the app folders and files referenced by the index.",
+            key="delete_biometric_source_images",
+            help="Referenced images may be outside the app data folder. They are removed only when this option is selected.",
+        )
+        deletion_confirmation_nonce = st.session_state.setdefault(
+            "delete_biometric_nonce", uuid.uuid4().hex[:12]
+        )
+        confirmation = st.text_input(
+            "Type DELETE to confirm",
+            key=f"delete_biometric_confirmation_{deletion_confirmation_nonce}",
+        )
+        if st.button(
+            "Permanently delete local biometric data",
+            key="delete_local_biometric_data",
+            type="secondary",
+        ):
+            if confirmation != "DELETE":
+                st.error("Type DELETE to confirm the removal.")
+            else:
+                outcome = delete_local_biometric_data(
+                    st.session_state.get("vector_store"),
+                    delete_source_images=delete_sources,
+                    managed_image_directories=(IMAGES_DIR, SCRAPED_DIR),
+                    derived_directories=(DATA_DIR / "embeddings",),
+                    backup_directories=(
+                        DATA_DIR / "duplicate_backups",
+                        DATA_DIR / "pipeline_backups",
+                    ),
+                )
+                invalidate_persons_cache()
+                invalidate_gallery_cache()
+                st.session_state.search_results = []
+                st.session_state.pop("detected_faces", None)
+                st.session_state.pop("person_groups_last_assignment", None)
+                if outcome.get("success"):
+                    st.session_state.delete_biometric_nonce = uuid.uuid4().hex[:12]
+                    st.success(
+                        f"Deleted {outcome['faces_removed']} face records, "
+                        f"{outcome['backup_files_removed']} recovery archives, and "
+                        f"{outcome['images_removed']} image files."
+                    )
+                    st.rerun()
+                else:
+                    st.error(outcome.get("error", "Local data deletion failed."))
 
 def face_gallery_page():
     """Enhanced Face gallery to display all faces in the database"""
@@ -5170,7 +5382,11 @@ def _assign_face_group(group: Dict[str, Any], person_data: Dict[str, str], perso
     assigned: List[str] = []
     for face in group.get("faces", []):
         if st.session_state.vector_store.assign_person_name(
-            face["face_id"], person_data, person_id
+            face["face_id"],
+            person_data,
+            person_id,
+            assignment_source="review_group",
+            suggested_similarity=face.get("group_similarity"),
         ):
             assigned.append(face["face_id"])
     return assigned

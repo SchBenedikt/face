@@ -6,6 +6,7 @@ faces while leaving the other identity untouched.
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +22,7 @@ def test_person_groups_page_assigns_one_reviewed_identity(tmp_path):
     script = f"""
 import os
 import sys
+import json
 
 sys.path.insert(0, {str(PROJECT_ROOT)!r})
 sys.path.insert(0, {str(STUBS_DIR)!r})
@@ -116,6 +118,11 @@ named_ids = {{face["face_id"] for face in named}}
 assert len(named) == 4, sorted(named_ids)
 assert named_ids in (FACES_A, FACES_B), sorted(named_ids)
 assert {{face["metadata"].get("full_name") for face in named}} == {{"Anna Test"}}
+for face in named:
+    event = json.loads(face["metadata"]["assignment_history"])[-1]
+    assert event["source"] == "review_group"
+    assert event["reviewed"] is True
+    assert 0.0 <= event["suggested_similarity"] <= 1.0
 unnamed = [
     face for face in faces
     if not (face["metadata"].get("person_id") or "").strip()
