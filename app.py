@@ -4940,7 +4940,7 @@ def improved_web_scraping_page():
     with col1:
         urls_text = st.text_area(
             "Website URLs (one per line):",
-            value="https://www.koenig-karlmann-gymnasium.de",
+            value="",
             height=100,
             help="Enter website URLs to scrape images from"
         )
@@ -4963,9 +4963,15 @@ def improved_web_scraping_page():
 
         deep_crawl = st.checkbox(
             "Deep crawling",
-            value=True,
-            help="Crawl all subpages and directories"
+            value=False,
+            help="Follow linked pages and sitemap entries on the approved hostname"
         )
+
+    confirm_authorization = st.checkbox(
+        "I confirm that I am authorized to collect images from the entered website(s).",
+        value=False,
+        key="enhanced_scrape_authorization_confirmed",
+    )
 
     # Advanced options
     with st.expander("🔧 Advanced Options"):
@@ -4984,7 +4990,13 @@ def improved_web_scraping_page():
     if st.button("🚀 Start Enhanced Scraping", type="primary"):
         urls = [url.strip() for url in urls_text.split('\n') if url.strip()]
 
-        if urls:
+        if not urls:
+            st.error("Enter at least one website URL.")
+        elif not confirm_authorization:
+            st.error("Confirm that you are authorized to collect images before starting web import.")
+        elif st.session_state.image_scraper is None:
+            st.error("Web import is unavailable because the crawler could not be loaded.")
+        else:
             st.info(f"Starting enhanced scraping of {len(urls)} website(s)...")
 
             # Progress tracking
@@ -5034,8 +5046,6 @@ def improved_web_scraping_page():
 
             except Exception as e:
                 st.error(f"Error during scraping: {e}")
-        else:
-            st.error("Please enter at least one URL")
 
     # Display scraped images
     display_scraped_images_enhanced()
