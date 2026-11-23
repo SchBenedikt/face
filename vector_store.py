@@ -307,25 +307,46 @@ class FaceVectorStore:
         self, image_paths, keep_ids: set
     ) -> int:
         """Remove rows for ``image_paths`` that are not part of ``keep_ids``."""
-        removed = 0
-        for image_path in sorted(image_paths):
-            try:
-                existing = self.collection.get(
-                    where={"image_path": str(image_path)},
-                    include=[],
-                )
-                stale = [
-                    face_id
-                    for face_id in (existing.get("ids") or [])
-                    if face_id not in keep_ids
-                ]
-                if stale:
-                    self.collection.delete(ids=stale)
-                    removed += len(stale)
-                    self._pipeline_status_cache = None
-            except Exception as exc:  # noqa: BLE001 - cleanup must not fail the write
-                logger.warning(f"Could not clean old faces for {image_path}: {exc}")
-        return removed
+        paths = sorted({str(path) for path in image_paths if path})
+        if not paths:
+            return 0
+
+        try:
+            # A batch can contain hundreds of source images. Querying Chroma
+            # once per path makes indexing scale with the number of images in
+            # Python/DB round trips. `$in` keeps replacement cleanup bounded.
+            existing = self.collection.get(
+                where={"image_path": {"$in": paths}},
+                include=[],
+            )
+            stale = [
+                face_id
+                for face_id in (existing.get("ids") or [])
+                if face_id not in keep_ids
+            ]
+        except Exception as exc:  # noqa: BLE001 - cleanup must not fail the write
+            # Retain compatibility with Chroma versions that lack `$in` filters.
+            logger.debug("Batch stale-face lookup failed; using path lookups: %s", exc)
+            stale = []
+            for image_path in paths:
+                try:
+                    existing = self.collection.get(
+                        where={"image_path": image_path},
+                        include=[],
+                    )
+                    stale.extend(
+                        face_id
+                        for face_id in (existing.get("ids") or [])
+                        if face_id not in keep_ids
+                    )
+                except Exception as path_exc:  # noqa: BLE001 - cleanup must not fail the write
+                    logger.warning("Could not clean old faces for %s: %s", image_path, path_exc)
+
+        for start in range(0, len(stale), 500):
+            self.collection.delete(ids=stale[start:start + 500])
+        if stale:
+            self._pipeline_status_cache = None
+        return len(stale)
 
     def prune_missing_faces(self, root_directory: Optional[str | Path] = None) -> int:
         """Delete embeddings whose source image no longer exists.
