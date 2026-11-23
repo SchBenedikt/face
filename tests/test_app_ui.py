@@ -117,6 +117,8 @@ def test_settings_report_the_effective_face_detector(seeded_data):
     assert "Active detection" in joined
     assert "RetinaFace" in joined
     assert "MTCNN" in joined
+    assert any("Setup checklist and diagnostics" in item.label for item in at.expander)
+    assert any("Check embedding model availability" in item.label for item in at.button)
 
 
 def test_face_gallery_renders_cached_thumbnails(seeded_data):

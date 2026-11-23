@@ -24,6 +24,7 @@ import pandas as pd
 from typing import List, Dict, Any
 import time
 import logging
+import tempfile
 import uuid
 from datetime import datetime
 
@@ -3874,6 +3875,54 @@ def settings_page():
 
     st.header("Settings", icon=":material/settings:")
     show_embedding_pipeline_status()
+
+    store = st.session_state.get("vector_store")
+    stats = store.get_collection_stats() if store is not None else {"error": "Vector database is not available."}
+    empty_library = not stats.get("error") and int(stats.get("total_faces", 0)) == 0
+    with st.expander("Setup checklist and diagnostics", expanded=empty_library):
+        st.caption("Check the app runtime and local index before importing a collection.")
+        if import_errors:
+            for dependency, (install, exc) in import_errors.items():
+                st.error(f"{dependency} is unavailable. Install with `{install}`. Details: {exc}")
+        else:
+            st.success("Required Python dependencies are available.")
+
+        data_directory = settings_path().parent
+        try:
+            data_directory.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(prefix=".face-write-check-", dir=data_directory):
+                pass
+            st.success(f"Local storage is writable: {data_directory}")
+        except OSError as exc:
+            st.error(f"Local storage is not writable: {data_directory} ({exc})")
+
+        if stats.get("error"):
+            st.error(f"ChromaDB is unavailable: {stats['error']}")
+        else:
+            st.success(f"ChromaDB is ready. Indexed faces: {stats.get('total_faces', 0):,}.")
+
+        pipeline_status = store.get_embedding_pipeline_status() if store is not None else {}
+        if pipeline_status.get("reindex_required") or pipeline_status.get("reindex_in_progress"):
+            st.warning("The saved index needs an update before all faces can be searched. Use Batch processing → Update All Images.")
+        else:
+            st.success(f"Embedding pipeline: {active_embedding_model()} is compatible with the current index.")
+
+        st.caption("Model availability is checked on demand because first use can download model weights.")
+        if st.button("Check embedding model availability", key="check_embedding_model"):
+            engine = st.session_state.get("face_engine")
+            with st.spinner("Loading the selected model and checking a sample embedding…"):
+                try:
+                    sample = np.zeros((112, 112, 3), dtype=np.uint8)
+                    embedding = engine._extract_single_model_embedding(sample, active_embedding_model()) if engine else None
+                    if embedding is not None and len(embedding) == 512:
+                        st.session_state.embedding_model_check = (True, "The selected model loaded and returned a 512-dimensional embedding.")
+                    else:
+                        st.session_state.embedding_model_check = (False, "The model did not return a valid 512-dimensional embedding. Check network access, model weights, and the application logs.")
+                except Exception as exc:  # noqa: BLE001 - render an actionable diagnostic
+                    st.session_state.embedding_model_check = (False, f"Model check failed: {type(exc).__name__}: {exc}")
+        model_check = st.session_state.get("embedding_model_check")
+        if model_check:
+            (st.success if model_check[0] else st.error)(model_check[1])
 
     flash = st.session_state.pop("settings_flash", None)
     if flash:
