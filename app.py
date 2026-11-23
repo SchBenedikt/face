@@ -4458,6 +4458,10 @@ def settings_page():
                         DATA_DIR / "duplicate_backups",
                         DATA_DIR / "pipeline_backups",
                     ),
+                    metadata_stores=(duplicate_detector,),
+                    auxiliary_files=(
+                        Path(__file__).resolve().parent / "duplicates.db",
+                    ),
                 )
                 invalidate_persons_cache()
                 invalidate_gallery_cache()
@@ -4469,7 +4473,7 @@ def settings_page():
                     st.success(
                         f"Deleted {outcome['faces_removed']} face records, "
                         f"{outcome['backup_files_removed']} recovery archives, and "
-                        f"{outcome['images_removed']} image files."
+                        f"{outcome['images_removed']} image files. Duplicate-file metadata was cleared."
                     )
                     st.rerun()
                 else:

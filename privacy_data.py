@@ -30,6 +30,8 @@ def delete_local_biometric_data(
     managed_image_directories: Iterable[str | Path],
     derived_directories: Iterable[str | Path],
     backup_directories: Iterable[str | Path],
+    metadata_stores: Iterable[Any] = (),
+    auxiliary_files: Iterable[str | Path] = (),
 ) -> dict[str, Any]:
     """Clear all face rows and biometric archives, optionally deleting images.
 
@@ -42,6 +44,7 @@ def delete_local_biometric_data(
     removed_images: set[Path] = set()
     removed_derived = 0
     removed_backups = 0
+    removed_auxiliary_files = 0
     index_cleared = False
     try:
         if store is None:
@@ -108,6 +111,24 @@ def delete_local_biometric_data(
                 )
             except OSError as exc:
                 errors.append(f"Could not clear recovery archives: {exc}")
+
+        for metadata_store in metadata_stores:
+            try:
+                if not metadata_store.clear_hash_database():
+                    errors.append("Could not clear duplicate image metadata.")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"Could not clear duplicate image metadata: {exc}")
+
+        for raw_file in auxiliary_files:
+            path = Path(raw_file).expanduser()
+            try:
+                if path.is_symlink() or path.is_file():
+                    path.unlink(missing_ok=True)
+                    removed_auxiliary_files += 1
+                for suffix in ("-journal", "-wal", "-shm"):
+                    Path(f"{path}{suffix}").unlink(missing_ok=True)
+            except OSError as exc:
+                errors.append(f"Could not remove legacy metadata file {path}: {exc}")
     except Exception as exc:  # noqa: BLE001 - return a useful UI error
         errors.append(str(exc))
     finally:
@@ -131,6 +152,7 @@ def delete_local_biometric_data(
         "images_removed": len(removed_images),
         "derived_entries_removed": removed_derived,
         "backup_files_removed": removed_backups,
+        "auxiliary_files_removed": removed_auxiliary_files,
     }
     if errors:
         result["error"] = "Local data deletion was incomplete: " + "; ".join(errors)

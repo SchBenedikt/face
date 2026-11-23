@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from privacy_data import delete_local_biometric_data
+from duplicate_detector import SimpleDuplicateDetector
 from vector_store import FaceVectorStore
 
 
@@ -42,6 +43,10 @@ def test_full_privacy_delete_removes_index_images_archives_and_derived_data(tmp_
     unrelated = tmp_path / "outside.txt"
     unrelated.write_text("keep", encoding="utf-8")
     store = _store(tmp_path, source)
+    metadata_store = SimpleDuplicateDetector(str(tmp_path / "hashes.db"))
+    metadata_store.add_file_hash(source)
+    legacy_hash_db = tmp_path / "legacy-duplicates.db"
+    legacy_hash_db.write_bytes(b"legacy metadata")
 
     outcome = delete_local_biometric_data(
         store,
@@ -49,6 +54,8 @@ def test_full_privacy_delete_removes_index_images_archives_and_derived_data(tmp_
         managed_image_directories=[managed],
         derived_directories=[derived],
         backup_directories=[backup],
+        metadata_stores=[metadata_store],
+        auxiliary_files=[legacy_hash_db],
     )
 
     assert outcome["success"], outcome
@@ -56,11 +63,14 @@ def test_full_privacy_delete_removes_index_images_archives_and_derived_data(tmp_
     assert outcome["images_removed"] == 2
     assert outcome["derived_entries_removed"] == 1
     assert outcome["backup_files_removed"] == 1
+    assert outcome["auxiliary_files_removed"] == 1
     assert store.collection.count() == 0
     assert not source.exists()
     assert not (managed / "unindexed.jpg").exists()
     assert not archive.exists()
     assert not (derived / "cache.npy").exists()
+    assert metadata_store.get_stats()["total_files"] == 0
+    assert not legacy_hash_db.exists()
     assert unrelated.read_text(encoding="utf-8") == "keep"
 
 

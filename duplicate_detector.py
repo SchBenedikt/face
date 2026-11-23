@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Set
 import logging
+from config import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,19 @@ class SimpleDuplicateDetector:
             conn.close()
         except Exception as e:
             logger.error(f"Error initializing database: {e}")
+
+    def clear_hash_database(self) -> bool:
+        """Remove stored path/hash metadata and recreate an empty database."""
+        try:
+            database = Path(self.db_path)
+            database.unlink(missing_ok=True)
+            for suffix in ("-journal", "-wal", "-shm"):
+                Path(f"{database}{suffix}").unlink(missing_ok=True)
+            self.init_database()
+            return database.exists()
+        except OSError as exc:
+            logger.error("Could not clear duplicate hash database: %s", exc)
+            return False
     
     def calculate_file_hash(self, file_path: Path) -> str:
         """Calculate SHA-256 hash of file"""
@@ -277,4 +291,4 @@ def delete_duplicate_files(file_paths, keep_path):
 
 
 # Create singleton instance
-duplicate_detector = SimpleDuplicateDetector()
+duplicate_detector = SimpleDuplicateDetector(str(DATA_DIR / "duplicates.db"))
