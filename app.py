@@ -326,8 +326,13 @@ def main():
 
     # Messages from a processing run that deliberately triggered a rerun so the
     # sidebar stats reflect the newly written faces.
-    for flash_kind, flash_message in st.session_state.pop("_flash_messages", []):
+    flash_messages = st.session_state.pop("_flash_messages", [])
+    for flash_kind, flash_message in flash_messages:
         getattr(st, flash_kind)(flash_message)
+    if any(kind == "success" for kind, _ in flash_messages):
+        if st.button("Search indexed faces", key="search_after_import"):
+            st.session_state.pending_page = "face_search"
+            st.rerun()
 
     # Buttons deep in a page queue a navigation target; applying it before the
     # selectbox is instantiated is the supported way to move the sidebar.
@@ -393,6 +398,9 @@ def main():
                 "**Web import**. Detected faces will appear in "
                 "the face library."
             )
+            if st.button("Add local images", key="empty_state_import_images", type="primary"):
+                st.session_state.pending_page = "image_import"
+                st.rerun()
 
     # Check for modal displays - they will show as overlays, don't interrupt main page
     if 'info_face_id' in st.session_state and 'info_image_path' in st.session_state and 'info_face_location' in st.session_state:
@@ -2888,7 +2896,7 @@ def process_directory_batch(directory_path, batch_size=25, max_workers=1,
                                 if face_count == 1:
                                     st.success(f"✅ {image_name} → {face_count} face detected")
                                 else:
-                                    st.success(f"✅ {image_name} → {face_count} faces erkannt")
+                                    st.success(f"✅ {image_name} → {face_count} faces detected")
 
                         for face_data in result["faces"]:
                             face_ids.append(face_data["face_id"])
@@ -2923,7 +2931,7 @@ def process_directory_batch(directory_path, batch_size=25, max_workers=1,
                         # Log no faces found
                         if detailed_progress and detailed_container:
                             with detailed_container:
-                                st.warning(f"⚠️ {image_name} → No faces erkannt")
+                                st.warning(f"⚠️ {image_name} → No faces detected")
 
                 # Add to vector store
                 if face_ids:
@@ -2949,7 +2957,7 @@ def process_directory_batch(directory_path, batch_size=25, max_workers=1,
                 elif batch_errors > 0:
                     batch_info.error(f"❌ Batch {batch_num + 1}: {batch_errors} errors, {batch_no_faces} images without faces")
                 else:
-                    batch_info.info(f"⚪ Batch {batch_num + 1}: {batch_no_faces} images without faces erkannt")
+                    batch_info.info(f"⚪ Batch {batch_num + 1}: {batch_no_faces} images without detected faces")
 
             # Final update
             overall_progress.progress(1.0)
@@ -3072,7 +3080,7 @@ def quick_process_all_directories(directories, batch_size=25, max_workers=2):
                             if face_count == 1:
                                 st.success(f"✅ {image_name} → {face_count} face detected")
                             else:
-                                st.success(f"✅ {image_name} → {face_count} faces erkannt")
+                                st.success(f"✅ {image_name} → {face_count} faces detected")
 
                         for face_data in result["faces"]:
                             face_ids.append(face_data["face_id"])
@@ -3105,7 +3113,7 @@ def quick_process_all_directories(directories, batch_size=25, max_workers=2):
                         total_no_faces += 1
 
                         with detailed_log_container:
-                            st.warning(f"⚠️ {image_name} → No faces erkannt")
+                            st.warning(f"⚠️ {image_name} → No faces detected")
 
                 # Add to database
                 if face_ids:
@@ -3231,34 +3239,36 @@ def process_uploaded_images(uploaded_files):
 
     with st.spinner("Processing uploaded images..."):
         try:
-            # Save uploaded files
-            temp_paths = []
-            for i, uploaded_file in enumerate(uploaded_files):
-                temp_path = Path(f"/tmp/uploaded_{i}_{uploaded_file.name}")
-                with open(temp_path, "wb") as f:
-                    f.write(uploaded_file.getvalue())
-                temp_paths.append(temp_path)
-
-            # Copy to images directory
+            IMAGES_DIR.mkdir(parents=True, exist_ok=True)
             saved_paths = []
-            for temp_path, uploaded_file in zip(temp_paths, uploaded_files):
-                final_path = IMAGES_DIR / uploaded_file.name
+            for uploaded_file in uploaded_files:
+                safe_name = Path(uploaded_file.name).name
+                if Path(safe_name).suffix.lower() not in IMAGE_SUFFIXES:
+                    st.warning(f"Skipped {safe_name}: unsupported image extension.")
+                    continue
+                image, image_error = load_query_image(uploaded_file)
+                if image is None:
+                    st.warning(f"Skipped {safe_name}: {image_error}")
+                    continue
+                content = uploaded_file.getvalue()
+                final_path = IMAGES_DIR / safe_name
 
                 # Handle duplicate names
                 counter = 1
                 while final_path.exists():
-                    stem = Path(uploaded_file.name).stem
-                    suffix = Path(uploaded_file.name).suffix
+                    stem = Path(safe_name).stem
+                    suffix = Path(safe_name).suffix
                     final_path = IMAGES_DIR / f"{stem}_{counter}{suffix}"
                     counter += 1
 
-                # Copy file
-                final_path.write_bytes(temp_path.read_bytes())
+                final_path.write_bytes(content)
                 saved_paths.append(final_path)
-                temp_path.unlink()  # Clean up temp file
 
             # Process images
-            process_existing_images(saved_paths)
+            if saved_paths:
+                process_existing_images(saved_paths)
+            else:
+                st.warning("No valid images were selected. Choose readable JPG, PNG, BMP, or WEBP files.")
 
         except Exception as e:
             st.error(f"Error processing uploaded images: {e}")
@@ -3410,7 +3420,7 @@ def web_scraping_page():
                 help="Automatically process scraped images for face detection"
             )
 
-        # Duplikat-Info anzeigen
+        # Show duplicate detection status.
         st.info("🔍 **Duplicate detection is on:** Existing images are skipped automatically")
 
         if st.button("🕷️ Start Scraping", type="primary"):
@@ -4847,7 +4857,7 @@ def fast_process_all_images():
                     else:
                         total_images_processed += 1
                         with detailed_log_container:
-                            st.warning(f"⚠️ {image_name} → No faces erkannt")
+                            st.warning(f"⚠️ {image_name} → No faces detected")
 
                 # Add to database
                 if face_ids:

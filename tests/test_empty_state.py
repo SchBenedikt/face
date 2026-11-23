@@ -32,6 +32,7 @@ at = AppTest.from_file({str(APP_FILE)!r}, default_timeout=180)
 at.run()
 print("EXCEPTIONS:", [str(element.value) for element in at.exception])
 print("INFOS:", [str(element.value) for element in at.info])
+print("BUTTONS:", [element.label for element in at.button])
 print("DATA_EXISTS:", Path({str(data_dir)!r}).is_dir())
 print("DB_EXISTS:", (Path({str(data_dir)!r}) / "face_vectors.db").exists())
 """
@@ -56,5 +57,6 @@ print("DB_EXISTS:", (Path({str(data_dir)!r}) / "face_vectors.db").exists())
     assert "Your database is empty" in output, output[-3000:]
     assert "Import images" in output, output[-3000:]
     assert "Web import" in output, output[-3000:]
+    assert "Add local images" in output, output[-3000:]
     assert "DATA_EXISTS: True" in output, output[-3000:]
     assert "DB_EXISTS: True" in output, output[-3000:]

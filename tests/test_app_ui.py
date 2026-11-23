@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from PIL import Image
 from streamlit.testing.v1 import AppTest
 
 APP_FILE = Path(__file__).resolve().parents[1] / "app.py"
@@ -232,6 +233,28 @@ def test_search_rejects_unreadable_upload(seeded_data):
 
     errors = [str(element.value) for element in at.error]
     assert any("not a readable image" in value for value in errors), errors
+
+
+def test_uploaded_image_uses_safe_data_path_without_shared_tmp_file(seeded_data):
+    from io import BytesIO
+
+    from config import IMAGES_DIR
+
+    buffer = BytesIO()
+    Image.new("RGB", (640, 480), (120, 80, 40)).save(buffer, format="JPEG")
+    at = _app()
+    at.run()
+    _goto(at, "image_import")
+    at.file_uploader[0].set_value(("portrait.jpg", buffer.getvalue(), "image/jpeg")).run()
+    next(button for button in at.button if "Process and Add to Database" in button.label).click().run()
+
+    _assert_no_exception(at)
+    imported_path = IMAGES_DIR / "portrait.jpg"
+    assert imported_path.is_file()
+    assert not Path("/tmp/uploaded_0_../portrait.jpg").exists()
+    from vector_store import FaceVectorStore
+    FaceVectorStore().delete_faces_by_image_path(str(imported_path))
+    imported_path.unlink(missing_ok=True)
 
 
 @pytest.fixture

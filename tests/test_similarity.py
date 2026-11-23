@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from settings_store import active_embedding_pipeline_version
 
 from similarity import (
     cosine_from_chroma_l2_distance,
@@ -53,3 +54,33 @@ def test_normalise_embedding_handles_zero_vector():
 def test_cosine_similarity_of_identical_vectors():
     vector = np.array([0.2, 0.5, -0.3, 0.8])
     assert cosine_similarity(vector, vector) == pytest.approx(1.0)
+
+
+def test_search_keeps_candidates_above_user_threshold_below_75_percent(tmp_path):
+    from vector_store import FaceVectorStore
+
+    store = FaceVectorStore(
+        db_path=str(tmp_path / "low-score-vectors"),
+        collection_name="low_score_search",
+    )
+    version = active_embedding_pipeline_version()
+    anchor = np.zeros(512, dtype=np.float32)
+    anchor[0] = 1.0
+    candidate = np.zeros(512, dtype=np.float32)
+    candidate[0] = 0.60
+    candidate[1] = np.sqrt(1.0 - 0.60**2)
+    candidate = candidate.astype(np.float32)
+    store.collection.add(
+        ids=["candidate-60"],
+        embeddings=[candidate.tolist()],
+        metadatas=[{
+            "face_id": "candidate-60",
+            "image_path": str(tmp_path / "candidate.jpg"),
+            "embedding_pipeline_version": version,
+        }],
+    )
+
+    matches = store.search_similar_faces(anchor, n_results=10, min_similarity=0.4)
+
+    assert [match["face_id"] for match in matches] == ["candidate-60"]
+    assert matches[0]["similarity"] == pytest.approx(0.60, abs=1e-5)

@@ -1,28 +1,28 @@
-# Laufzeit-Abhängigkeiten der Streamlit-App.
-# Getestet mit Python 3.12 und numpy 2.x. Installation aus einem frischen venv:
+# Runtime dependencies for the Streamlit app.
+# CI installs this set on Python 3.11 and 3.12 with NumPy 2.x.
+# Example installation in a fresh virtual environment:
 #   python -m venv .venv && .venv/bin/pip install -r requirements.txt
 #
-# DeepFace nutzt seit 0.0.105 standardmäßig das ONNX-Backend (onnxruntime),
-# daher werden TensorFlow, Torch oder dlib für die App nicht mehr benötigt.
-# Die optionalen Zusätze für die CLI-/Live-Skripte stehen in
+# DeepFace uses ONNX Runtime by default since 0.0.105, so the app does not
+# require TensorFlow, Torch, or dlib. Optional CLI/live dependencies are in
 # requirements-optional.txt.
 
-# Web-UI
+# Web UI
 streamlit>=1.49,<2
 
-# Numerik / Bildverarbeitung
+# Numerical computing / image processing
 numpy>=2.0,<3
 pandas>=2.2
 pillow>=10.0
 opencv-python-headless>=4.11
 
-# Vektor-Datenbank
+# Vector database
 chromadb>=1.0
 
-# Gesichtserkennung (ONNX-Backend, kein TensorFlow nötig)
+# Face recognition (ONNX backend; TensorFlow is not required)
 deepface>=0.0.105
 
-# Scraping
+# Web import
 aiohttp>=3.9
 aiofiles>=23.0
 beautifulsoup4>=4.12
