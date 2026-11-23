@@ -371,6 +371,7 @@ We welcome contributions! Here's how to get started:
 
 - **[Feature List](FEATURES.md)** - Detailed feature documentation
 - **[Testing Guide](TESTING_GUIDE.md)** - Testing procedures and benchmarks
+- **[Repository hygiene](docs/repository-hygiene.md)** - Artifact checks and coordinated history cleanup
 
 ## ⚠️ Privacy and limitations
 
