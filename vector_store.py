@@ -1359,14 +1359,33 @@ class FaceVectorStore:
             if not isinstance(history, list):
                 history = []
             now = datetime.now().isoformat()
+            tracked_person_fields = (
+                "first_name", "middle_names", "last_name", "full_name",
+                "birth_date", "birth_place", "notes",
+            )
+            from_fields = {
+                key: str(existing_metadata.get(key, "") or "")
+                for key in tracked_person_fields
+            }
+            to_fields = {
+                "first_name": first_name,
+                "middle_names": middle_names,
+                "last_name": last_name,
+                "full_name": full_name,
+                "birth_date": birth_date,
+                "birth_place": birth_place,
+                "notes": notes,
+            }
             history.append({
                 "action": "assigned",
                 "actor": "local-user",
                 "at": now,
                 "from_person_id": existing_metadata.get("person_id", ""),
                 "from_name": existing_metadata.get("full_name", ""),
+                "from_fields": from_fields,
                 "to_person_id": person_id,
                 "to_name": full_name,
+                "to_fields": to_fields,
                 "reviewed": True,
             })
 
@@ -1511,8 +1530,16 @@ class FaceVectorStore:
                 "at": datetime.now().isoformat(),
                 "from_person_id": metadata.get("person_id", ""),
                 "from_name": metadata.get("full_name", ""),
+                "from_fields": {
+                    key: str(metadata.get(key, "") or "")
+                    for key in (
+                        "first_name", "middle_names", "last_name", "full_name",
+                        "birth_date", "birth_place", "notes",
+                    )
+                },
                 "to_person_id": "",
                 "to_name": "",
+                "to_fields": {},
                 "reviewed": True,
             })
             # Remove all person-related metadata (use empty strings instead of None for ChromaDB compatibility)
@@ -1535,6 +1562,96 @@ class FaceVectorStore:
         except Exception as e:
             logger.error(f"Error removing person name from {face_id}: {e}")
             return False
+
+    def undo_person_assignments(self, expected_events: Dict[str, str]) -> Dict[str, Any]:
+        """Undo only the exact reviewed assignment events supplied by the UI.
+
+        Event timestamps prevent an old group-level undo action from reverting
+        a later edit to the same face. Conflicts are skipped and reported.
+        """
+        result: Dict[str, Any] = {
+            "undone": [],
+            "skipped": [],
+            "errors": [],
+            "remaining": {},
+        }
+        for face_id, expected_at in expected_events.items():
+            face = self.get_face_by_id(face_id)
+            if not face:
+                result["skipped"].append(face_id)
+                continue
+            metadata = face.get("metadata") or {}
+            try:
+                history = json.loads(metadata.get("assignment_history", "[]"))
+            except (TypeError, ValueError):
+                history = []
+            if not isinstance(history, list) or not history:
+                result["skipped"].append(face_id)
+                continue
+            latest = history[-1]
+            if (
+                latest.get("action") != "assigned"
+                or str(latest.get("at", "")) != str(expected_at)
+                or str(metadata.get("person_id", "")) != str(latest.get("to_person_id", ""))
+            ):
+                result["skipped"].append(face_id)
+                # Preserve the originally requested event. Never promote a
+                # newer assignment to the target of an older undo action.
+                result["remaining"][face_id] = str(expected_at)
+                continue
+
+            from_fields = latest.get("from_fields")
+            if not isinstance(from_fields, dict):
+                result["skipped"].append(face_id)
+                result["remaining"][face_id] = str(latest.get("at", ""))
+                continue
+
+            now = datetime.now().isoformat()
+            restored_person_id = str(latest.get("from_person_id", "") or "")
+            restored_name = str(latest.get("from_name", "") or "")
+            history.append({
+                "action": "undo",
+                "actor": "local-user",
+                "at": now,
+                "undo_of": str(latest.get("at", "")),
+                "from_person_id": str(metadata.get("person_id", "") or ""),
+                "from_name": str(metadata.get("full_name", "") or ""),
+                "from_fields": {
+                    key: str(metadata.get(key, "") or "")
+                    for key in (
+                        "first_name", "middle_names", "last_name", "full_name",
+                        "birth_date", "birth_place", "notes",
+                    )
+                },
+                "to_person_id": restored_person_id,
+                "to_name": restored_name,
+                "to_fields": from_fields,
+                "reviewed": True,
+            })
+            update = {
+                key: str(from_fields.get(key, "") or "")
+                for key in (
+                    "first_name", "middle_names", "last_name", "full_name",
+                    "birth_date", "birth_place", "notes",
+                )
+            }
+            update.update({
+                "person_id": restored_person_id,
+                "name_assigned_at": now if restored_person_id else "",
+                "name_removed_at": "" if restored_person_id else now,
+                "assignment_history": json.dumps(history, ensure_ascii=False),
+            })
+            try:
+                if self.update_face_metadata(face_id, update):
+                    result["undone"].append(face_id)
+                else:
+                    result["errors"].append(face_id)
+                    result["remaining"][face_id] = str(latest.get("at", ""))
+            except Exception as exc:  # noqa: BLE001 - keep processing other faces
+                logger.error("Could not undo person assignment for %s: %s", face_id, exc)
+                result["errors"].append(face_id)
+                result["remaining"][face_id] = str(latest.get("at", ""))
+        return result
     
     def get_faces_by_person_id(self, person_id: str) -> List[Dict[str, Any]]:
         """
@@ -1743,8 +1860,8 @@ class FaceVectorStore:
         """Group unnamed faces into reviewed identity suggestions.
 
         Named faces are never changed here; they are only used to suggest a
-        matching existing person for a group. The caller (the Personengruppen
-        page) asks the user before assigning anything.
+        matching existing person for a group. The review page asks the user
+        before assigning anything.
         """
         if threshold is None:
             threshold = active_grouping_threshold()
@@ -1759,7 +1876,7 @@ class FaceVectorStore:
         try:
             status = self.get_embedding_pipeline_status()
             if not status["compatible"]:
-                empty["error"] = "Index muss mit der aktuellen Gesichtspipeline neu aufgebaut werden."
+                empty["error"] = "The index must be rebuilt with the current face pipeline."
                 return empty
             rows = self.collection.get(
                 where={"embedding_pipeline_version": self._embedding_pipeline_version},
@@ -1774,6 +1891,7 @@ class FaceVectorStore:
             unnamed_ids: List[str] = []
             unnamed_embeddings: List[np.ndarray] = []
             metadata_by_id: Dict[str, Dict[str, Any]] = {}
+            embedding_by_id: Dict[str, np.ndarray] = {}
             person_vectors: Dict[str, List[np.ndarray]] = {}
             person_metadata: Dict[str, Dict[str, Any]] = {}
 
@@ -1791,6 +1909,7 @@ class FaceVectorStore:
                     unnamed_ids.append(key)
                     unnamed_embeddings.append(vector)
                     metadata_by_id[key] = metadata
+                    embedding_by_id[key] = vector
 
             person_centroids = {
                 person_id: centroid_of(vectors)
@@ -1824,7 +1943,7 @@ class FaceVectorStore:
                         )
                         suggestion = {
                             'person_id': best_person_id,
-                            'full_name': name or 'Unbekannt',
+                            'full_name': name or 'Unknown person',
                             'similarity': best_similarity,
                         }
 
@@ -1834,6 +1953,9 @@ class FaceVectorStore:
                         {
                             'face_id': face_id,
                             'metadata': metadata_by_id.get(face_id, {}),
+                            'group_similarity': float(np.dot(
+                                embedding_by_id[face_id], cluster['centroid']
+                            )),
                         }
                         for face_id in cluster['face_ids']
                     ],

@@ -91,6 +91,11 @@ def test_grouping_recovers_two_identities_without_mixing(tmp_path):
     assert set(FACES_A) in grouped
     assert set(FACES_B) in grouped
     assert all(group["size"] == 4 for group in result["groups"])
+    assert all(
+        0.0 <= face["group_similarity"] <= 1.0
+        for group in result["groups"]
+        for face in group["faces"]
+    )
 
 
 def test_similar_faces_are_suggestions_until_individually_reviewed(tmp_path):

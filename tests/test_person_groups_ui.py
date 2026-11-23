@@ -130,6 +130,15 @@ text = " ".join(str(element.value) for element in at.markdown)
 assert "Anna" in text and "Test" in text, text[:500]
 assert "1 people found" in text, text[:500]
 print("NAME_GALLERY_OK")
+
+at.sidebar.selectbox[0].set_value("person_groups").run()
+assert not at.exception, [str(element.value) for element in at.exception]
+undo = next(button for button in at.button if "Undo last group assignment" in button.label)
+undo.click().run()
+assert not at.exception, [str(element.value) for element in at.exception]
+assert any("Undid 4 face assignment(s)" in str(item.value) for item in at.success)
+assert all(not (face["metadata"].get("person_id") or "").strip() for face in store.get_all_faces_metadata())
+print("GROUP_UNDO_OK")
 print("PERSON_GROUPS_E2E_OK")
 """
     env = {
@@ -151,6 +160,7 @@ print("PERSON_GROUPS_E2E_OK")
 
     assert completed.returncode == 0, output[-7000:]
     assert "PERSON_GROUPS_E2E_OK" in output, output[-7000:]
+    assert "GROUP_UNDO_OK" in output, output[-7000:]
     assert "NAMED_IDS: ['A0', 'A1', 'A2', 'A3']" in output or (
         "NAMED_IDS: ['B0', 'B1', 'B2', 'B3']" in output
     ), output[-7000:]

@@ -2949,7 +2949,7 @@ def process_directory_batch(directory_path, batch_size=25, max_workers=1,
                         # Enhanced error logging
                         if detailed_progress and detailed_container:
                             with detailed_container:
-                                st.error(f"❌ {image_name} → FEHLER: {error_msg}")
+                                st.error(f"❌ {image_name} → ERROR: {error_msg}")
 
                         # Also log to console for debugging
                         logger.error(f"Image processing error - {image_name}: {error_msg}")
@@ -3132,7 +3132,7 @@ def quick_process_all_directories(directories, batch_size=25, max_workers=2):
 
                         # Enhanced error logging
                         with detailed_log_container:
-                            st.error(f"❌ {image_name} → FEHLER: {error_msg}")
+                            st.error(f"❌ {image_name} → ERROR: {error_msg}")
 
                         # Log to console for debugging
                         logger.error(f"Quick process error - {image_name}: {error_msg}")
@@ -5116,7 +5116,7 @@ def fast_process_all_images():
                         error_msg = result.get('error', 'Unknown error')
 
                         with detailed_log_container:
-                            st.error(f"❌ {image_name} → FEHLER: {error_msg}")
+                            st.error(f"❌ {image_name} → ERROR: {error_msg}")
 
                     else:
                         total_images_processed += 1
@@ -5165,14 +5165,14 @@ def fast_process_all_images():
         st.error(f"❌ Error during fast processing: {e}")
         current_status.text("❌ Fast processing failed!")
 
-def _assign_face_group(group: Dict[str, Any], person_data: Dict[str, str], person_id: str) -> int:
-    """Assign one reviewed group to a person and return the number of faces."""
-    assigned = 0
+def _assign_face_group(group: Dict[str, Any], person_data: Dict[str, str], person_id: str) -> List[str]:
+    """Assign one reviewed group and return the IDs that were updated."""
+    assigned: List[str] = []
     for face in group.get("faces", []):
         if st.session_state.vector_store.assign_person_name(
             face["face_id"], person_data, person_id
         ):
-            assigned += 1
+            assigned.append(face["face_id"])
     return assigned
 
 
@@ -5187,6 +5187,34 @@ def person_groups_page():
     notice = st.session_state.pop("person_groups_notice", None)
     if notice:
         st.success(notice)
+
+    last_assignment = st.session_state.get("person_groups_last_assignment")
+    if last_assignment:
+        st.info(f"Last reviewed group assignment: {last_assignment.get('person_name', 'person')}.")
+        if st.button("Undo last group assignment", key="undo_last_person_group"):
+            outcome = st.session_state.vector_store.undo_person_assignments(
+                last_assignment.get("events", {})
+            )
+            invalidate_persons_cache()
+            invalidate_gallery_cache()
+            st.session_state.person_groups_cache = None
+            remaining = outcome.get("remaining", {})
+            if remaining:
+                last_assignment["events"] = remaining
+                st.session_state.person_groups_last_assignment = last_assignment
+            else:
+                st.session_state.pop("person_groups_last_assignment", None)
+            st.session_state.person_groups_notice = (
+                f"Undid {len(outcome['undone'])} face assignment(s)."
+                if outcome["undone"]
+                else "No assignments were undone because the records had changed."
+            )
+            if outcome["skipped"] or outcome["errors"]:
+                st.session_state.person_groups_notice += (
+                    f" {len(outcome['skipped'])} changed face(s) were skipped; "
+                    f"{len(outcome['errors'])} update(s) failed."
+                )
+            st.rerun()
 
     threshold = st.slider(
         "Similarity threshold",
@@ -5261,24 +5289,38 @@ def person_groups_page():
             f"mean similarity {group['mean_similarity']:.0%}",
             expanded=index < 3,
         ):
-            preview_columns = st.columns(min(6, group["size"]))
-            for face_index, face in enumerate(group["faces"][:6]):
-                metadata = face.get("metadata", {})
-                with preview_columns[face_index]:
-                    thumbnail = face_thumbnail(
-                        metadata.get("image_path", ""),
-                        metadata.get("location", ""),
-                        (120, 120),
-                    )
-                    if thumbnail is not None:
-                        st.image(
-                            thumbnail,
-                            caption=Path(metadata.get("image_path", "")).name,
-                            width="stretch",
-                            alt=f"Face from {Path(metadata.get('image_path', '')).name}",
+            st.caption(
+                f"Similarity to group center: {group['min_similarity']:.0%}–"
+                f"{group['mean_similarity']:.0%} average. These are ranking scores, "
+                "not identity probabilities."
+            )
+            for row_start in range(0, len(group["faces"]), 6):
+                preview_columns = st.columns(min(6, len(group["faces"]) - row_start))
+                for face_index, face in enumerate(
+                    group["faces"][row_start:row_start + 6]
+                ):
+                    metadata = face.get("metadata", {})
+                    image_path = metadata.get("image_path", "")
+                    source_name = Path(image_path).name or face.get("face_id", "Face")
+                    with preview_columns[face_index]:
+                        thumbnail = face_thumbnail(
+                            image_path,
+                            metadata.get("location", ""),
+                            (120, 120),
                         )
-                    else:
-                        st.warning("Image unavailable")
+                        if thumbnail is not None:
+                            st.image(
+                                thumbnail,
+                                caption=source_name,
+                                width="stretch",
+                                alt=f"Face from {source_name}",
+                            )
+                        else:
+                            st.warning(f"Image unavailable: {source_name}")
+                        st.caption(
+                            f"{face.get('face_id', '')} · group-center similarity "
+                            f"{face.get('group_similarity', 0):.0%}"
+                        )
 
             suggestion = group.get("suggested_person")
             if suggestion:
@@ -5310,6 +5352,11 @@ def person_groups_page():
                     "Last name", key=f"group_last_{group_key}"
                 )
 
+            st.warning(
+                f"Review all {group['size']} face crops and their source filenames. "
+                "Confirming assigns this person to every face in the group. "
+                "Similarity scores are not proof of identity."
+            )
             if st.button(
                 "Assign group",
                 key=f"assign_group_{group_key}",
@@ -5340,13 +5387,27 @@ def person_groups_page():
                     }
                     person_id = selected_person["person_id"]
 
-                assigned = _assign_face_group(group, person_data, person_id)
-                if assigned:
+                assigned_face_ids = _assign_face_group(group, person_data, person_id)
+                if assigned_face_ids:
+                    event_ids = {}
+                    for face_id in assigned_face_ids:
+                        current_face = st.session_state.vector_store.get_face_by_id(face_id)
+                        raw_history = (current_face or {}).get("metadata", {}).get("assignment_history", "[]")
+                        try:
+                            history = json.loads(raw_history) if isinstance(raw_history, str) else []
+                        except (TypeError, ValueError):
+                            history = []
+                        if history and history[-1].get("action") == "assigned":
+                            event_ids[face_id] = str(history[-1].get("at", ""))
                     invalidate_persons_cache()
                     invalidate_gallery_cache()
                     st.session_state.person_groups_cache = None
+                    st.session_state.person_groups_last_assignment = {
+                        "person_name": f"{person_data['first_name']} {person_data['last_name']}".strip(),
+                        "events": event_ids,
+                    }
                     st.session_state.person_groups_notice = (
-                        f"Assigned {assigned} faces to "
+                        f"Assigned {len(assigned_face_ids)} faces to "
                         f"{person_data['first_name']} {person_data['last_name']}."
                     )
                     st.rerun()
