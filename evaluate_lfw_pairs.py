@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 
 from face_recognition_engine import FaceRecognitionEngine
-from config import EMBEDDING_PIPELINE_VERSION
+from config import EMBEDDING_PIPELINE_VERSION, FACE_EMBEDDING_MODEL
 
 
 def _to_uint8(image: np.ndarray) -> np.ndarray:
@@ -36,6 +36,7 @@ def evaluate_lfw_pairs(
     seed: int = 42,
     data_home: Path | None = None,
     thresholds: tuple[float, ...] = (0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70),
+    model_name: str = FACE_EMBEDDING_MODEL,
 ) -> dict[str, Any]:
     """Evaluate pair scores with the configured detector and embedding model."""
     if pairs_per_class < 1:
@@ -71,6 +72,7 @@ def evaluate_lfw_pairs(
     rng.shuffle(selected)
 
     engine = FaceRecognitionEngine()
+    engine.primary_model = model_name
     image_vectors: dict[str, np.ndarray | None] = {}
     image_counts: Counter[str] = Counter()
     started = time.monotonic()
@@ -151,7 +153,7 @@ def evaluate_lfw_pairs(
     return {
         "dataset": "LFW test pairs sample",
         "model": engine.primary_model,
-        "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
+        "configured_pipeline_version": EMBEDDING_PIPELINE_VERSION,
         "seed": seed,
         "requested_pairs_per_class": pairs_per_class,
         "sampled_pairs": len(selected),
@@ -174,12 +176,18 @@ def main() -> int:
                         help="Number of same-person and different-person pairs (default: 200 each)")
     parser.add_argument("--seed", type=int, default=42, help="Random sample seed (default: 42)")
     parser.add_argument("--data-home", type=Path, help="External cache directory for LFW images")
+    parser.add_argument(
+        "--model", default=FACE_EMBEDDING_MODEL,
+        help=f"DeepFace embedding model to evaluate (default: {FACE_EMBEDDING_MODEL})",
+    )
     parser.add_argument("--thresholds", default="0.40,0.45,0.50,0.55,0.60,0.65,0.70",
                         help="Comma-separated cosine thresholds")
     args = parser.parse_args()
     try:
         thresholds = tuple(float(value) for value in args.thresholds.split(","))
-        result = evaluate_lfw_pairs(args.pairs_per_class, args.seed, args.data_home, thresholds)
+        result = evaluate_lfw_pairs(
+            args.pairs_per_class, args.seed, args.data_home, thresholds, args.model
+        )
     except (RuntimeError, ValueError, OSError) as exc:
         parser.error(str(exc))
     print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False))
