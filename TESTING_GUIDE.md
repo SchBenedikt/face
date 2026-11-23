@@ -3,6 +3,9 @@
 The regression suite uses synthetic images and temporary ChromaDB collections.
 It does not include personal photographs or evaluate identity accuracy on a
 representative population.
+Streamlit `AppTest` exercises the `app.py` entry point and its `app_pages/`
+modules together, including local upload, search, settings, privacy, and
+identity-review flows.
 
 ## Requirements
 

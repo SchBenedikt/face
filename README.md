@@ -331,7 +331,12 @@ Image crawling is a separate optional workflow. Search runs against the local Ch
 
 ### Core Components
 
-- **`app.py`** - Main Streamlit web application with modern UI
+- **`app.py`** - Streamlit entry point, shared authentication gate, stable navigation, and session-level actions
+- **`app_pages/face_search.py`** and **`app_pages/search_results.py`** - Query upload, face selection, search controls, and ranked results
+- **`app_pages/face_dialogs.py`**, **`app_pages/facial_analysis.py`**, and **`app_pages/components.py`** - Face details, identity review dialogs, optional attribute estimates, and shared UI components
+- **`app_pages/face_library.py`**, **`app_pages/people.py`**, and **`app_pages/duplicates.py`** - Local library, reviewed identity groups, and duplicate cleanup
+- **`app_pages/processing.py`** and **`app_pages/web_import.py`** - Local image intake, batch indexing, and authorized web imports
+- **`app_pages/settings.py`** and **`app_pages/database_statistics.py`** - Pipeline settings, privacy controls, and index diagnostics
 - **`face_recognition_engine.py`** - Face detection, aligned crops, and Buffalo_L embeddings
 - **`vector_store.py`** - ChromaDB database management and similarity search
 - **`image_quality_manager.py`** - Image quality checks used by cleanup workflows
