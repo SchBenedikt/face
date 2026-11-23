@@ -133,7 +133,7 @@ A larger, seed-fixed CFP frontal-profile diagnostic sampled 50 same and 50 diffe
 
 Grouping thresholds also depend on the model. With ArcFace, the existing 0.35 threshold merged 62 identities into 35 groups, with only 6.8% pairwise precision and 16.9% different-person false pairs. At 0.55, pairwise precision was 100% with 64.8% recall, but produced 127 groups. Keep identity groups under review and do not reuse Buffalo_L's grouping threshold for ArcFace.
 
-To repeat or expand that comparison, extract the CFP dataset and run `.venv/bin/python evaluate_cfp_pairs.py /path/to/cfp-dataset --pairs-per-class 50 --seed 20261123 --models Buffalo_L ArcFace`. This samples 50 same and 50 different pairs from each official split and reports overall and per-fold verification metrics. Use `--pairs-per-class 0` for all 7,000 official pairs. The evaluator runs the app's detector/alignment path once per image and compares embeddings from each requested model.
+To repeat or expand that comparison, extract the CFP dataset and run `.venv/bin/python evaluate_cfp_pairs.py /path/to/cfp-dataset --pairs-per-class 50 --seed 20261123 --models Buffalo_L ArcFace --thresholds 0.30,0.35,0.40,0.45,0.50 --embedding-cache /path/to/cfp-embeddings.npz --output /path/to/cfp-results.json`. This samples 50 same and 50 different pairs from each official split and reports overall and per-fold verification metrics plus threshold operating points. Use `--pairs-per-class 0` for all 7,000 official pairs. The optional cache contains derived face embeddings; keep it local and remove it when no longer needed. Without the cache, the evaluator runs the app's detector/alignment path once per image and compares embeddings from each requested model.
 
 ## 🛠️ Installation
 
