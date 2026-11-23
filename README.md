@@ -122,7 +122,7 @@ The application provides local face search over images you choose to index:
 - **🔍 Vector Search**: Similarity search across the locally indexed image collection
 - **📊 Face Analysis**: Optional age, gender, emotion, and ethnicity estimates
 - **🌐 Image Crawler**: Optional interactive image collection from websites
-- **👥 Person Management**: Assign names to selected faces and review identity-group suggestions
+- **👥 Person Management**: Assign names to selected faces, review group suggestions before applying them, undo the last reviewed group, and avoid duplicate records with matching name and birth details
 - **📦 Portable backups**: Export the current gallery page or whole index as a versioned ZIP. Original images and biometric embeddings are separate opt-in choices. Embeddings are required to restore a searchable index; restore accepts only a matching pipeline and refuses existing face IDs. ZIP downloads are capped at 128 MiB.
 
 ## 🎯 Key Features
