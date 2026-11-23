@@ -655,6 +655,14 @@ def load_query_image(uploaded_file):
 def analyze_uploaded_image_for_faces(uploaded_file, max_results: int, similarity_threshold: float):
     """Analyze uploaded image and detect all faces"""
 
+    # A failed analysis must not leave the previous upload searchable. Without
+    # clearing these values first, a no-face/error result could still show the
+    # old face-selection cards and results, making users believe they searched
+    # the newly selected image.
+    st.session_state.pop('detected_faces', None)
+    st.session_state.search_results = []
+    st.session_state.pop('current_uploaded_file', None)
+
     with st.spinner("🔍 Analyzing image and detecting faces..."):
         try:
             # Decode each upload directly from its own in-memory stream. A
