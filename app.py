@@ -58,6 +58,7 @@ except Exception as exc:  # noqa: BLE001
     )
 
 from duplicate_detector import delete_duplicate_files, duplicate_detector
+from duplicate_backup import create_duplicate_backup, restore_duplicate_backup
 from portable_export import create_face_export, restore_face_export
 from utils import (
     IMAGE_EXTENSIONS, load_and_preprocess_image, load_uploaded_image,
@@ -75,7 +76,7 @@ from settings_store import (
 from config import (
     PAGE_TITLE, PAGE_ICON, LAYOUT,
     RESULTS_PER_PAGE, THUMBNAIL_SIZE,
-    IMAGES_DIR, SCRAPED_DIR
+    DATA_DIR, IMAGES_DIR, SCRAPED_DIR
 )
 
 IMAGE_SUFFIXES = tuple(sorted(IMAGE_EXTENSIONS))
@@ -3602,28 +3603,103 @@ def _render_duplicate_set(directory: Path, hash_value: str, file_paths: List[Pat
         st.rerun()
 
     if st.session_state.get(pending_key) == hash_value:
+        backup_state_key = f"duplicate_backup_{hash_value}"
+        backup_state = st.session_state.get(backup_state_key)
+        deleted_candidates = [Path(path) for path in file_paths if Path(path) != Path(keep)]
+        selection_hash = hashlib.sha256(
+            "\0".join([str(Path(keep)), *sorted(str(path) for path in deleted_candidates)]).encode("utf-8")
+        ).hexdigest()
+        if backup_state and backup_state.get("selection_hash") != selection_hash:
+            old_backup = backup_state.get("backup_path")
+            if old_backup:
+                Path(old_backup).unlink(missing_ok=True)
+            st.session_state.pop(backup_state_key, None)
+            backup_state = None
+        if backup_state is None:
+            store = st.session_state.get("vector_store")
+            if store is None:
+                backup_state = {"success": False, "message": "The face database is unavailable; cleanup is disabled."}
+            else:
+                with st.spinner("Preparing a local recovery archive for indexed faces…"):
+                    backup_state = create_duplicate_backup(
+                        store,
+                        deleted_candidates,
+                        DATA_DIR / "duplicate_backups",
+                    )
+            st.session_state[backup_state_key] = {
+                **backup_state,
+                "backup_path": str(backup_state["backup_path"]) if backup_state.get("backup_path") else None,
+                "selection_hash": selection_hash,
+            }
+            backup_state = st.session_state[backup_state_key]
+
+        if backup_state.get("success"):
+            if backup_state.get("backup_path"):
+                backup_path = Path(backup_state["backup_path"])
+                st.success(
+                    f"Recovery archive saved locally for {backup_state.get('face_count', 0)} indexed faces. "
+                    "You can download it here or restore it later from this page."
+                )
+                if backup_path.is_file():
+                    st.download_button(
+                        "Download recovery archive",
+                        data=backup_path.read_bytes(),
+                        file_name=backup_path.name,
+                        mime="application/zip",
+                        key=f"download_duplicate_backup_{hash_value}",
+                    )
+            else:
+                st.info(backup_state.get("message", "No indexed faces need a recovery archive."))
+        else:
+            st.error(backup_state.get("message", "Could not prepare a recovery archive."))
+
         st.warning(
-            f"This will permanently delete {len(file_paths) - 1} files. "
-            "The selected file will be kept. Review the filenames above before continuing."
+            f"This removes {len(file_paths) - 1} exact duplicate file(s) and their indexed face records. "
+            "The selected file will be kept. A local recovery archive is created first when indexed faces exist."
         )
         confirm_col, cancel_col = st.columns(2)
         with confirm_col:
-            confirm = st.button("Confirm deletion", key=f"confirm_delete_{hash_value}", type="primary")
+            confirm = st.button(
+                "Confirm cleanup",
+                key=f"confirm_delete_{hash_value}",
+                type="primary",
+                disabled=not backup_state.get("success", False),
+            )
         with cancel_col:
             cancel = st.button("Cancel", key=f"cancel_delete_{hash_value}")
         if cancel:
             st.session_state.pop(pending_key, None)
+            st.session_state.pop(backup_state_key, None)
             st.rerun()
         if confirm:
             st.session_state.pop(pending_key, None)
             # Recheck the candidate set immediately before deleting: a rescan
             # or another session may have changed the files since preview.
             existing_paths = [Path(path) for path in file_paths if Path(path).is_file()]
-            if Path(keep) not in existing_paths or len(existing_paths) < 2:
-                st.error("The duplicate set changed since review. Scan the folder again.")
+            current_duplicates = duplicate_detector.find_duplicates_in_directory(directory, use_content_hash=True)
+            current_paths = current_duplicates.get(hash_value, [])
+            if (
+                Path(keep) not in existing_paths
+                or len(existing_paths) < 2
+                or set(existing_paths) != set(current_paths)
+            ):
+                st.session_state.pop(pending_key, None)
+                st.session_state.pop(backup_state_key, None)
+                st.session_state.duplicate_results.pop(str(directory), None)
+                st.session_state.duplicate_flash = [
+                    "The duplicate set changed since review. Scan the folder again."
+                ]
                 st.rerun()
             file_paths = existing_paths
             result = delete_duplicate_files(file_paths, keep)
+            if (
+                not result["deleted"]
+                and result.get("rolled_back")
+                and backup_state.get("backup_path")
+            ):
+                # The file transaction returned to its original state, so the
+                # just-created temporary recovery copy is no longer needed.
+                Path(backup_state["backup_path"]).unlink(missing_ok=True)
 
             store = st.session_state.get("vector_store")
             removed_faces = 0
@@ -3650,6 +3726,11 @@ def _render_duplicate_set(directory: Path, hash_value: str, file_paths: List[Pat
                     f"✅ {len(result['deleted'])} file(s) deleted ({names}), "
                     f"{removed_faces} database entries removed."
                 )
+                if backup_state.get("backup_path"):
+                    messages.append(
+                        f"Recovery archive retained at {Path(backup_state['backup_path']).name}. "
+                        "Restore it from the Duplicate manager page if needed."
+                    )
             if result["missing"]:
                 names = ", ".join(path.name for path in result["missing"])
                 messages.append(f"Already missing: {names}")
@@ -3659,6 +3740,7 @@ def _render_duplicate_set(directory: Path, hash_value: str, file_paths: List[Pat
                 messages.append("Nothing was deleted.")
 
             st.session_state.duplicate_flash = messages
+            st.session_state.pop(backup_state_key, None)
             st.rerun()
 
 
@@ -3683,27 +3765,13 @@ def duplicate_manager_page():
         for directory in directories:
             if directory.exists():
                 st.write(f"**{directory.name}**: {len(get_image_files(directory, validate=False))} images")
-
-                mode_key = f"duplicate_mode_{directory.name}"
-                st.session_state.setdefault(mode_key, True)
-                use_content_hash = st.checkbox(
-                    "Compare file contents (SHA-256)",
-                    value=st.session_state[mode_key],
-                    key=f"content_{directory.name}",
-                    help=(
-                        "On: compare file contents exactly (also finds renamed copies). "
-                        "Off: use a faster comparison based on file name and size."
-                    ),
-                )
-                if st.session_state[mode_key] != use_content_hash:
-                    st.session_state[mode_key] = use_content_hash
-                    st.session_state.duplicate_results.pop(str(directory), None)
+                st.caption("Only byte-identical files are grouped as duplicates.")
 
                 if st.button(f"🔍 Find Duplicates in {directory.name}", key=f"find_dups_{directory.name}"):
                     with st.spinner(f"Scanning {directory.name} for duplicates..."):
                         st.session_state.duplicate_results[str(directory)] = (
                             duplicate_detector.find_duplicates_in_directory(
-                                directory, use_content_hash=use_content_hash
+                                directory, use_content_hash=True
                             )
                         )
 
@@ -3760,6 +3828,44 @@ def duplicate_manager_page():
 
         with col2:
             st.info("The hash database keeps track of all processed images to prevent duplicates. Clear only if you want to start fresh.")
+
+    backup_directory = DATA_DIR / "duplicate_backups"
+    recovery_archives = sorted(backup_directory.glob("duplicate-recovery-*.zip"), reverse=True) if backup_directory.exists() else []
+    with st.expander(f"Recovery archives ({len(recovery_archives)})"):
+        st.caption("Cleanup backups contain source images and biometric embeddings. Keep them only as long as needed.")
+        if not recovery_archives:
+            st.info("No duplicate cleanup backups are stored locally.")
+        else:
+            for archive_path in recovery_archives:
+                col_info, col_download, col_restore = st.columns([3, 1, 1])
+                with col_info:
+                    st.write(f"{archive_path.name} · {archive_path.stat().st_size / (1024 * 1024):.1f} MiB")
+                with col_download:
+                    st.download_button(
+                        "Download",
+                        data=archive_path.read_bytes(),
+                        file_name=archive_path.name,
+                        mime="application/zip",
+                        key=f"download_recovery_{archive_path.name}",
+                    )
+                with col_restore:
+                    if st.button("Restore", key=f"restore_recovery_{archive_path.name}"):
+                        store = st.session_state.get("vector_store")
+                        if store is None:
+                            st.error("The face database is unavailable. The archive was kept.")
+                        else:
+                            with st.spinner("Restoring faces and original images…"):
+                                restored = restore_duplicate_backup(archive_path, store, IMAGES_DIR)
+                            if restored.get("success"):
+                                invalidate_persons_cache()
+                                invalidate_gallery_cache()
+                                st.success(
+                                    f"Restored {restored.get('restored_faces', 0)} faces and "
+                                    f"{restored.get('restored_images', 0)} images."
+                                )
+                                st.rerun()
+                            else:
+                                st.error(f"Restore failed; the recovery archive was retained: {restored.get('error')}")
 
 def find_duplicates_in_directory(directory: Path):
     """Find and display duplicates in a directory"""

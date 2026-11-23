@@ -222,13 +222,23 @@ separate authorization and entry. DNS rebinding is not independently guarded.
 
 ### Remove duplicate image files
 
-`clean_duplicates.py` reports image-file variants by default. Review the report before deleting anything:
+`clean_duplicates.py` reports byte-identical image files. It does not treat
+similar filenames or resized variants as duplicates. Review the report first:
 
 ```bash
 python clean_duplicates.py --dir data/images --report
 ```
 
-To remove detected image-file duplicates after review, add `--clean`. This cleanup concerns image files; it does not verify embedding quality or identity matches.
+To remove exact duplicates after review, add `--clean`. The command requires
+typing `DELETE` unless you explicitly pass `--yes`; it archives indexed faces
+and source images before cleanup and reconciles the local vector index.
+
+In the app's **Duplicate manager**, each cleanup is previewed and the candidate
+set is rechecked before removal. Indexed faces and their source images are
+saved to a portable recovery archive first; use **Recovery archives → Restore**
+to put them back into the local index. These archives contain biometric data
+and stay under `FACE_DATA_DIR/duplicate_backups` until restored or manually
+removed.
 
 ### Settings and data location
 

@@ -281,7 +281,7 @@ def duplicate_pair(seeded_data):
 
     import numpy as np
 
-    from config import IMAGES_DIR
+    from config import DATA_DIR, IMAGES_DIR
     from vector_store import FaceVectorStore
 
     source = sorted(IMAGES_DIR.glob("person_*.jpg"))[0]
@@ -299,12 +299,17 @@ def duplicate_pair(seeded_data):
         "added_at": "2026-01-01T00:00:00",
     })
 
+    backup_directory = DATA_DIR / "duplicate_backups"
+    backups_before = set(backup_directory.glob("duplicate-recovery-*.zip")) if backup_directory.exists() else set()
     try:
         yield source, copy, store
     finally:
         copy.unlink(missing_ok=True)
         store.delete_face("face_duplicate_copy")
         store.invalidate_stats_cache()
+        if backup_directory.exists():
+            for archive in set(backup_directory.glob("duplicate-recovery-*.zip")) - backups_before:
+                archive.unlink(missing_ok=True)
 
 
 def test_duplicate_manager_deletes_copy_and_reconciles_database_rows(duplicate_pair, monkeypatch):
@@ -318,6 +323,7 @@ def test_duplicate_manager_deletes_copy_and_reconciles_database_rows(duplicate_p
     at = _app()
     at.run()
     _goto(at, "🔧 Duplicate Manager")
+    assert not any("Compare file contents" in item.label for item in at.checkbox)
     next(button for button in at.button if "Find Duplicates in images" in button.label).click().run()
     _assert_no_exception(at)
 
@@ -326,8 +332,8 @@ def test_duplicate_manager_deletes_copy_and_reconciles_database_rows(duplicate_p
     radios[0].set_value(str(source))
     next(button for button in at.button if "Review deletion" in button.label).click().run()
     _assert_no_exception(at)
-    assert any("permanently delete" in str(item.value) for item in at.warning)
-    next(button for button in at.button if "Confirm deletion" in button.label).click().run()
+    assert any("recovery archive" in str(item.value).lower() for item in at.success)
+    next(button for button in at.button if "Confirm cleanup" in button.label).click().run()
     _assert_no_exception(at)
 
     assert source.exists(), "the kept file must survive"

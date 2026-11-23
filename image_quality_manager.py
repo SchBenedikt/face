@@ -18,6 +18,9 @@ Features:
 import re
 import json
 import shutil
+import hashlib
+import os
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Tuple, Set, Optional, Any
 from urllib.parse import urlparse
@@ -70,20 +73,38 @@ class ImageQualityManager:
                 logger.error(f"Error loading metadata: {e}")
                 self.metadata = {}
     
-    def save_metadata(self):
+    def save_metadata(self) -> bool:
         """Save updated metadata to file"""
+        temporary_name = None
         try:
+            self.metadata_file.parent.mkdir(parents=True, exist_ok=True)
             # Create backup first
             if self.metadata_file.exists():
                 backup_file = self.metadata_file.with_suffix('.json.backup')
-                shutil.copy2(self.metadata_file, backup_file)
-                logger.info(f"Backup created: {backup_file}")
-            
-            with open(self.metadata_file, 'w', encoding='utf-8') as f:
-                json.dump(self.metadata, f, indent=2, ensure_ascii=False)
+                try:
+                    shutil.copy2(self.metadata_file, backup_file)
+                except OSError as backup_exc:
+                    logger.warning("Could not create metadata backup: %s", backup_exc)
+
+            fd, temporary_name = tempfile.mkstemp(
+                prefix=f".{self.metadata_file.name}.",
+                suffix=".tmp",
+                dir=self.metadata_file.parent,
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(self.metadata, handle, indent=2, ensure_ascii=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_name, self.metadata_file)
+            temporary_name = None
             logger.info(f"Metadata saved to {self.metadata_file}")
+            return True
         except Exception as e:
             logger.error(f"Error saving metadata: {e}")
+            return False
+        finally:
+            if temporary_name:
+                Path(temporary_name).unlink(missing_ok=True)
     
     def extract_base_name(self, filename: str) -> str:
         """
@@ -229,18 +250,34 @@ class ImageQualityManager:
     
     def find_all_duplicates(self) -> Dict[str, Tuple[str, List[str]]]:
         """
-        Find all duplicate images and determine which to keep/remove
+        Find byte-identical duplicate images and determine which to keep/remove
         
         Returns:
             Dictionary mapping base_name to (best_image, duplicates_to_remove)
         """
-        groups = self.group_images_by_base_name()
+        image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+        files = sorted(
+            path for path in self.image_dir.rglob("*")
+            if path.is_file() and path.suffix.casefold() in image_extensions
+        ) if self.image_dir.exists() else []
+        by_hash: Dict[str, List[str]] = {}
+        for path in files:
+            digest = hashlib.sha256()
+            try:
+                with path.open("rb") as image_file:
+                    for chunk in iter(lambda: image_file.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            except OSError as exc:
+                logger.warning("Could not hash image %s: %s", path.name, exc)
+                continue
+            by_hash.setdefault(digest.hexdigest(), []).append(str(path))
+
         duplicates_info = {}
-        
-        for base_name, image_paths in groups.items():
+
+        for digest, image_paths in by_hash.items():
             if len(image_paths) > 1:
                 best_image, duplicates = self.select_best_quality_image(image_paths)
-                duplicates_info[base_name] = (best_image, duplicates)
+                duplicates_info[digest] = (best_image, duplicates)
         
         return duplicates_info
     
@@ -259,12 +296,15 @@ class ImageQualityManager:
         stats = {
             'total_groups': len(duplicates_info),
             'files_to_remove': 0,
+            'files_removed': 0,
             'files_to_keep': 0,
             'bytes_to_free': 0,
+            'files_removed': 0,
             'removed_files': [],
             'kept_files': [],
             'errors': []
         }
+        vector_store = None
         
         for base_name, (best_image, duplicates) in duplicates_info.items():
             stats['files_to_keep'] += 1
@@ -272,35 +312,61 @@ class ImageQualityManager:
             stats['kept_files'].append(best_image)
             
             for duplicate_path in duplicates:
-                stats['removed_files'].append(duplicate_path)
+                if dry_run:
+                    stats['removed_files'].append(duplicate_path)
                 
                 # Calculate bytes to free
-                if duplicate_path in self.metadata and 'file_size' in self.metadata[duplicate_path]:
-                    stats['bytes_to_free'] += self.metadata[duplicate_path]['file_size']
-                
-                if not dry_run:
-                    try:
-                        # Remove actual file
-                        file_path = Path(duplicate_path)
-                        if file_path.exists():
-                            file_path.unlink()
-                            logger.info(f"Removed duplicate: {duplicate_path}")
-                        
-                        # Remove from metadata
-                        if duplicate_path in self.metadata:
-                            del self.metadata[duplicate_path]
-                            
-                    except Exception as e:
-                        error_msg = f"Error removing {duplicate_path}: {e}"
-                        logger.error(error_msg)
-                        stats['errors'].append(error_msg)
-        
-        if not dry_run and not stats['errors']:
-            self.save_metadata()
-            
-            # Also cleanup orphaned metadata entries
-            orphan_stats = self.cleanup_orphaned_metadata()
-            stats['orphan_cleanup'] = orphan_stats
+                try:
+                    stats['bytes_to_free'] += Path(duplicate_path).stat().st_size
+                except OSError:
+                    pass
+
+            if dry_run:
+                continue
+            try:
+                from config import DATA_DIR
+                from duplicate_backup import create_duplicate_backup
+                from duplicate_detector import delete_duplicate_files
+                from vector_store import FaceVectorStore
+
+                if vector_store is None:
+                    vector_store = FaceVectorStore()
+                backup = create_duplicate_backup(
+                    vector_store,
+                    duplicates,
+                    DATA_DIR / "duplicate_backups",
+                )
+                if not backup.get("success"):
+                    raise RuntimeError(backup.get("message", "Recovery archive failed."))
+                result = delete_duplicate_files([best_image, *duplicates], best_image)
+                if (
+                    not result["deleted"]
+                    and result.get("rolled_back")
+                    and backup.get("backup_path")
+                ):
+                    Path(backup["backup_path"]).unlink(missing_ok=True)
+                for removed_path in result["deleted"]:
+                    vector_store.delete_faces_by_image_path(str(removed_path))
+                    self.metadata.pop(str(removed_path), None)
+                stats["files_removed"] += len(result["deleted"])
+                stats["removed_files"].extend(str(path) for path in result["deleted"])
+                if result["deleted"]:
+                    vector_store.prune_missing_faces(root_directory=self.image_dir)
+                    stats.setdefault("recovery_archives", []).append(
+                        str(backup["backup_path"]) if backup.get("backup_path") else ""
+                    )
+                # Persist every successfully removed file even when a later
+                # group fails, so metadata cannot lag disk state.
+                if not self.save_metadata():
+                    stats["errors"].append("Could not persist updated image metadata")
+                stats["errors"].extend(result["errors"])
+            except Exception as exc:  # noqa: BLE001 - report partial cleanup
+                error_msg = f"Error removing duplicate group: {exc}"
+                logger.error(error_msg)
+                stats["errors"].append(error_msg)
+
+        if not dry_run:
+            stats['orphan_cleanup'] = self.cleanup_orphaned_metadata()
             
         return stats
     
@@ -340,65 +406,51 @@ class ImageQualityManager:
         return stats
     
     def generate_report(self) -> str:
-        """Generate a detailed report about duplicate images"""
+        """Generate a detailed report about byte-identical images."""
         duplicates_info = self.find_all_duplicates()
         
         if not duplicates_info:
-            return "✅ No duplicate images found!"
+            return "No byte-identical duplicate images found."
         
-        report = ["🔍 Image Duplicate Analysis Report", "=" * 50, ""]
+        report = ["Image Duplicate Analysis Report", "=" * 50, ""]
         
         total_duplicates = sum(len(duplicates) for _, duplicates in duplicates_info.values())
         total_groups = len(duplicates_info)
         
-        report.append(f"📊 Summary:")
-        report.append(f"   • {total_groups} groups of duplicate images found")
-        report.append(f"   • {total_duplicates} duplicate files can be removed")
+        report.append("Summary:")
+        report.append(f"   {total_groups} groups of byte-identical images found")
+        report.append(f"   {total_duplicates} exact duplicate files can be removed")
         report.append("")
         
         # Calculate potential space savings
         total_bytes_to_free = 0
         for _, duplicates in duplicates_info.values():
             for duplicate_path in duplicates:
-                if duplicate_path in self.metadata and 'file_size' in self.metadata[duplicate_path]:
-                    total_bytes_to_free += self.metadata[duplicate_path]['file_size']
+                try:
+                    total_bytes_to_free += Path(duplicate_path).stat().st_size
+                except OSError:
+                    pass
         
         if total_bytes_to_free > 0:
             mb_to_free = total_bytes_to_free / (1024 * 1024)
-            report.append(f"💾 Potential space savings: {mb_to_free:.2f} MB")
+            report.append(f"Estimated space savings: {mb_to_free:.2f} MiB")
             report.append("")
         
         # Show detailed groups (first 10)
-        report.append("📋 Detailed Analysis (showing first 10 groups):")
+        report.append("Details (first 10 groups):")
         report.append("")
         
-        for i, (base_name, (best_image, duplicates)) in enumerate(duplicates_info.items()):
+        for i, (_digest, (best_image, duplicates)) in enumerate(duplicates_info.items()):
             if i >= 10:  # Limit to first 10 groups
                 report.append(f"   ... and {len(duplicates_info) - 10} more groups")
                 break
                 
-            report.append(f"{i+1}. Base: {base_name}")
-            
-            # Show best image with its score
+            report.append(f"{i+1}. Exact content match")
             best_filename = Path(best_image).name
-            best_score = self.calculate_quality_score(best_filename)
-            best_size = ""
-            if best_image in self.metadata and 'file_size' in self.metadata[best_image]:
-                size_mb = self.metadata[best_image]['file_size'] / (1024 * 1024)
-                best_size = f" ({size_mb:.2f}MB)"
-            
-            report.append(f"   ✅ KEEP: {best_filename} (score: {best_score}){best_size}")
-            
-            # Show duplicates to remove
+            report.append(f"   Keep: {best_filename}")
             for duplicate_path in duplicates:
                 dup_filename = Path(duplicate_path).name
-                dup_score = self.calculate_quality_score(dup_filename)
-                dup_size = ""
-                if duplicate_path in self.metadata and 'file_size' in self.metadata[duplicate_path]:
-                    size_mb = self.metadata[duplicate_path]['file_size'] / (1024 * 1024)
-                    dup_size = f" ({size_mb:.2f}MB)"
-                
-                report.append(f"   ❌ REMOVE: {dup_filename} (score: {dup_score}){dup_size}")
+                report.append(f"   Remove: {dup_filename}")
             
             report.append("")
         
@@ -474,59 +526,63 @@ def generate_duplicate_report(image_dir: str = "data/images") -> str:
 
 if __name__ == "__main__":
     import argparse
-    
-    # Set up logging
+
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(levelname)s - %(message)s",
     )
-    
-    parser = argparse.ArgumentParser(description='Image Quality Manager - Remove duplicate images with different sizes')
-    parser.add_argument('--image-dir', default='data/images', help='Path to image directory')
-    parser.add_argument('--action', choices=['report', 'clean', 'test'], default='report', 
-                       help='Action to perform: report, clean, or test')
-    parser.add_argument('--no-dry-run', action='store_true', 
-                       help='Actually remove files (default is dry run)')
-    
+
+    from config import IMAGES_DIR
+
+    parser = argparse.ArgumentParser(
+        description="Report or safely remove byte-identical image files."
+    )
+    parser.add_argument("--image-dir", default=str(IMAGES_DIR), help="Path to the image directory")
+    parser.add_argument("--action", choices=["report", "clean"], default="report")
+    parser.add_argument("--no-dry-run", action="store_true", help="Perform cleanup after confirmation")
+    parser.add_argument("--yes", action="store_true", help="Confirm cleanup non-interactively")
     args = parser.parse_args()
-    
+
+    image_directory = Path(args.image_dir).expanduser()
+    if not image_directory.is_dir():
+        parser.error(f"image directory does not exist: {image_directory}")
+
+    if args.action == "clean" and args.no_dry_run and not args.yes:
+        try:
+            response = input("Type DELETE to remove byte-identical duplicates: ").strip()
+        except EOFError:
+            response = ""
+        if response != "DELETE":
+            print("Cleanup cancelled.")
+            raise SystemExit(0)
+
     manager = ImageQualityManager(
-        image_dir=Path(args.image_dir),
-        metadata_file=Path(args.image_dir) / "image_metadata.json"
+        image_dir=image_directory,
+        metadata_file=image_directory / "image_metadata.json",
     )
-    
+
     if args.action == 'report':
         print(manager.generate_report())
-        
     elif args.action == 'clean':
         dry_run = not args.no_dry_run
         results = manager.clean_downloads_directory(dry_run=dry_run)
-        
-        print(results['report'])
-        print("\n" + "="*50)
-        print("CLEANUP RESULTS:")
-        print("="*50)
-        
+        print(results["report"])
+        print("\nCleanup results")
+        print("=" * 50)
         stats = results['removal_stats']
         print(f"Groups processed: {stats['total_groups']}")
         print(f"Files to keep: {stats['files_to_keep']}")
-        print(f"Files to remove: {stats['files_to_remove']}")
-        
-        if stats['bytes_to_free'] > 0:
-            mb_freed = stats['bytes_to_free'] / (1024 * 1024)
-            print(f"Space {'to be freed' if dry_run else 'freed'}: {mb_freed:.2f} MB")
-        
+        print(f"Duplicate files found: {stats['files_to_remove']}")
+        print(f"Files removed: {stats.get('files_removed', 0)}")
+        print(f"Estimated space: {stats['bytes_to_free'] / (1024 * 1024):.2f} MiB")
+        for backup in stats.get("recovery_archives", []):
+            if backup:
+                print(f"Recovery archive: {backup}")
         if stats['errors']:
-            print(f"Errors: {len(stats['errors'])}")
             for error in stats['errors']:
-                print(f"  - {error}")
-        
+                print(f"Error: {error}")
         if dry_run:
-            print("\n⚠️  This was a DRY RUN - no files were actually removed")
-            print("Add --no-dry-run to actually perform the cleanup")
-        else:
-            print(f"\n✅ Cleanup completed successfully!")
-            
+            print("Dry run only; no files were removed. Use --no-dry-run to clean after confirmation.")
     elif args.action == 'test':
         # Test the base name extraction
         test_files = [

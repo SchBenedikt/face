@@ -3,6 +3,9 @@ Simple duplicate detector for image files
 """
 import hashlib
 import sqlite3
+import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Set
 import logging
@@ -200,15 +203,16 @@ class SimpleDuplicateDetector:
         pass
 
 def delete_duplicate_files(file_paths, keep_path):
-    """Delete every file of a duplicate set except ``keep_path``.
+    """Delete byte-identical copies except ``keep_path`` with rollback on errors.
 
-    Returns ``{"deleted": [Path], "missing": [Path], "errors": [str]}`` so the
-    caller can clean up database rows and report what happened. Nothing is
-    raised: a file that is already gone is reported as ``missing``.
+    Candidate hashes are checked again immediately before mutation. If any
+    unlink fails, already removed copies are recreated from the kept file so
+    the caller can reconcile vectors and metadata against an all-or-nothing
+    file result. Nothing is raised.
     """
     keep = Path(keep_path)
     paths = [Path(path) for path in file_paths]
-    result = {"deleted": [], "missing": [], "errors": []}
+    result = {"deleted": [], "missing": [], "errors": [], "rolled_back": []}
 
     if keep not in paths:
         result["errors"].append(f"{keep.name} is not part of this duplicate set")
@@ -219,17 +223,55 @@ def delete_duplicate_files(file_paths, keep_path):
         )
         return result
 
+    existing = []
+    keep_hash = duplicate_detector.calculate_file_hash(keep)
+    if not keep_hash:
+        result["errors"].append("The kept file could not be read; nothing was deleted")
+        return result
     for path in paths:
         if path == keep:
             continue
         if not path.exists():
             result["missing"].append(path)
             continue
+        candidate_hash = duplicate_detector.calculate_file_hash(path)
+        if not candidate_hash or candidate_hash != keep_hash:
+            result["errors"].append(f"{path.name} is not byte-identical to the kept file; nothing was deleted")
+            return result
+        existing.append(path)
+
+    for path in existing:
         try:
             path.unlink()
             result["deleted"].append(path)
         except OSError as exc:
             result["errors"].append(f"{path.name}: {exc}")
+            rollback_errors = []
+            unrestored = []
+            for removed_path in reversed(result["deleted"]):
+                temporary_name = None
+                try:
+                    fd, temporary_name = tempfile.mkstemp(
+                        prefix=".duplicate-rollback-",
+                        suffix=removed_path.suffix,
+                        dir=removed_path.parent,
+                    )
+                    os.close(fd)
+                    shutil.copy2(keep, temporary_name)
+                    os.replace(temporary_name, removed_path)
+                    result["rolled_back"].append(removed_path)
+                except OSError as rollback_exc:
+                    rollback_errors.append(f"{removed_path.name}: rollback failed: {rollback_exc}")
+                    unrestored.append(removed_path)
+                    if temporary_name:
+                        try:
+                            Path(temporary_name).unlink(missing_ok=True)
+                        except OSError:
+                            pass
+            result["deleted"] = list(reversed(unrestored))
+            if rollback_errors:
+                result["errors"].extend(rollback_errors)
+            break
 
     return result
 

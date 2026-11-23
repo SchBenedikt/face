@@ -49,3 +49,65 @@ def test_nothing_is_deleted_when_the_keep_file_is_not_in_the_set(tmp_path):
     assert result["deleted"] == []
     assert result["errors"], "a foreign keep file must be rejected"
     assert all(path.exists() for path in files)
+
+
+def test_false_positive_candidate_is_never_deleted(tmp_path):
+    keep = tmp_path / "portrait.jpg"
+    candidate = tmp_path / "portrait-300x200.jpg"
+    keep.write_bytes(b"original image")
+    candidate.write_bytes(b"different image with the same size")
+
+    result = delete_duplicate_files([keep, candidate], keep)
+
+    assert result["deleted"] == []
+    assert result["errors"]
+    assert keep.is_file() and candidate.is_file()
+
+
+def test_partial_unlink_failure_restores_files_already_removed(tmp_path, monkeypatch):
+    keep, first, second = [tmp_path / name for name in ("a.jpg", "b.jpg", "c.jpg")]
+    for path in (keep, first, second):
+        path.write_bytes(b"identical image bytes")
+    real_unlink = Path.unlink
+
+    def fail_on_second(path, *args, **kwargs):
+        if path == second:
+            raise OSError("injected unlink failure")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_on_second)
+    result = delete_duplicate_files([keep, first, second], keep)
+
+    assert result["deleted"] == []
+    assert result["rolled_back"] == [first]
+    assert result["errors"]
+    assert keep.read_bytes() == first.read_bytes() == second.read_bytes()
+
+
+def test_failed_rollback_reports_only_files_still_missing(tmp_path, monkeypatch):
+    import duplicate_detector as module
+
+    keep, first, second = [tmp_path / name for name in ("a.jpg", "b.jpg", "c.jpg")]
+    for path in (keep, first, second):
+        path.write_bytes(b"identical image bytes")
+    real_unlink = Path.unlink
+    real_replace = module.os.replace
+
+    def fail_on_second(path, *args, **kwargs):
+        if path == second:
+            raise OSError("injected unlink failure")
+        return real_unlink(path, *args, **kwargs)
+
+    def fail_restore(source, destination):
+        if Path(destination) == first:
+            raise OSError("injected rollback failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(Path, "unlink", fail_on_second)
+    monkeypatch.setattr(module.os, "replace", fail_restore)
+    result = delete_duplicate_files([keep, first, second], keep)
+
+    assert result["deleted"] == [first]
+    assert result["rolled_back"] == []
+    assert not first.exists()
+    assert second.exists()

@@ -123,6 +123,8 @@ def restore_face_export(
     archive_data: bytes | BinaryIO,
     vector_store: Any,
     image_dir: str | Path,
+    *,
+    skip_existing: bool = False,
 ) -> dict[str, Any]:
     """Validate and restore an archive into a compatible local vector store."""
     image_dir = Path(image_dir).expanduser().resolve()
@@ -175,11 +177,42 @@ def restore_face_export(
                 batch_vectors: list[list[float]] = []
                 batch_metadata: list[dict[str, Any]] = []
                 restored_records = 0
-                for member in sorted(name for name in names if name.startswith("records/") and name.endswith(".jsonl")):
+                record_members = sorted(
+                    name for name in names if name.startswith("records/") and name.endswith(".jsonl")
+                )
+                existing_ids: set[str] = set()
+                stale_existing_ids: set[str] = set()
+                if skip_existing:
+                    archive_ids: list[str] = []
+                    for member in record_members:
+                        with archive.open(member) as source:
+                            archive_ids.extend(str(json.loads(line)["face_id"]) for line in source)
+                    for start in range(0, len(archive_ids), CHUNK_SIZE):
+                        rows = vector_store.collection.get(
+                            ids=archive_ids[start:start + CHUNK_SIZE],
+                            include=["metadatas"],
+                        )
+                        for face_id, raw_metadata in zip(
+                            rows.get("ids") or [], rows.get("metadatas") or []
+                        ):
+                            existing_path = Path(str((raw_metadata or {}).get("image_path") or ""))
+                            if existing_path.is_file():
+                                existing_ids.add(str(face_id))
+                            else:
+                                # Repair an orphaned vector left behind by a
+                                # partial deletion or a process crash.
+                                stale_existing_ids.add(str(face_id))
+
+                skipped_existing = 0
+                for member in record_members:
                     with archive.open(member) as source:
                         for raw_line in source:
                             record = json.loads(raw_line)
                             face_id = str(record["face_id"])
+                            if face_id in existing_ids:
+                                restored_records += 1
+                                skipped_existing += 1
+                                continue
                             vector = np.asarray(record["embedding"], dtype=np.float32)
                             if (
                                 vector.ndim != 1
@@ -209,15 +242,15 @@ def restore_face_export(
                             batch_metadata.append(metadata)
                             restored_records += 1
                             if len(batch_ids) >= CHUNK_SIZE:
-                                existing = vector_store.collection.get(ids=batch_ids, include=[]).get("ids") or []
-                                if existing:
+                                existing = set(vector_store.collection.get(ids=batch_ids, include=[]).get("ids") or [])
+                                if existing and (not skip_existing or not existing.issubset(stale_existing_ids)):
                                     raise ValueError("The archive contains face IDs already present in this index.")
                                 inserted_ids.extend(batch_ids)
                                 vector_store.collection.upsert(ids=batch_ids, embeddings=batch_vectors, metadatas=batch_metadata)
                                 batch_ids, batch_vectors, batch_metadata = [], [], []
                 if batch_ids:
-                    existing = vector_store.collection.get(ids=batch_ids, include=[]).get("ids") or []
-                    if existing:
+                    existing = set(vector_store.collection.get(ids=batch_ids, include=[]).get("ids") or [])
+                    if existing and (not skip_existing or not existing.issubset(stale_existing_ids)):
                         raise ValueError("The archive contains face IDs already present in this index.")
                     inserted_ids.extend(batch_ids)
                     vector_store.collection.upsert(ids=batch_ids, embeddings=batch_vectors, metadatas=batch_metadata)
@@ -226,7 +259,14 @@ def restore_face_export(
                 vector_store.invalidate_stats_cache()
                 vector_store._pipeline_status_cache = None
                 vector_store.mark_embedding_pipeline_complete()
-                return {"success": True, "restored_faces": len(inserted_ids), "restored_images": len(created_images)}
+                outcome = {
+                    "success": True,
+                    "restored_faces": len(inserted_ids),
+                    "restored_images": len(created_images),
+                }
+                if skip_existing:
+                    outcome["skipped_existing"] = skipped_existing
+                return outcome
     except Exception as exc:  # noqa: BLE001 - report a clean rollback result
         if inserted_ids:
             try:
