@@ -11,6 +11,7 @@ from config import (
     SCRAPED_DIR,
     VECTOR_DB_PATH,
     COLLECTION_NAME,
+    FACE_EMBEDDING_MODEL,
 )
 from utils import IMAGE_EXTENSIONS
 
