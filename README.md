@@ -75,6 +75,15 @@ version, and the 512-dimensional L2-normalized vector contract. Export a
 portable ZIP with embeddings before upgrading the recognition runtime or
 rebuilding an index if you need a recoverable snapshot.
 
+Face IDs are derived from the normalized full image path and face index, so
+files with the same name in different folders or formats do not collide. When
+migrating an older index, run **Update All Images** for every indexed folder;
+reprocessing replaces legacy rows for the same source path. Moving or renaming
+an image creates new face IDs. After moving files, reprocess the new location
+and use **Prune missing image records** in the library to remove stale rows;
+person labels are carried over only when the old and new face boxes match
+unambiguously.
+
 ## 🌟 What Makes This Special?
 
 The application provides local face search over images you choose to index:

@@ -46,6 +46,13 @@ def test_face_id_depends_on_the_full_path_and_face_index(tmp_path):
     assert build_face_id(first, 0) == build_face_id(first, 0)
 
 
+def test_face_id_distinguishes_file_formats_with_the_same_stem(tmp_path):
+    jpg = tmp_path / "same.jpg"
+    png = tmp_path / "same.png"
+
+    assert build_face_id(jpg, 0) != build_face_id(png, 0)
+
+
 def test_processed_face_ids_are_unique_for_equal_file_names(tmp_path, monkeypatch):
     engine = FaceRecognitionEngine()
     # Do not download/run the real DeepFace weights in a unit test.
