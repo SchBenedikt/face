@@ -696,10 +696,10 @@ class FaceVectorStore:
                         'face_id': face_id,
                         'similarity': similarity,
                         'similarity_percentage': similarity * 100,
+                        'ranking_score': similarity,
                         'cosine_similarity': cosine_similarity,
                         'euclidean_distance': euclidean_distance,
                         'chroma_distance': distance,
-                        'confidence_score': similarity,
                         'metadata': metadatas[0][index] or {},
                         'similarity_metrics': {
                             'cosine_similarity': cosine_similarity,
@@ -788,10 +788,10 @@ class FaceVectorStore:
     
     def _calculate_confidence_score(self, similarity_metrics: Dict[str, float]) -> float:
         """
-        Return the confidence for a match.
+        Return a legacy score alias; this value is not calibrated confidence.
 
-        With honest cosine scoring the similarity *is* the confidence. The
-        method remains for API compatibility with existing callers and tests.
+        The method remains for API compatibility. New callers should use the
+        explicitly named cosine similarity or ranking score.
         """
         try:
             similarity = float(similarity_metrics.get('primary_similarity', 0.0))

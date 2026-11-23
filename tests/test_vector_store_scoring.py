@@ -44,7 +44,7 @@ def test_unrelated_embeddings_are_not_scored_as_matches():
     assert metrics["primary_similarity"] < 0.3
 
 
-def test_confidence_matches_similarity():
+def test_legacy_score_alias_matches_similarity():
     store = _store_without_database()
     rng = np.random.default_rng(13)
     left = rng.normal(size=512).astype(np.float32)

@@ -84,3 +84,5 @@ def test_search_keeps_candidates_above_user_threshold_below_75_percent(tmp_path)
 
     assert [match["face_id"] for match in matches] == ["candidate-60"]
     assert matches[0]["similarity"] == pytest.approx(0.60, abs=1e-5)
+    assert matches[0]["ranking_score"] == pytest.approx(0.60, abs=1e-5)
+    assert "confidence_score" not in matches[0]
