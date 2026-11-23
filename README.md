@@ -131,6 +131,8 @@ These LFW diagnostics do not establish web-scale retrieval performance or a comp
 
 A balanced diagnostic sample from the official CFP frontal-profile protocol (10 same and 10 different pairs sampled from each of its 10 folds; 200 pairs total) scored AUC 0.852 for Buffalo_L and 0.874 for ArcFace, with no detection or embedding failures. At the current 0.40 search threshold, Buffalo_L accepted 1/100 genuine pairs and 0/100 different-person pairs; ArcFace accepted 22/100 and 0/100. This small sample is not a full CFP benchmark, but it shows that frontal-to-profile recall remains weak and that lowering the threshold alone would trade heavily toward false matches. ArcFace merits a larger comparison; cross-pose performance needs additional model or pose-aware retrieval work.
 
+To repeat or expand that comparison, extract the CFP dataset and run `.venv/bin/python evaluate_cfp_pairs.py /path/to/cfp-dataset --pairs-per-class 50 --seed 20261123 --models Buffalo_L ArcFace`. This samples 50 same and 50 different pairs from each official split and reports overall and per-fold verification metrics. Use `--pairs-per-class 0` for all 7,000 official pairs. The evaluator runs the app's detector/alignment path once per image and compares embeddings from each requested model.
+
 ## 🛠️ Installation
 
 ### Prerequisites
