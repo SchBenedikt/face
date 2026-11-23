@@ -306,6 +306,7 @@ def test_settings_save_persists_and_is_used_by_the_search(seeded_data, isolated_
     from settings_store import load_settings
 
     assert load_settings() == {
+        "embedding_model": "buffalo_l",
         "similarity_threshold": 0.9,
         "max_results": 7,
         "batch_size": 16,

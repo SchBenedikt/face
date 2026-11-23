@@ -34,7 +34,7 @@ from config import (
     MIN_FACE_SIZE,
     IMAGES_DIR, EMBEDDINGS_DIR, BATCH_SIZE, MAX_WORKERS
 )
-from settings_store import load_settings
+from settings_store import active_embedding_model, load_settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -58,14 +58,15 @@ class FaceRecognitionEngine:
     def __init__(self):
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         
-        self.primary_model = str(getattr(config, "FACE_EMBEDDING_MODEL", "Facenet512"))
+        saved_settings = load_settings()
+        self.primary_model = active_embedding_model()
         # Keep legacy public attributes for older integrations. Embedding
         # extraction uses only ``primary_model``; no ensemble is produced.
         self.models = list(getattr(config, "FACE_EMBEDDING_MODELS", [self.primary_model]))
         self.ensemble_enabled = False
         self.detection_model = FACE_RECOGNITION_MODEL
         try:
-            saved_model = str(load_settings().get("detection_model", FACE_RECOGNITION_MODEL)).lower()
+            saved_model = str(saved_settings.get("detection_model", FACE_RECOGNITION_MODEL)).lower()
             if saved_model in ("hog", "cnn"):
                 self.detection_model = saved_model
         except Exception as exc:  # noqa: BLE001 - a broken settings file must not block startup

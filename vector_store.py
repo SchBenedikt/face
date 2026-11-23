@@ -20,13 +20,12 @@ from config import (
     VECTOR_DB_PATH,
     COLLECTION_NAME,
     SIMILARITY_THRESHOLD,
-    FACE_GROUPING_THRESHOLD,
     FACE_GROUPING_MARGIN,
     FACE_AUTO_ASSIGN_THRESHOLD,
     FACE_AUTO_ASSIGN_AMBIGUITY_MARGIN,
 )
 from face_grouping import centroid_of, group_embeddings
-from settings_store import active_embedding_pipeline_version
+from settings_store import active_embedding_pipeline_version, active_grouping_threshold
 from similarity import (
     cosine_from_chroma_distance,
     normalise_embedding,
@@ -1620,7 +1619,7 @@ class FaceVectorStore:
 
     def get_face_groups(
         self,
-        threshold: float = FACE_GROUPING_THRESHOLD,
+        threshold: float | None = None,
         margin: float = FACE_GROUPING_MARGIN,
         min_size: int = 2,
     ) -> Dict[str, Any]:
@@ -1630,6 +1629,8 @@ class FaceVectorStore:
         matching existing person for a group. The caller (the Personengruppen
         page) asks the user before assigning anything.
         """
+        if threshold is None:
+            threshold = active_grouping_threshold()
         empty: Dict[str, Any] = {
             'groups': [],
             'unnamed_faces': 0,

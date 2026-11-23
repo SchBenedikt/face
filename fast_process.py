@@ -105,7 +105,7 @@ def process_images_fast(update_existing=False):
     
     print(f"📁 Processing {total_images} images")
     print(f"⚙️ Batch size: {BATCH_SIZE}")
-    print(f"🔧 Model: {FACE_EMBEDDING_MODEL} (fast mode)")
+    print(f"🔧 Model: {face_engine.primary_model} (fast mode)")
     if update_existing:
         print("🔄 Update mode: Will replace existing face data")
     print()

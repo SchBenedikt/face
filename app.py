@@ -62,11 +62,17 @@ from utils import (
 )
 from ui_cache import face_thumbnail
 from async_utils import run_coroutine
-from settings_store import load_settings, save_settings, settings_path
+from settings_store import (
+    active_embedding_model,
+    active_grouping_threshold,
+    load_settings,
+    save_settings,
+    settings_path,
+)
 from config import (
     PAGE_TITLE, PAGE_ICON, LAYOUT, 
     RESULTS_PER_PAGE, THUMBNAIL_SIZE,
-    IMAGES_DIR, SCRAPED_DIR, FACE_GROUPING_THRESHOLD, FACE_EMBEDDING_MODEL
+    IMAGES_DIR, SCRAPED_DIR
 )
 
 IMAGE_SUFFIXES = tuple(sorted(IMAGE_EXTENSIONS))
@@ -117,7 +123,7 @@ def show_embedding_pipeline_status() -> None:
     if status.get("reindex_required"):
         st.warning(
             "Der gespeicherte Gesichtsindex wurde mit einer anderen Erkennungs-/Embedding-Pipeline erstellt "
-            "(zum Beispiel nach einem Wechsel zwischen HOG und CNN). "
+            "(zum Beispiel nach einem Wechsel zwischen Buffalo_L und ArcFace oder nach einer Detektoränderung). "
             "Die Suche wird bis zur Aktualisierung blockiert, damit alte und neue "
             "Embeddings nicht falsch miteinander verglichen werden. Öffne **Batch Face "
             "Processing**, wähle **Update All Images** und aktualisiere zuerst "
@@ -491,6 +497,7 @@ def face_search_page():
             st.image(query_image, caption="Query Image", width='stretch')
 
             query_settings = load_settings()
+            query_model = active_embedding_model()
 
             # Enhanced Search Parameters
             st.subheader("🎯 Enhanced Search Parameters")
@@ -514,7 +521,11 @@ def face_search_page():
                     value=float(query_settings["similarity_threshold"]),
                     step=0.05,
                     key="face_search_similarity_threshold",
-                    help="Cosine-Ähnlichkeit, keine Match-Wahrscheinlichkeit. 0,40 ist ein LFW-Startwert für Buffalo_L; High Precision erhöht ihn auf 0,55."
+                    help=(
+                        "Cosine-Ähnlichkeit, keine Match-Wahrscheinlichkeit. "
+                        f"Aktives Modell: {query_model}. Der Startwert ist kein "
+                        "Match-Wahrscheinlichkeitswert; hohe Schwellen reduzieren falsche Treffer und Treffer zugleich."
+                    )
                 )
                 
                 # Similarity filter (the old labels called this "quality")
@@ -3843,6 +3854,7 @@ def settings_page():
     """Settings and configuration page"""
     
     st.header("⚙️ Settings")
+    show_embedding_pipeline_status()
 
     flash = st.session_state.pop("settings_flash", None)
     if flash:
@@ -3854,6 +3866,17 @@ def settings_page():
     st.caption(f"Gespeichert in: {settings_path()}")
 
     with st.form("settings_form"):
+        embedding_model = st.selectbox(
+            "Face search embedding model",
+            options=["Buffalo_L", "ArcFace"],
+            index=0 if current_settings["embedding_model"] == "buffalo_l" else 1,
+            help=(
+                "Buffalo_L ist auf frontalen Porträts konservativer. ArcFace fand "
+                "in der CFP-Stichprobe mehr Profiltreffer, hatte aber mehr falsche "
+                "Annahmen und braucht eine strengere Gruppenschwelle. Ein Modellwechsel "
+                "erfordert eine Neuindizierung der Bildordner."
+            ),
+        )
         similarity_threshold = st.slider(
             "Similarity Threshold",
             min_value=0.0,
@@ -3888,6 +3911,7 @@ def settings_page():
 
     if submitted:
         saved, errors = save_settings({
+            "embedding_model": embedding_model.lower(),
             "similarity_threshold": similarity_threshold,
             "max_results": max_results,
             "batch_size": batch_size,
@@ -3896,10 +3920,15 @@ def settings_page():
         if saved:
             engine = st.session_state.get("face_engine")
             if engine is not None:
+                engine.primary_model = embedding_model
                 engine.set_detection_model(detection_model)
             store = st.session_state.get("vector_store")
             if store is not None:
                 store.refresh_embedding_pipeline_version()
+            st.session_state.search_results = []
+            st.session_state.pop("detected_faces", None)
+            st.session_state.person_groups_cache = None
+            st.session_state.pop("person_groups_threshold", None)
             st.session_state.settings_flash = f"✅ Einstellungen gespeichert: {settings_path()}"
             st.rerun()
         else:
@@ -3920,9 +3949,9 @@ def settings_page():
     st.write(f"**Gespeicherte dlib-Auswahl:** {active_model.upper()}")
     if face_recognition_available:
         st.caption(
-            f"**Aktive Erkennung:** face_recognition {active_model.upper()} zuerst, "
-            "danach DeepFace (RetinaFace → MTCNN → OpenCV) und zuletzt OpenCV Haar. "
-            "Die Auswahl bleibt nach einem Neustart aktiv."
+            f"**Aktive Erkennung:** DeepFace (RetinaFace → MTCNN → OpenCV), "
+            f"danach face_recognition {active_model.upper()} und OpenCV Haar. "
+            "Die dlib-Auswahl greift nur, wenn DeepFace kein Gesicht findet."
         )
     else:
         st.info(
@@ -3949,9 +3978,9 @@ def settings_page():
     col1, col2 = st.columns(2)
     
     with col1:
-        st.write(f"**Embedding Model:** DeepFace {FACE_EMBEDDING_MODEL}")
+        st.write(f"**Embedding Model:** DeepFace {active_embedding_model()}")
         if face_recognition_available:
-            st.write(f"**Aktiver dlib-Detektor:** {active_model.upper()}")
+            st.write(f"**dlib-Fallback:** {active_model.upper()}")
         else:
             st.write("**Aktiver Detektor:** DeepFace mit RetinaFace/MTCNN-Fallback")
         st.write("**Vector Database:** ChromaDB")
@@ -4914,11 +4943,11 @@ def person_groups_page():
         "Ähnlichkeitsschwelle",
         min_value=0.30,
         max_value=0.90,
-        value=FACE_GROUPING_THRESHOLD,
+        value=active_grouping_threshold(),
         step=0.01,
         help=(
-            "Cosine-Ähnlichkeit. 0,35 ist ein LFW-Startwert für Buffalo_L-Gruppen; "
-            "höher = strengere, kleinere Gruppen. Vorschläge müssen geprüft werden."
+            "Cosine-Ähnlichkeit. Startwert: 0,35 für Buffalo_L, 0,55 für ArcFace "
+            "(LFW-Stichprobe). Höher = strengere, kleinere Gruppen. Vorschläge müssen geprüft werden."
         ),
         key="person_groups_threshold",
     )
@@ -4930,7 +4959,7 @@ def person_groups_page():
         face_count = st.session_state.vector_store.collection.count()
     except Exception:  # noqa: BLE001 - the page still shows a readable error
         face_count = 0
-    cache_key = f"{threshold:.2f}:{face_count}"
+    cache_key = f"{active_embedding_model()}:{threshold:.2f}:{face_count}"
     if (
         st.session_state.get("person_groups_cache") is None
         or st.session_state.get("person_groups_cache_key") != cache_key

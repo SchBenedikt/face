@@ -53,9 +53,9 @@ FACE_AUTO_ASSIGN_THRESHOLD = float(os.environ.get("FACE_AUTO_ASSIGN_THRESHOLD", 
 FACE_AUTO_ASSIGN_AMBIGUITY_MARGIN = 0.05
 
 # Face Recognition Quality Settings - Enhanced for better accuracy
-FACE_EMBEDDING_MODEL = "Buffalo_L"  # Better LFW retrieval and pair trade-off than Facenet512
+FACE_EMBEDDING_MODEL = "Buffalo_L"  # Default; ArcFace is selectable for pose-heavy collections
 # Retained for compatibility with older integrations. The active pipeline uses
-# FACE_EMBEDDING_MODEL only; it does not combine these candidates.
+# one model selected in Settings; it does not combine these candidates.
 FACE_EMBEDDING_MODELS = ["Buffalo_L", "Facenet512", "ArcFace", "VGG-Face", "Facenet"]
 # Bump this whenever the detector, crop or embedding preprocessing changes.
 # Similarity comparisons across pipeline versions are not meaningful.

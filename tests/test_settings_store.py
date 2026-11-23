@@ -40,6 +40,7 @@ def test_saved_values_survive_a_reload(isolated_settings):
 
     # load_settings keeps no state: this is exactly what a restart reads.
     assert settings_store.load_settings() == {
+        "embedding_model": "buffalo_l",
         "similarity_threshold": 0.85,
         "max_results": 7,
         "batch_size": 16,
