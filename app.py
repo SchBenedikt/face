@@ -816,6 +816,10 @@ def show_face_selection_interface():
 
 def search_with_selected_face_enhanced(face_index: int):
     """Perform enhanced search using the selected face with advanced filtering"""
+
+    # Never leave results from a previous face visible when this search fails
+    # to extract an embedding or returns no matches.
+    st.session_state.search_results = []
     
     detected_data = st.session_state.detected_faces
     face_locations = detected_data['face_locations']
