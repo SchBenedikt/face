@@ -55,6 +55,13 @@ indexed faces** to try a local face search. The **Settings** checklist checks
 storage and index readiness. The model check runs only when requested because
 first use can download model weights.
 
+The screenshots below were captured from the running application with an empty
+local index; they show the first-run search screen and setup diagnostics.
+
+![Face Search with an empty local index](docs/screenshots/first-run-empty-library.png)
+
+![Setup and runtime diagnostics](docs/screenshots/settings-diagnostics.png)
+
 By default, Streamlit binds to `127.0.0.1`, so the interface is available only
 from the machine running it. Do not change `server.address` to a network-facing
 address or expose the port through a proxy unless that deployment enables
@@ -327,7 +334,9 @@ Streamlit UI → image loader and face detector → aligned face crop
             → Buffalo_L embedding → ChromaDB cosine-ranked search
 ```
 
-Image crawling is a separate optional workflow. Search runs against the local ChromaDB collection and indexed image paths.
+This is a conceptual view of the runtime flow, not executable code. Image
+crawling is a separate optional workflow. Search runs against the local
+ChromaDB collection and indexed image paths.
 
 ### Core Components
 
@@ -403,7 +412,10 @@ The report includes face-detection coverage, Top-1/Top-5 retrieval, and same-ide
 
 ## 📄 License
 
-There is currently no `LICENSE` file in this repository. Check the repository owner's licensing terms before redistribution.
+There is currently no `LICENSE` file in this repository. The project has not
+granted a license for reuse or redistribution; public availability should not
+be treated as permission to copy or distribute the code. Check with the
+repository owner before reusing it.
 
 ## 🙏 Acknowledgments
 
