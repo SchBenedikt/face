@@ -327,17 +327,23 @@ class FaceVectorStore:
                 logger.warning(f"Could not clean old faces for {image_path}: {exc}")
         return removed
 
-    def prune_missing_faces(self) -> int:
+    def prune_missing_faces(self, root_directory: Optional[str | Path] = None) -> int:
         """Delete embeddings whose source image no longer exists.
 
         Returns the number of removed rows. This makes the database usable
-        again after files were removed outside the app, without touching rows
-        that still have a valid image.
+        again after files were removed outside the app. When a root directory
+        is supplied, rows outside it are left untouched.
         """
         try:
             total = self.collection.count()
             if total == 0:
                 return 0
+
+            root = (
+                Path(root_directory).expanduser().resolve()
+                if root_directory is not None
+                else None
+            )
 
             stale: List[str] = []
             offset = 0
@@ -351,9 +357,22 @@ class FaceVectorStore:
                 ids = chunk.get("ids") or []
                 for index, metadata in enumerate(chunk.get("metadatas") or []):
                     image_path = (metadata or {}).get("image_path")
-                    if not image_path or not Path(str(image_path)).is_file():
-                        if index < len(ids):
-                            stale.append(ids[index])
+                    if not image_path:
+                        if root is not None:
+                            # A directory-scoped job cannot identify ownership
+                            # of rows that have no recorded source path.
+                            continue
+                        is_stale = True
+                    else:
+                        source_path = Path(str(image_path)).expanduser().resolve()
+                        if root is not None:
+                            try:
+                                source_path.relative_to(root)
+                            except ValueError:
+                                continue
+                        is_stale = not source_path.is_file()
+                    if is_stale and index < len(ids):
+                        stale.append(ids[index])
                 offset += chunk_size
 
             for start in range(0, len(stale), 500):

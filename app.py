@@ -2591,17 +2591,18 @@ def process_with_fast_engine(directory_path, update_existing=False):
     import sys
     import os
     
-    # Temporarily update the processing directory in fast_process
-    original_dir = None
     try:
-        # Import the processing function
+        target_directory = Path(directory_path).expanduser().resolve()
+        allowed_roots = [Path(IMAGES_DIR).resolve(), Path(SCRAPED_DIR).resolve()]
+        if not target_directory.is_dir() or not any(
+            target_directory == root or root in target_directory.parents
+            for root in allowed_roots
+        ):
+            st.error("Der gewählte Ordner liegt außerhalb der konfigurierten Bildordner.")
+            return
+
         sys.path.append(os.path.dirname(__file__))
-        from fast_process import process_images_streamlit, IMAGES_DIR
-        
-        # Temporarily change the images directory
-        import fast_process
-        original_dir = fast_process.IMAGES_DIR
-        fast_process.IMAGES_DIR = Path(directory_path)
+        from fast_process import process_images_streamlit
         
         # Create progress containers
         progress_container = st.container()
@@ -2633,7 +2634,8 @@ def process_with_fast_engine(directory_path, update_existing=False):
             result = process_images_streamlit(
                 update_existing=update_existing,
                 progress_callback=update_progress,
-                status_callback=update_status
+                status_callback=update_status,
+                directory_path=target_directory,
             )
         
         # Show results
@@ -2763,11 +2765,6 @@ def process_with_fast_engine(directory_path, update_existing=False):
     except Exception as e:
         st.error(f"❌ Error during processing: {str(e)}")
         st.exception(e)
-    
-    finally:
-        # Restore original directory
-        if original_dir and 'fast_process' in locals():
-            fast_process.IMAGES_DIR = original_dir
 
 
 def show_processing_statistics():

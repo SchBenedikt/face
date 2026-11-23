@@ -214,22 +214,20 @@ def process_images_fast(update_existing=False):
         print(f"👤 Avg Faces per Image: {avg_faces_per_image:.2f}")
 
 
-def process_images_streamlit(update_existing=False, progress_callback=None, status_callback=None):
-    """Streamlit-compatible version of fast processing with callbacks"""
-    import io
-    import sys
-    
-    # Capture print output for Streamlit
-    old_stdout = sys.stdout
-    sys.stdout = mystdout = io.StringIO()
-    
+def process_images_streamlit(
+    update_existing=False,
+    progress_callback=None,
+    status_callback=None,
+    directory_path=None,
+):
+    """Process one explicit image directory without mutating shared globals."""
     try:
-        # Find images
-        image_files = get_image_files_fast(IMAGES_DIR)
+        target_directory = Path(directory_path or IMAGES_DIR).expanduser().resolve()
+        image_files = get_image_files_fast(target_directory)
         total_images = len(image_files)
         
         if total_images == 0:
-            return {"success": False, "message": f"No images found in {IMAGES_DIR}"}
+            return {"success": False, "message": f"No images found in {target_directory}"}
         
         # Import face engine with fast config
         from face_recognition_engine import FaceRecognitionEngine
@@ -240,7 +238,7 @@ def process_images_streamlit(update_existing=False, progress_callback=None, stat
         vector_store = FaceVectorStore()
         
         if status_callback:
-            status_callback(f"🔍 Found {total_images} images to process")
+            status_callback(f"🔍 Found {total_images} images in {target_directory}")
         
         # Filter already processed images if not updating. Compare full paths:
         # equal file names in different folders are different images.
@@ -343,9 +341,9 @@ def process_images_streamlit(update_existing=False, progress_callback=None, stat
                         )
 
         if update_existing:
-            # Images removed from FACE_DATA_DIR are not part of ``results`` at
-            # all, so prune their rows after the last batch.
-            stale_removed += vector_store.prune_missing_faces()
+            # Prune only this job's source tree; other indexed directories may
+            # be outside it and must not be affected by this operation.
+            stale_removed += vector_store.prune_missing_faces(target_directory)
         
         # Final statistics
         total_time = time.time() - start_time
@@ -367,9 +365,6 @@ def process_images_streamlit(update_existing=False, progress_callback=None, stat
         
     except Exception as e:
         return {"success": False, "message": f"Error during processing: {str(e)}"}
-    finally:
-        # Restore stdout
-        sys.stdout = old_stdout
 
 if __name__ == "__main__":
     import argparse
