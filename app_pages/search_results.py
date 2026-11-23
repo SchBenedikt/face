@@ -1,7 +1,9 @@
 """Rendering helpers for local face-search results."""
 from pathlib import Path
 from typing import Any, Dict, List
+from urllib.parse import urlsplit
 
+import pandas as pd
 import streamlit as st
 
 from config import RESULTS_PER_PAGE, THUMBNAIL_SIZE
@@ -9,10 +11,101 @@ from ui_cache import face_thumbnail
 from utils import create_thumbnail, load_and_preprocess_image, parse_face_location
 
 
+def display_search_performance(metrics, history):
+    """Show per-search timings and a session-only view of recent searches."""
+    if not metrics:
+        return
+
+    with st.expander("Search performance and score distribution", expanded=False):
+        st.caption(
+            "Timings are measured on this device for the current session. Detection "
+            "runs before the search step; model, hardware, cache, and library size affect results."
+        )
+        timing_columns = st.columns(4)
+        timing_values = [
+            ("Face detection", "detection_ms"),
+            ("Face embedding", "embedding_ms"),
+            ("Vector search", "vector_search_ms"),
+            ("Detection + search", "processing_ms"),
+        ]
+        for column, (label, key) in zip(timing_columns, timing_values):
+            column.metric(label, f"{metrics.get(key, 0.0):.0f} ms")
+
+        count_columns = st.columns(3)
+        count_columns[0].metric("Candidates returned", metrics.get("candidates_returned", 0))
+        count_columns[1].metric("After face filters", metrics.get("eligible_candidates", 0))
+        count_columns[2].metric("Results returned", metrics.get("results_returned", 0))
+        st.caption(
+            f"Similarity cutoff used: {metrics.get('threshold', 0.0):.2f}. "
+            f"Face filtering took {metrics.get('filtering_ms', 0.0):.0f} ms. "
+            "Combined processing time includes detection and search, but excludes image upload and decoding. "
+            "The cutoff is a ranking filter, not an identity-confidence level."
+        )
+
+        score_samples = metrics.get("score_samples", [])
+        if score_samples:
+            bucket_counts = [0] * 10
+            for score in score_samples:
+                bucket = min(9, max(0, int(float(score) * 10)))
+                bucket_counts[bucket] += 1
+            histogram = pd.DataFrame({
+                "Similarity score range": [f"{i / 10:.1f}–{(i + 1) / 10:.1f}" for i in range(10)],
+                "Candidates": bucket_counts,
+            })
+            st.caption(
+                "Score distribution for candidates returned above the cutoff. "
+                "It shows ranking values, not the chance of a correct identity match."
+            )
+            st.bar_chart(
+                histogram,
+                x="Similarity score range",
+                y="Candidates",
+                width="stretch",
+                height=220,
+            )
+
+        if len(history) >= 2:
+            history_frame = pd.DataFrame(history[-30:]).copy()
+            history_frame.insert(0, "Search", range(1, len(history_frame) + 1))
+            history_frame = history_frame.rename(columns={
+                "processing_ms": "Detection + search processing",
+            })
+            st.caption(f"Recent detection + search processing times ({len(history_frame)} searches, up to 30 shown).")
+            st.line_chart(
+                history_frame,
+                x="Search",
+                y="Detection + search processing",
+                width="stretch",
+                height=240,
+            )
+
+
+def _display_image_source(metadata):
+    """Display recorded source details without treating authorization as verified consent."""
+    source_url = metadata.get("source_url")
+    if not isinstance(source_url, str):
+        return
+    try:
+        parsed = urlsplit(source_url)
+    except ValueError:
+        return
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return
+
+    collected_at = metadata.get("collected_at")
+    source_label = f"Image source: {parsed.hostname}"
+    if isinstance(collected_at, str) and collected_at:
+        source_label += f" · imported {collected_at[:19].replace('T', ' ')} UTC"
+    st.caption(source_label)
+    st.link_button("Open source page", source_url, width="stretch")
+    if metadata.get("authorization_confirmed") is True:
+        st.caption("The importer recorded an authorization confirmation.")
+
+
 def display_search_results(results: List[Dict[str, Any]]):
     """Display enhanced search results with filtering options"""
 
-    st.subheader(f"🎯 Enhanced Search Results ({len(results)} faces)")
+    st.subheader(f"Enhanced Search Results ({len(results)} faces)")
 
     if not results:
         st.info("No results to display")
@@ -24,11 +117,12 @@ def display_search_results(results: List[Dict[str, Any]]):
 
         with col_f1:
             min_similarity_filter = st.slider(
-                "Min cosine similarity %",
-                min_value=0,
-                max_value=100,
-                value=0,
-                help="Hide results below this similarity"
+                "Minimum cosine similarity score",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.0,
+                step=0.05,
+                help="Hide lower ranking scores. This value is not an identity-confidence cutoff."
             )
 
             min_size_filter = st.slider(
@@ -58,7 +152,7 @@ def display_search_results(results: List[Dict[str, Any]]):
     filtered_results = []
     for result in results:
         # Similarity filter
-        if result['similarity'] * 100 < min_similarity_filter:
+        if result['similarity'] < min_similarity_filter:
             continue
 
         # Size filter
@@ -190,7 +284,7 @@ def display_search_results(results: List[Dict[str, Any]]):
                 face_size = min(face_width, face_height)
                 face_area = face_width * face_height
 
-                similarity_percentage = face_data['similarity'] * 100
+                similarity_score = float(face_data['similarity'])
 
                 quality_indicators = []
                 if face_size >= 80:
@@ -202,8 +296,12 @@ def display_search_results(results: List[Dict[str, Any]]):
                 if face_area > 6400:
                     quality_indicators.append("✨ Large")
 
-                st.metric("Cosine similarity", f"{similarity_percentage:.1f}%")
-                st.caption(f"Ranking score, not a match probability · face size: {face_size}px")
+                st.metric(
+                    "Cosine similarity score",
+                    f"{similarity_score:.3f} / 1.000",
+                    help="A ranking value for face-embedding similarity, not a probability that the identities match.",
+                )
+                st.caption(f"Higher values rank closer · face size: {face_size}px")
 
                 if quality_indicators:
                     st.caption(" | ".join(quality_indicators))
@@ -213,6 +311,8 @@ def display_search_results(results: List[Dict[str, Any]]):
                 person_name = metadata.get('full_name', '')
                 if person_name:
                     st.success(f"👤 **{person_name}**")
+
+                _display_image_source(metadata)
 
                 face_id = face_data.get('face_id', face_data.get('id', f"face_{i}"))
                 if st.button("ℹ️ Details", key=f"search_result_details_{face_id}", help="Open full image, analyze face, or assign a name.", width='stretch'):

@@ -1,12 +1,16 @@
 """Face-query upload, detection, filtering, and local search page."""
 import hashlib
 import logging
+import time
 
 import cv2
 import numpy as np
 import streamlit as st
 
-from app_pages.search_results import display_search_results
+from app_pages.search_results import (
+    display_search_performance,
+    display_search_results,
+)
 from settings_store import active_embedding_model, load_settings
 from utils import create_thumbnail, load_uploaded_image
 
@@ -31,7 +35,12 @@ def render_face_search_page(show_embedding_pipeline_status):
     st.header("Face search", icon=":material/search:")
     st.caption(
         "Search runs only against locally indexed images. Similarity scores are "
-        "not match probabilities; review every suggested match."
+        "ranking values, not estimates of identity certainty. Review every suggested match."
+    )
+    st.caption(
+        "Open a result's Details → Face analysis for optional age, gender, emotion, "
+        "and ethnicity estimates. These model estimates can be wrong. Recorded image-source "
+        "information appears with the result when available."
     )
     show_embedding_pipeline_status()
 
@@ -193,6 +202,7 @@ def render_face_search_page(show_embedding_pipeline_status):
         with col_clear:
             if st.button("🗑️ Clear", help="Clear search results", key="clear_search_results"):
                 st.session_state.search_results = []
+                st.session_state.pop("search_performance", None)
                 if 'detected_faces' in st.session_state:
                     del st.session_state.detected_faces
                 if 'current_uploaded_file' in st.session_state:
@@ -200,6 +210,11 @@ def render_face_search_page(show_embedding_pipeline_status):
                 st.rerun()
 
         display_search_results(st.session_state.search_results)
+
+    display_search_performance(
+        st.session_state.get("search_performance"),
+        st.session_state.get("search_performance_history", []),
+    )
 
 def load_query_image(uploaded_file):
     """Decode an uploaded image and return ``(image, error_message)``.
@@ -230,6 +245,7 @@ def analyze_uploaded_image_for_faces(uploaded_file, max_results: int, similarity
     # the newly selected image.
     st.session_state.pop('detected_faces', None)
     st.session_state.search_results = []
+    st.session_state.pop('search_performance', None)
     st.session_state.pop('current_uploaded_file', None)
 
     with st.spinner("🔍 Analyzing image and detecting faces..."):
@@ -248,7 +264,9 @@ def analyze_uploaded_image_for_faces(uploaded_file, max_results: int, similarity
                 return
 
             # Detect faces
+            detection_started = time.perf_counter()
             face_locations = st.session_state.face_engine.detect_faces(query_image)
+            detection_ms = (time.perf_counter() - detection_started) * 1000
 
             if not face_locations:
                 st.error("""
@@ -269,6 +287,7 @@ def analyze_uploaded_image_for_faces(uploaded_file, max_results: int, similarity
                 'query_image': query_image,
                 'max_results': max_results,
                 'similarity_threshold': similarity_threshold,
+                'detection_ms': detection_ms,
             }
 
             st.success(f"✅ {len(face_locations)} face(s) detected! Select the desired face for search on the right.")
@@ -375,9 +394,11 @@ def show_face_selection_interface():
 def search_with_selected_face_enhanced(face_index: int):
     """Perform enhanced search using the selected face with advanced filtering"""
 
+    search_started = time.perf_counter()
     # Never leave results from a previous face visible when this search fails
     # to extract an embedding or returns no matches.
     st.session_state.search_results = []
+    st.session_state.pop('search_performance', None)
 
     detected_data = st.session_state.detected_faces
     face_locations = detected_data['face_locations']
@@ -410,7 +431,9 @@ def search_with_selected_face_enhanced(face_index: int):
     with st.spinner(f"🔍 Searching indexed faces for face {face_index + 1}..."):
         try:
             # Extract embedding for selected face
+            embedding_started = time.perf_counter()
             query_embedding = st.session_state.face_engine.extract_face_embedding(query_image, selected_face_location)
+            embedding_ms = (time.perf_counter() - embedding_started) * 1000
 
             if query_embedding is None:
                 st.error("❌ Could not extract face features. Try another face or image.")
@@ -432,13 +455,18 @@ def search_with_selected_face_enhanced(face_index: int):
             # or weak results without leaving the requested result page empty.
             requested_results = max(1, adjusted_max_results)
             candidate_limit = min(500, max(requested_results, requested_results * 5))
+            vector_search_started = time.perf_counter()
             similar_faces = st.session_state.vector_store.search_similar_faces(
                 query_embedding,
                 n_results=candidate_limit,
                 min_similarity=adjusted_threshold
             )
+            vector_search_ms = (time.perf_counter() - vector_search_started) * 1000
 
             # Apply advanced filters
+            filter_started = time.perf_counter()
+            eligible_count = 0
+            sorted_faces = []
             if similar_faces:
                 filtered_faces = apply_advanced_face_filters(similar_faces, search_params)
                 eligible_count = len(filtered_faces)
@@ -452,34 +480,46 @@ def search_with_selected_face_enhanced(face_index: int):
                 st.session_state.search_results = sorted_faces
                 st.session_state.current_page = 1
 
-                # Show enhanced results summary
                 if sorted_faces:
-                    avg_similarity = sum(face['similarity'] for face in sorted_faces) / len(sorted_faces)
-                    top_similarity = max(face['similarity'] for face in sorted_faces)
-
-                    st.success(f"""
-                    🎯 **Enhanced Search Results for Face {face_index + 1}**
-
-                    📊 **Search summary:**
-                    - Candidates retrieved: {len(similar_faces)}
-                    - Candidates after filters: {eligible_count}
-                    - Results displayed: {len(sorted_faces)}
-                    - Highest displayed similarity: {top_similarity*100:.1f}%
-                    - Average displayed similarity: {avg_similarity*100:.1f}%
-                    - Search Mode: {search_params['search_mode']}
-                    - Minimum similarity: {adjusted_threshold:.0%}
-                    """)
+                    st.success(
+                        f"Search complete for face {face_index + 1}: "
+                        f"{len(sorted_faces)} result(s) meet the selected filters."
+                    )
                 else:
-                    st.warning(f"""
-                    ⚠️ **No faces match the current filters for face {face_index + 1}**
-
-                    **Try adjusting:**
-                    - Lower similarity threshold (currently: {similarity_threshold*100:.0f}%)
-                    - Switch to "High Recall" search mode
-                    - Reduce minimum face size filter
-                    """)
+                    st.warning(
+                        f"No results passed the selected filters for face {face_index + 1}. "
+                        "This does not establish whether the person is present in your library. "
+                        "You can lower the similarity cutoff or minimum face size."
+                    )
             else:
-                st.warning(f"No similar faces found for Face {face_index + 1}")
+                st.warning(
+                    f"No candidates were returned for face {face_index + 1} at the selected "
+                    f"similarity cutoff ({adjusted_threshold:.2f}). This is not proof that "
+                    "the person is absent from your library."
+                )
+
+            filtering_ms = (time.perf_counter() - filter_started) * 1000
+            search_step_ms = (time.perf_counter() - search_started) * 1000
+            detection_ms = float(detected_data.get("detection_ms", 0.0))
+            performance = {
+                "detection_ms": detection_ms,
+                "embedding_ms": embedding_ms,
+                "vector_search_ms": vector_search_ms,
+                "filtering_ms": filtering_ms,
+                "search_step_ms": search_step_ms,
+                "processing_ms": detection_ms + search_step_ms,
+                "candidates_returned": len(similar_faces),
+                "eligible_candidates": eligible_count,
+                "results_returned": len(sorted_faces),
+                "threshold": adjusted_threshold,
+                "score_samples": [float(face["similarity"]) for face in similar_faces],
+            }
+            st.session_state.search_performance = performance
+            history = list(st.session_state.get("search_performance_history", []))
+            history.append({key: performance[key] for key in (
+                "detection_ms", "embedding_ms", "vector_search_ms", "filtering_ms", "processing_ms"
+            )})
+            st.session_state.search_performance_history = history[-30:]
 
             st.rerun()
 
