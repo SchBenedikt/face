@@ -127,7 +127,7 @@ def load_settings() -> Dict[str, Any]:
     return values
 
 
-def active_embedding_pipeline_version() -> str:
+def active_embedding_pipeline_version(model_name: str | None = None) -> str:
     """Return the pipeline id for the detector this installation will use.
 
     The embedding model is part of the index identity. DeepFace alignment is
@@ -135,7 +135,7 @@ def active_embedding_pipeline_version() -> str:
     dlib HOG/CNN or Haar fallbacks may be used; their availability and setting
     therefore remain part of the index version.
     """
-    model = active_embedding_model().lower()
+    model = (model_name or active_embedding_model()).lower()
     base_version = str(config.EMBEDDING_PIPELINE_VERSION)
     if model != str(config.FACE_EMBEDDING_MODEL).lower():
         base_version = f"{base_version}-{model}"

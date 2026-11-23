@@ -18,7 +18,8 @@ from typing import Any
 import numpy as np
 
 from face_recognition_engine import FaceRecognitionEngine
-from config import FACE_EMBEDDING_MODEL, FACE_GROUPING_MARGIN, FACE_GROUPING_THRESHOLD
+from config import FACE_GROUPING_MARGIN
+from settings_store import active_embedding_model
 from utils import load_and_preprocess_image
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
@@ -130,10 +131,11 @@ def evaluate(
     seed: int = 42,
     thresholds: tuple[float, ...] = (0.3, 0.5, 0.7, 0.8),
     max_error_examples: int = 50,
-    model_name: str = FACE_EMBEDDING_MODEL,
-    grouping_thresholds: tuple[float, ...] = (0.3, 0.35, 0.4, 0.45, 0.5),
+    model_name: str | None = None,
+    grouping_thresholds: tuple[float, ...] = (0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.65),
     grouping_margin: float = FACE_GROUPING_MARGIN,
 ) -> dict[str, Any]:
+    model_name = model_name or active_embedding_model()
     identities = _select_images(_labeled_images(root), max_images, seed)
     engine = FaceRecognitionEngine()
     engine.primary_model = model_name
@@ -321,8 +323,8 @@ def evaluate_lfw_people(
     data_home: Path | None = None,
     min_faces_per_person: int = 20,
     thresholds: tuple[float, ...] = (0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7),
-    model_name: str = FACE_EMBEDDING_MODEL,
-    grouping_thresholds: tuple[float, ...] = (0.3, 0.35, 0.4, 0.45, 0.5),
+    model_name: str | None = None,
+    grouping_thresholds: tuple[float, ...] = (0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.65),
     grouping_margin: float = FACE_GROUPING_MARGIN,
 ) -> dict[str, Any]:
     """Run closed-set retrieval on a reproducible LFW people subset."""
@@ -421,13 +423,13 @@ def main() -> int:
                         help="Balanced image cap for retrieval and pair metrics (0 means no cap; default: 2000)")
     parser.add_argument("--seed", type=int, default=42, help="Subset selection seed")
     parser.add_argument(
-        "--model", default=FACE_EMBEDDING_MODEL,
-        help=f"DeepFace embedding model to evaluate (default: {FACE_EMBEDDING_MODEL})",
+        "--model", default=None,
+        help="DeepFace embedding model to evaluate (default: active Settings model)",
     )
     parser.add_argument("--thresholds", default="0.3,0.4,0.5,0.6,0.7",
                         help="Comma-separated cosine thresholds (default: 0.3,0.4,0.5,0.6,0.7)")
     parser.add_argument(
-        "--grouping-thresholds", default="0.3,0.35,0.4,0.45,0.5",
+        "--grouping-thresholds", default="0.3,0.35,0.4,0.45,0.5,0.55,0.65",
         help="Comma-separated thresholds for the app's identity-grouping evaluation",
     )
     parser.add_argument(
