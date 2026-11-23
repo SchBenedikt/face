@@ -129,7 +129,7 @@ When reprocessing a face, existing person labels follow a one-to-one match betwe
 
 These LFW diagnostics do not establish web-scale retrieval performance or a comparison with PimEyes. Search quality depends on the source images, face size, pose, lighting, and indexed collection.
 
-A balanced diagnostic sample from the official CFP frontal-profile protocol (10 same and 10 different pairs sampled from each of its 10 folds; 200 pairs total) scored AUC 0.852 with no detection or embedding failures. At the current 0.40 search threshold it accepted 1/100 genuine pairs and 0/100 different-person pairs. This small sample is not a full CFP benchmark, but it shows that frontal-to-profile recall remains weak and that lowering the threshold alone would trade heavily toward false matches. Cross-pose performance needs additional model or pose-aware retrieval work.
+A balanced diagnostic sample from the official CFP frontal-profile protocol (10 same and 10 different pairs sampled from each of its 10 folds; 200 pairs total) scored AUC 0.852 for Buffalo_L and 0.874 for ArcFace, with no detection or embedding failures. At the current 0.40 search threshold, Buffalo_L accepted 1/100 genuine pairs and 0/100 different-person pairs; ArcFace accepted 22/100 and 0/100. This small sample is not a full CFP benchmark, but it shows that frontal-to-profile recall remains weak and that lowering the threshold alone would trade heavily toward false matches. ArcFace merits a larger comparison; cross-pose performance needs additional model or pose-aware retrieval work.
 
 ## 🛠️ Installation
 
