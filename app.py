@@ -3439,7 +3439,7 @@ def web_scraping_page():
 
         with col1:
             max_images = st.slider(
-                "Maximum images per site",
+                "Maximum images per hostname",
                 min_value=1,
                 max_value=500,
                 value=100,
@@ -4630,7 +4630,7 @@ def improved_web_scraping_page():
     with col2:
         st.write("**Scraping Options**")
         max_images = st.number_input(
-            "Maximum images per site:",
+            "Maximum images per hostname:",
             min_value=1,
             max_value=500,
             value=100,

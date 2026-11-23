@@ -214,9 +214,11 @@ The same checks run on pushes and pull requests through GitHub Actions.
 The legacy `image-download.py` crawler is disabled because it does not enforce
 the current network-safety rules. Use **Web import** in the Streamlit app. It
 requires an explicit authorization confirmation, applies a finite image cap,
-honors the entered hostname and its `robots.txt` rules, and blocks private or
-special-use network addresses. Only the exact hostname you enter is crawled;
-CDNs and other subdomains require separate authorization and entry.
+honors the entered hostname and its `robots.txt` rules, paces and caps outbound
+requests per host, and blocks private or special-use network addresses. It
+follows links and sitemap entries without guessing common directories. Only
+the exact hostname you enter is crawled; CDNs and other subdomains require
+separate authorization and entry. DNS rebinding is not independently guarded.
 
 ### Remove duplicate image files
 

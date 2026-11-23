@@ -2,8 +2,39 @@
 from __future__ import annotations
 
 import ipaddress
+import asyncio
 import socket
+import time
 from urllib.parse import urlsplit
+
+
+class HostRequestBudget:
+    """Bound and pace outbound requests per hostname for one crawl session."""
+
+    def __init__(self, max_requests: int = 1200, min_interval: float = 0.2):
+        self.max_requests = max(1, int(max_requests))
+        self.min_interval = max(0.0, float(min_interval))
+        self._counts: dict[str, int] = {}
+        self._last_request: dict[str, float] = {}
+        self._lock = asyncio.Lock()
+
+    async def acquire(self, host: str) -> bool:
+        key = str(host).casefold().rstrip(".")
+        async with self._lock:
+            count = self._counts.get(key, 0)
+            if count >= self.max_requests:
+                return False
+            now = time.monotonic()
+            delay = self.min_interval - (now - self._last_request.get(key, now))
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self._counts[key] = count + 1
+            self._last_request[key] = time.monotonic()
+            return True
+
+    def reset(self) -> None:
+        self._counts.clear()
+        self._last_request.clear()
 
 
 def approved_public_url(

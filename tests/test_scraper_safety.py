@@ -7,7 +7,7 @@ import importlib.util
 from pathlib import Path
 import urllib.robotparser
 
-from scraper_safety import approved_public_url
+from scraper_safety import HostRequestBudget, approved_public_url
 
 
 def _resolver(addresses):
@@ -99,3 +99,65 @@ def test_legacy_bulk_crawler_entry_point_is_disabled(capsys):
     output = capsys.readouterr().out
     assert "is disabled" in output
     assert "network-safety rules" in output
+
+
+def test_host_request_budget_stops_at_limit_and_tracks_hosts_separately():
+    async def run():
+        budget = HostRequestBudget(max_requests=2, min_interval=0)
+        assert await budget.acquire("example.test")
+        assert await budget.acquire("example.test")
+        assert not await budget.acquire("example.test")
+        assert await budget.acquire("other.test")
+
+    asyncio.run(run())
+
+
+def test_cancelled_budget_wait_does_not_consume_another_request():
+    async def run():
+        budget = HostRequestBudget(max_requests=2, min_interval=1)
+        assert await budget.acquire("example.test")
+        pending = asyncio.create_task(budget.acquire("example.test"))
+        await asyncio.sleep(0)
+        pending.cancel()
+        try:
+            await pending
+        except asyncio.CancelledError:
+            pass
+        budget.min_interval = 0
+        assert await budget.acquire("example.test")
+        assert not await budget.acquire("example.test")
+
+    asyncio.run(run())
+
+
+def test_directory_discovery_is_disabled():
+    from old_image_scraper import AdvancedImageScraper
+
+    scraper = AdvancedImageScraper()
+    assert asyncio.run(scraper.find_images_from_directories("https://example.test")) == []
+    assert asyncio.run(scraper._discover_common_pages("https://example.test")) == set()
+
+
+def test_multiple_urls_share_one_host_image_budget(monkeypatch):
+    import old_image_scraper as module
+
+    async def no_wait(_duration):
+        return None
+
+    monkeypatch.setattr(module.asyncio, "sleep", no_wait)
+    scraper = module.AdvancedImageScraper()
+    requested = []
+
+    async def fake_scrape(url, limit, *, _reset_budget=True):
+        requested.append(limit)
+        return {"success": True, "url": url, "images_found": limit, "images_downloaded": limit}
+
+    monkeypatch.setattr(scraper, "scrape_website", fake_scrape)
+    results = asyncio.run(scraper.scrape_multiple_websites(
+        ["https://example.test/a", "https://example.test/b", "https://example.test/c"],
+        max_images_per_site=3,
+    ))
+
+    assert requested == [3]
+    assert results[1]["images_found"] == 0
+    assert "budget was exhausted" in results[1]["error"]

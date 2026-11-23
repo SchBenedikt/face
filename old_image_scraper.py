@@ -20,7 +20,7 @@ import urllib.robotparser
 from config import SCRAPED_DIR, MAX_IMAGES_PER_SITE, SUPPORTED_IMAGE_FORMATS
 from utils import is_valid_image_file, calculate_image_hash
 from duplicate_detector import duplicate_detector
-from scraper_safety import approved_public_url
+from scraper_safety import HostRequestBudget, approved_public_url
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -42,6 +42,7 @@ class AdvancedImageScraper:
         self.discovered_urls: Set[str] = set()
         self.approved_hosts: Set[str] = set()
         self.robots_parser: Optional[urllib.robotparser.RobotFileParser] = None
+        self.request_budget = HostRequestBudget()
         self.session_stats = {
             "pages_visited": 0,
             "pages_discovered": 0,
@@ -129,6 +130,9 @@ class AdvancedImageScraper:
 
             async def guard_request(route):
                 allowed, reason = await self._url_is_allowed(route.request.url)
+                host = urlparse(route.request.url).hostname or ""
+                if allowed and not await self.request_budget.acquire(host):
+                    allowed, reason = False, "The approved host request budget was exhausted."
                 if allowed:
                     await route.continue_()
                 else:
@@ -157,6 +161,13 @@ class AdvancedImageScraper:
                 return False, "robots.txt disallows this URL."
         return True, ""
 
+    async def _request_is_allowed(self, url: str, *, check_robots: bool = True) -> bool:
+        """Validate and consume one paced request from the hostname budget."""
+        allowed, _reason = await self._url_is_allowed(url, check_robots=check_robots)
+        if not allowed:
+            return False
+        return await self.request_budget.acquire(urlparse(url).hostname or "")
+
     async def _set_approved_host_and_robots(self, base_url: str) -> tuple[bool, str]:
         host = (urlparse(base_url).hostname or "").casefold().rstrip(".")
         if not host:
@@ -175,6 +186,8 @@ class AdvancedImageScraper:
         parser.set_url(robots_url)
         timeout = aiohttp.ClientTimeout(total=10)
         async with aiohttp.ClientSession(timeout=timeout) as session:
+            if not await self._request_is_allowed(robots_url, check_robots=False):
+                return False, "The approved host request budget was exhausted."
             async with session.get(robots_url, allow_redirects=False) as response:
                 if response.status == 200:
                     parser.parse((await response.text()).splitlines())
@@ -249,7 +262,7 @@ class AdvancedImageScraper:
                 for path in sitemap_paths:
                     try:
                         sitemap_url = urljoin(base_url, path)
-                        if not (await self._url_is_allowed(sitemap_url))[0]:
+                        if not await self._request_is_allowed(sitemap_url):
                             continue
                         async with session.get(sitemap_url, timeout=aiohttp.ClientTimeout(total=30), allow_redirects=False) as response:
                             if response.status == 200:
@@ -329,7 +342,7 @@ class AdvancedImageScraper:
             Set of URLs
         """
         try:
-            if not (await self._url_is_allowed(sitemap_url))[0]:
+            if not await self._request_is_allowed(sitemap_url):
                 return set()
             async with aiohttp.ClientSession() as session:
                 async with session.get(sitemap_url, timeout=aiohttp.ClientTimeout(total=30), allow_redirects=False) as response:
@@ -415,85 +428,13 @@ class AdvancedImageScraper:
         Returns:
             Set of discovered URLs
         """
-        common_pages = set()
-        
-        # Common WordPress and CMS patterns
-        common_paths = [
-            '/blog/',
-            '/news/',
-            '/gallery/',
-            '/photos/',
-            '/images/',
-            '/about/',
-            '/contact/',
-            '/events/',
-            '/category/',
-            '/archives/',
-            '/page/',
-            '/wp-content/uploads/',
-        ]
-        
-        # Check which paths exist
-        async with aiohttp.ClientSession() as session:
-            for path in common_paths:
-                try:
-                    url = urljoin(base_url, path)
-                    async with session.head(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                        if response.status == 200:
-                            common_pages.add(url)
-                except:
-                    continue
-                    
-        return common_pages
+        # Do not guess common paths. Discovery follows the approved site's
+        # links and sitemap references only.
+        return set()
 
     async def find_images_from_directories(self, base_url: str) -> List[str]:
-        """
-        Discover images by checking common image directories
-        
-        Args:
-            base_url: Base website URL
-            
-        Returns:
-            List of discovered image URLs
-        """
-        discovered_images = []
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                for path in self.common_image_paths:
-                    try:
-                        dir_url = urljoin(base_url, path)
-                        logger.info(f"Checking directory: {dir_url}")
-                        if not (await self._url_is_allowed(dir_url))[0]:
-                            continue
-                        
-                        # Try to access directory listing
-                        async with session.get(dir_url, timeout=aiohttp.ClientTimeout(total=20), allow_redirects=False) as response:
-                            if response.status == 200:
-                                content = await response.text()
-                                
-                                # Parse HTML directory listing or try common patterns
-                                images = self._extract_images_from_directory_html(content, dir_url)
-                                discovered_images.extend(images)
-                                
-                                # Also try year-based patterns for WordPress uploads
-                                if 'wp-content/uploads' in path:
-                                    year_images = await self._scan_wordpress_uploads(base_url, session)
-                                    discovered_images.extend(year_images)
-                                    
-                                self.session_stats["directories_scanned"] += 1
-                                
-                    except Exception as e:
-                        logger.debug(f"Could not access directory {path}: {e}")
-                        continue
-                        
-        except Exception as e:
-            logger.error(f"Error discovering images from directories: {e}")
-            
-        return list(set(discovered_images))  # Remove duplicates
-        
-        # Apply quality prioritization to directory-discovered images
-        return self._prioritize_highest_quality_images(list(set(discovered_images)))
+        """Return no candidates; directory enumeration is disabled."""
+        return []
 
     def _extract_images_from_directory_html(self, html_content: str, base_url: str) -> List[str]:
         """
@@ -1087,7 +1028,7 @@ class AdvancedImageScraper:
             True if successful, False otherwise
         """
         try:
-            if not (await self._url_is_allowed(url))[0]:
+            if not await self._request_is_allowed(url):
                 return False
             # Create filename from URL
             parsed = urlparse(url)
@@ -1232,7 +1173,9 @@ class AdvancedImageScraper:
             logger.error(f"Error validating image {file_path}: {e}")
             return False
     
-    async def scrape_website(self, url: str, max_images: int = MAX_IMAGES_PER_SITE) -> Dict[str, Any]:
+    async def scrape_website(
+        self, url: str, max_images: int = MAX_IMAGES_PER_SITE, *, _reset_budget: bool = True
+    ) -> Dict[str, Any]:
         """
         Comprehensive website scraping with advanced image discovery
         
@@ -1244,6 +1187,8 @@ class AdvancedImageScraper:
             Scraping results
         """
         try:
+            if _reset_budget:
+                self.request_budget.reset()
             safe, reason = await self._set_approved_host_and_robots(url)
             if not safe:
                 return {"success": False, "url": url, "error": reason, "images_downloaded": 0}
@@ -1265,10 +1210,9 @@ class AdvancedImageScraper:
                 all_pages = await self.discover_all_pages(url, page)
                 logger.info(f"Discovered {len(all_pages)} total pages")
                 
-                # Phase 2: Find images from common directories (brute force)
-                logger.info("Phase 2: Scanning common image directories...")
-                directory_images = await self.find_images_from_directories(url)
-                logger.info(f"Found {len(directory_images)} images from directories")
+                # Phase 2: Directory probing is disabled; only linked pages
+                # and sitemap entries are used.
+                directory_images = []
                 
                 # Phase 3: Crawl all discovered pages for images
                 logger.info("Phase 3: Extracting images from all pages...")
@@ -1393,6 +1337,9 @@ class AdvancedImageScraper:
             List of scraping results
         """
         results = []
+        max_images_per_site = max(1, min(int(max_images_per_site), 500))
+        self.request_budget.reset()
+        host_image_counts: dict[str, int] = {}
         
         for url in urls:
             logger.info(f"Scraping {url}...")
@@ -1406,7 +1353,19 @@ class AdvancedImageScraper:
                 "errors": 0
             }
             
-            result = await self.scrape_website(url, max_images_per_site)
+            host = (urlparse(url).hostname or "").casefold().rstrip(".")
+            remaining = max(0, int(max_images_per_site) - host_image_counts.get(host, 0))
+            if remaining == 0:
+                results.append({
+                    "success": False,
+                    "url": url,
+                    "error": "The approved per-host image budget was exhausted.",
+                    "images_downloaded": 0,
+                    "images_found": 0,
+                })
+                continue
+            result = await self.scrape_website(url, remaining, _reset_budget=False)
+            host_image_counts[host] = host_image_counts.get(host, 0) + int(result.get("images_found", 0))
             results.append(result)
             
             # Add delay between sites
@@ -1447,6 +1406,7 @@ class AdvancedImageScraper:
             Enhanced scraping results
         """
         try:
+            self.request_budget.reset()
             safe, reason = await self._set_approved_host_and_robots(url)
             if not safe:
                 return {"success": False, "url": url, "error": reason, "images_downloaded": 0}
@@ -1475,8 +1435,7 @@ class AdvancedImageScraper:
                 all_image_urls = set()
                 
                 # Discover from directories first (often highest quality)
-                directory_images = await self.find_images_from_directories(url)
-                all_image_urls.update(directory_images)
+                # Directory probing is disabled. Use only linked page images.
                 
                 # Crawl pages for images with quality priority
                 pages_to_crawl = list(all_pages)[:min(50, len(all_pages))]
@@ -1556,7 +1515,7 @@ class AdvancedImageScraper:
             robots_url = urljoin(base_url, "/robots.txt")
             async with aiohttp.ClientSession() as session:
                 try:
-                    if not (await self._url_is_allowed(robots_url, check_robots=False))[0]:
+                    if not await self._request_is_allowed(robots_url, check_robots=False):
                         return discovered
                     async with session.get(robots_url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=False) as response:
                         if response.status == 200:
