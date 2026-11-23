@@ -208,3 +208,101 @@ def test_scraper_entry_points_require_authorization_confirmation():
     assert all("authorization" in result["error"].lower() for result in (
         results[0], single, enhanced
     ))
+
+
+def test_image_download_retries_with_backoff_and_disables_redirects(tmp_path, monkeypatch):
+    import old_image_scraper as module
+    from image_provenance import read_image_provenance
+
+    async def allowed(_url, *, check_robots=True):
+        return True, ""
+
+    async def no_wait(_seconds):
+        return None
+
+    class Response:
+        def __init__(self, status):
+            self.status = status
+            self.headers = {"Retry-After": "0"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        def release(self):
+            return None
+
+        async def read(self):
+            return b"\xff\xd8\xff" + b"x" * 2048
+
+    class Session:
+        def __init__(self):
+            self.options = []
+
+        def get(self, _url, **kwargs):
+            self.options.append(kwargs)
+            return Response(503 if len(self.options) == 1 else 200)
+
+    monkeypatch.setattr(module.asyncio, "sleep", no_wait)
+    monkeypatch.setattr(module.duplicate_detector, "is_duplicate", lambda _path: False)
+    monkeypatch.setattr(module.duplicate_detector, "add_file_hash", lambda _path: None)
+    scraper = module.AdvancedImageScraper()
+    monkeypatch.setattr(scraper, "_request_is_allowed", allowed)
+    monkeypatch.setattr(scraper, "_quick_image_validation", lambda _path: True)
+    session = Session()
+
+    succeeded = asyncio.run(scraper.download_image(
+        session,
+        "https://example.test/photos/portrait.jpg",
+        tmp_path,
+        authorization_confirmed=True,
+    ))
+
+    assert succeeded
+    assert len(session.options) == 2
+    assert all(option["allow_redirects"] is False for option in session.options)
+    provenance = read_image_provenance(tmp_path / "portrait.jpg")
+    assert provenance["source_url"] == "https://example.test/photos/portrait.jpg"
+    assert provenance["authorization_confirmed"] is True
+
+
+def test_cancelling_crawler_closes_browser(monkeypatch, tmp_path):
+    from old_image_scraper import AdvancedImageScraper
+
+    class Browser:
+        closed = False
+
+        async def close(self):
+            self.closed = True
+
+    async def run():
+        scraper = AdvancedImageScraper()
+        browser = Browser()
+        started = asyncio.Event()
+
+        async def approved(_url):
+            return True, ""
+
+        async def setup():
+            return browser, object()
+
+        async def discover(*_args, **_kwargs):
+            started.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr("old_image_scraper.SCRAPED_DIR", tmp_path / "scraped")
+        monkeypatch.setattr(scraper, "_set_approved_host_and_robots", approved)
+        monkeypatch.setattr(scraper, "setup_browser", setup)
+        monkeypatch.setattr(scraper, "discover_all_pages", discover)
+        task = asyncio.create_task(scraper.scrape_website(
+            "https://example.test/gallery", authorization_confirmed=True
+        ))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert browser.closed
+
+    asyncio.run(run())

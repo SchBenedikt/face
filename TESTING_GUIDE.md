@@ -28,9 +28,10 @@ search ranking and thresholds, stable navigation, gallery filtering and
 pagination, person-group suggestions, duplicate deletion and reconciliation,
 portable archive integrity/restore, and batch updates.
 
-The suite validates crawler URL policy, robots rules, DNS pinning, request
-budgets, and the OIDC/email-allowlist decision logic. It does not connect to a
-live identity provider or crawl external websites. The privacy deletion tests
-exercise index, source-image, derived-data, and recovery-archive removal against
+The suite validates crawler authorization, URL/robots policy, DNS pinning,
+redirect refusal, per-host budgets, retry/backoff behavior, cancellation cleanup,
+and saved source provenance, plus the OIDC/email-allowlist decision logic. It
+does not connect to a live identity provider or crawl external websites. The
+privacy deletion tests exercise index, source-image, derived-data, and archive removal against
 temporary local stores. Large-scale face accuracy is not currently validated.
 Similarity scores are ranking signals, not identity probabilities.

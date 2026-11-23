@@ -255,7 +255,8 @@ The legacy `image-download.py` crawler is disabled because it does not enforce
 the current network-safety rules. Use **Web import** in the Streamlit app. It
 requires an explicit authorization confirmation, applies a finite image cap,
 honors the entered hostname and its `robots.txt` rules, paces and caps outbound
-requests per host, and blocks private or special-use network addresses. It
+requests per host, retries transient image failures with bounded backoff, and
+blocks private or special-use network addresses. It
 follows links and sitemap entries without guessing common directories. HTTP
 and browser traffic is pinned to the validated public address to block DNS
 rebinding. Each saved image records its source URL, collection time, and your
