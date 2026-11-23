@@ -66,7 +66,7 @@ from settings_store import load_settings, save_settings, settings_path
 from config import (
     PAGE_TITLE, PAGE_ICON, LAYOUT, 
     RESULTS_PER_PAGE, THUMBNAIL_SIZE,
-    IMAGES_DIR, SCRAPED_DIR, FACE_GROUPING_THRESHOLD
+    IMAGES_DIR, SCRAPED_DIR, FACE_GROUPING_THRESHOLD, FACE_EMBEDDING_MODEL
 )
 
 IMAGE_SUFFIXES = tuple(sorted(IMAGE_EXTENSIONS))
@@ -514,7 +514,7 @@ def face_search_page():
                     value=float(query_settings["similarity_threshold"]),
                     step=0.05,
                     key="face_search_similarity_threshold",
-                    help="Cosine-Ähnlichkeit, keine Match-Wahrscheinlichkeit. 0,65 ist ein konservativer Startwert aus einer LFW-Stichprobe; High Precision erhöht ihn auf 0,80."
+                    help="Cosine-Ähnlichkeit, keine Match-Wahrscheinlichkeit. 0,40 ist ein LFW-Startwert für Buffalo_L; High Precision erhöht ihn auf 0,55."
                 )
                 
                 # Similarity filter (the old labels called this "quality")
@@ -3949,7 +3949,7 @@ def settings_page():
     col1, col2 = st.columns(2)
     
     with col1:
-        st.write("**Embedding Model:** DeepFace Facenet512")
+        st.write(f"**Embedding Model:** DeepFace {FACE_EMBEDDING_MODEL}")
         if face_recognition_available:
             st.write(f"**Aktiver dlib-Detektor:** {active_model.upper()}")
         else:
@@ -4912,13 +4912,13 @@ def person_groups_page():
 
     threshold = st.slider(
         "Ähnlichkeitsschwelle",
-        min_value=0.50,
+        min_value=0.30,
         max_value=0.90,
         value=FACE_GROUPING_THRESHOLD,
         step=0.01,
         help=(
-            "Cosine-Ähnlichkeit. Facenet512 verifiziert bei etwa 0,68–0,70; "
-            "höher = strengere, kleinere Gruppen."
+            "Cosine-Ähnlichkeit. 0,40 ist ein LFW-Startwert für Buffalo_L; "
+            "höher = strengere, kleinere Gruppen. Vorschläge müssen geprüft werden."
         ),
         key="person_groups_threshold",
     )

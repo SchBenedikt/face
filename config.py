@@ -42,24 +42,24 @@ MAX_FACE_SIZE = (None, None)  # Keine Begrenzung für Gesichtsgröße - maximale
 # Vector database settings
 VECTOR_DB_PATH = str(DATA_DIR / "face_vectors.db")
 COLLECTION_NAME = "face_embeddings"
-SIMILARITY_THRESHOLD = 0.65  # Fewer false accepts in the labeled LFW sample; calibrate per collection
+SIMILARITY_THRESHOLD = 0.40  # Buffalo_L threshold from the identity-balanced LFW sample
 
-# Identity grouping. Facenet512 uses a cosine verification threshold around
-# 0.70 (DeepFace's 0.30 cosine distance); 0.68 is slightly more permissive and
-# is meant for reviewed group suggestions, not blind assignment.
-FACE_GROUPING_THRESHOLD = float(os.environ.get("FACE_GROUPING_THRESHOLD", "0.68"))
+# Reviewed identity groups use Buffalo_L scores; keep the threshold aligned
+# with the measured LFW operating point and require user confirmation.
+FACE_GROUPING_THRESHOLD = float(os.environ.get("FACE_GROUPING_THRESHOLD", "0.40"))
 FACE_GROUPING_MARGIN = float(os.environ.get("FACE_GROUPING_MARGIN", "0.04"))
+# Legacy auto-assignment API stays conservative; the UI requires review.
 FACE_AUTO_ASSIGN_THRESHOLD = float(os.environ.get("FACE_AUTO_ASSIGN_THRESHOLD", "0.68"))
 FACE_AUTO_ASSIGN_AMBIGUITY_MARGIN = 0.05
 
 # Face Recognition Quality Settings - Enhanced for better accuracy
-FACE_EMBEDDING_MODEL = "Facenet512"  # Primary DeepFace model for highest quality
+FACE_EMBEDDING_MODEL = "Buffalo_L"  # Better LFW retrieval and pair trade-off than Facenet512
 # Retained for compatibility with older integrations. The active pipeline uses
 # FACE_EMBEDDING_MODEL only; it does not combine these candidates.
-FACE_EMBEDDING_MODELS = ["Facenet512", "ArcFace", "VGG-Face", "Facenet"]
+FACE_EMBEDDING_MODELS = ["Buffalo_L", "Facenet512", "ArcFace", "VGG-Face", "Facenet"]
 # Bump this whenever the detector, crop or embedding preprocessing changes.
 # Similarity comparisons across pipeline versions are not meaningful.
-EMBEDDING_PIPELINE_VERSION = "facenet512-retinaface-aligned-rgb-base-exif-v5"
+EMBEDDING_PIPELINE_VERSION = "buffalo-l-retinaface-aligned-rgb-base-exif-v6"
 FACE_DETECTION_BACKENDS = ["retinaface", "mtcnn", "opencv"]  # Accuracy-first fallback order
 # Deprecated compatibility flags; the active pipeline uses DeepFace-aligned
 # crops, base preprocessing, and cosine search regardless of these values.
@@ -101,7 +101,7 @@ LAYOUT = "wide"
 # Performance settings
 BATCH_SIZE = 32
 MAX_WORKERS = 4
-# The active Facenet512 model produces 512 values per face.
+# The active Buffalo_L model produces 512 values per face.
 EMBEDDING_DIMENSION = 512
 
 # UI settings

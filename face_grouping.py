@@ -2,9 +2,9 @@
 
 The app stores one unit-normalised embedding per detected face. Grouping those
 embeddings into identities is a clustering problem, not a simple threshold:
-two photos of one person can score around 0.70 while two different people can
-occasionally score 0.45. This module keeps the clustering deterministic and
-conservative so its output can be reviewed before names are assigned.
+same-person and different-person score ranges depend on the active embedding
+model. This module keeps clustering deterministic and exposes proposals for
+review before names are assigned.
 
 Only numpy is used; no additional clustering dependency is required. The
 assignment step is vectorised over centroid rows, and the optional merge step
@@ -17,9 +17,10 @@ from typing import Any, Dict, List, Sequence, Tuple
 import numpy as np
 
 from similarity import normalise_embedding
+from config import FACE_GROUPING_MARGIN, FACE_GROUPING_THRESHOLD
 
-DEFAULT_GROUPING_THRESHOLD = 0.68
-DEFAULT_GROUPING_MARGIN = 0.04
+DEFAULT_GROUPING_THRESHOLD = FACE_GROUPING_THRESHOLD
+DEFAULT_GROUPING_MARGIN = FACE_GROUPING_MARGIN
 # Two clusters are merged only when their centroids are clearly closer than the
 # grouping threshold. This repairs order effects without joining look-alikes.
 MERGE_MARGIN = 0.05

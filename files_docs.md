@@ -6,7 +6,7 @@ This file describes the current application source. It is not a security or comp
 
 1. `app.py` accepts an uploaded query image and displays detected faces.
 2. `utils.py` loads images and applies EXIF orientation handling.
-3. `face_recognition_engine.py` detects faces, reuses aligned detector crops, and extracts a single Facenet512 embedding per face.
+3. `face_recognition_engine.py` detects faces, reuses aligned detector crops, and extracts one Buffalo_L embedding per face.
 4. `vector_store.py` stores normalized embeddings and metadata in ChromaDB, then ranks indexed faces by cosine similarity.
 5. Search covers the configured local collection. It does not search public websites.
 
@@ -15,7 +15,7 @@ The detector tries the optional `face_recognition` package first when installed.
 ## Main modules
 
 - `app.py` — Streamlit pages for face search, galleries, names, scraping, settings, and batch indexing.
-- `face_recognition_engine.py` — Face detection, crop handling, Facenet512 embedding extraction, and image batch processing.
+- `face_recognition_engine.py` — Face detection, crop handling, Buffalo_L embedding extraction, and image batch processing.
 - `vector_store.py` — ChromaDB collections, pipeline-version checks, similarity search, grouping, and person metadata.
 - `similarity.py` — Normalization and distance conversion helpers.
 - `face_grouping.py` — Clustering helpers for reviewed identity groups.
@@ -29,9 +29,9 @@ The detector tries the optional `face_recognition` package first when installed.
 
 ## Configuration and data
 
-- `config.py` defines `FACE_DATA_DIR`, image directories, ChromaDB location, detector order, Facenet512 model, and the default cosine threshold.
+- `config.py` defines `FACE_DATA_DIR`, image directories, ChromaDB location, detector order, Buffalo_L model, and the default cosine threshold.
 - Without `FACE_DATA_DIR`, runtime files live under `data/`.
-- Face embeddings are 512-dimensional for the active Facenet512 pipeline.
+- Face embeddings are 512-dimensional for the active Buffalo_L pipeline.
 - A detector, crop, or embedding-pipeline change increments `EMBEDDING_PIPELINE_VERSION`. Reprocess each image directory before searching its old vectors again.
 - The app has no built-in consent manager, encryption layer, authentication system, anonymization workflow, or legal-compliance checker. Protect the data directory with operating-system access controls and process only images you are authorized to use.
 

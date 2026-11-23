@@ -4,7 +4,7 @@
 
 ### 🔍 **Face Search**
 - Upload reference image with face detection
-- Facenet512 embedding search with adjustable cosine-similarity threshold (default: 0.60)
+- Buffalo_L embedding search with adjustable cosine-similarity threshold (default: 0.40)
 - Trefferwerte zeigen Cosine-Ähnlichkeit, keine Match-Wahrscheinlichkeit
 - Multi-face detection with selection interface
 - Full-screen view with highlighted face
@@ -30,7 +30,7 @@
 
 ### 🧩 **Personengruppen** - NEU!
 - Gruppiert unbenannte Gesichter anhand ihrer Embeddings (Cosine-Ähnlichkeit)
-- Standard-Schwelle 0,68 Cosine-Ähnlichkeit (Facenet512); im UI einstellbar
+- Standard-Schwelle 0,40 Cosine-Ähnlichkeit (Buffalo_L); im UI einstellbar
 - Zeigt Gruppen mit Vorschaubildern, Gruppengröße und durchschnittlicher Ähnlichkeit
 - Schlägt eine passende bestehende Person vor, ändert aber nichts ohne Bestätigung
 - Weist eine bestätigte Gruppe gesammelt einer neuen oder bestehenden Person zu
@@ -45,7 +45,7 @@
 ### 🏷️ **Person Namen System** - NEU!
 - **Eindeutige Person IDs**: Jede Person wird intern über eine UUID identifiziert
 - **Vor- und Nachname**: Separate Eingabefelder für strukturierte Namensvergabe
-- **Automatische Namensverbreitung**: Gesichter ab etwa 0,68 Cosine-Ähnlichkeit (Facenet512) erhalten den gleichen Namen; bei ähnlichen Treffern zu einer anderen benannten Person wird nichts zugewiesen
+- **Namenszuweisung**: Ein Name wird nur dem ausgewählten Gesicht zugewiesen; ähnliche Gesichter werden in „Personengruppen“ vorgeschlagen und erst nach Review übernommen
 - **Namen-Verwaltung**: Namen können jederzeit entfernt oder geändert werden
 - **Such-Integration**: Namen werden in Face Search und Gallery angezeigt
 
@@ -64,7 +64,7 @@
 2. Klicken Sie bei einem Gesicht auf **"🏷️ Namen zuweisen"**
 3. Geben Sie Vor- und Nachname in separate Felder ein
 4. Klicken Sie **"💾 Namen speichern"**
-5. Ähnliche Gesichter (Standard: ≥0,68 Cosine) erhalten automatisch denselben Namen
+5. Ähnliche Gesichter werden unter „Personengruppen“ geprüft und können dort gemeinsam zugewiesen werden
 
 ### Namen verwalten:
 1. Gehen Sie zur **🏷️ Name Gallery**
@@ -89,11 +89,11 @@ Die Ergebnisse sind Schätzungen und sollten nicht für Identifikation, Diskrimi
 - **Face IDs**: Eindeutige Identifikation jedes erkannten Gesichts
 - **Person IDs**: UUID-basierte Personenidentifikation (unabhängig vom Namen)
 - **Metadaten**: Speicherung von Namen, Bildpfad, Position, Zeitstempel
-- **Embeddings**: 512-dimensionale Facenet512-Vektoren für die aktive Ähnlichkeitssuche
+- **Embeddings**: 512-dimensionale Buffalo_L-Vektoren für die aktive Ähnlichkeitssuche
 
 ### Ähnlichkeitsberechnung
-- Die aktive Suche vergleicht unit-normalisierte Facenet512-Vektoren mit Cosine-Ähnlichkeit
-- Suchstandard: 0,60 Cosine; automatische Namenszuweisung: 0,68, per `FACE_AUTO_ASSIGN_THRESHOLD` übersteuerbar
+- Die aktive Suche vergleicht unit-normalisierte Buffalo_L-Vektoren mit Cosine-Ähnlichkeit
+- Suchstandard: 0,40 Cosine; Identitätsgruppen schlagen Gesichter vor, Namen werden erst nach Review zugewiesen
 - Ähnlichkeitswerte sind Ranking-Scores, keine Wahrscheinlichkeiten oder bestätigten Identitäten
 
 Gesichts- und Attributerkennung kann falsche Ergebnisse liefern. Für Benchmark-Angaben siehe nur reproduzierbare Messungen mit einem geeigneten, beschrifteten Datensatz.

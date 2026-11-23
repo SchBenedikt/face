@@ -132,7 +132,7 @@ After testing, check that:
 
 ## Known Limitations
 
-- Auto-assignment uses `FACE_AUTO_ASSIGN_THRESHOLD` (default 0.68); the Personengruppen slider controls grouping only
+- The UI does not auto-assign names from search matches; reviewed group assignment uses the Buffalo_L grouping threshold. The legacy auto-assignment API retains its conservative `FACE_AUTO_ASSIGN_THRESHOLD` setting.
 - Names are stored as simple text (no special characters validation)
 - Person IDs are not exposed in UI (internal use only)
 - No export function for person name data (future enhancement)

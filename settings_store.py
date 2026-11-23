@@ -29,6 +29,11 @@ CHOICES: Dict[str, Tuple[str, ...]] = {
     "detection_model": ("hog", "cnn"),
 }
 
+_MODEL_DEFAULT_THRESHOLDS = {
+    "facenet512": 0.65,
+    "buffalo_l": 0.40,
+}
+
 
 def settings_path() -> Path:
     """Location of the persisted settings file (inside the data directory)."""
@@ -92,6 +97,20 @@ def load_settings() -> Dict[str, Any]:
             return values
         data = json.loads(path.read_text(encoding="utf-8"))
         clean, _errors = validate_settings(data if isinstance(data, dict) else {})
+        if isinstance(data, dict):
+            previous_model = str(data.get("similarity_model") or "Facenet512").lower()
+            current_model = str(config.FACE_EMBEDDING_MODEL).lower()
+            previous_default = _MODEL_DEFAULT_THRESHOLDS.get(previous_model)
+            saved_threshold = clean.get("similarity_threshold")
+            if (
+                previous_model != current_model
+                and previous_default is not None
+                and saved_threshold == previous_default
+            ):
+                # Migrate an unchanged old default when the app changes encoder.
+                # User-selected thresholds remain intact unless they equal the
+                # previous model's shipped default.
+                clean["similarity_threshold"] = float(config.SIMILARITY_THRESHOLD)
         values.update(clean)
     except Exception:  # noqa: BLE001 - unreadable settings must not crash the app
         pass
@@ -125,6 +144,9 @@ def save_settings(values: Dict[str, Any]) -> Tuple[bool, Dict[str, str]]:
 
     merged = load_settings()
     merged.update(clean)
+    # Keep the model associated with its last selected score threshold without
+    # exposing this internal migration marker as an editable UI setting.
+    merged["similarity_model"] = str(config.FACE_EMBEDDING_MODEL)
 
     path = settings_path()
     try:

@@ -53,7 +53,7 @@ def build_face_id(image_path: Path | str, face_index: int) -> str:
 
 
 class FaceRecognitionEngine:
-    """Detect faces and extract Facenet512 embeddings for local search."""
+    """Detect faces and extract embeddings from the configured model."""
     
     def __init__(self):
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
@@ -378,7 +378,7 @@ class FaceRecognitionEngine:
             
             # Never mix embeddings from different recognition models. The
             # face_recognition fallback produces 128-dimensional dlib vectors,
-            # while the index normally contains Facenet512 (512 dimensions).
+            # while the configured DeepFace model normally contains 512 values.
             # Mixing them makes Chroma writes/searches fail or compares
             # incompatible feature spaces. Report extraction failure instead.
             logger.warning(
@@ -485,8 +485,8 @@ class FaceRecognitionEngine:
                 enforce_detection=False,
                 detector_backend='skip',
                 # Keep DeepFace's model-compatible default preprocessing.
-                # ArcFace normalization is specific to ArcFace embeddings and
-                # distorts input when the configured model is Facenet512.
+                # ArcFace-specific normalization must not be applied to other
+                # model families such as Buffalo_L or Facenet512.
                 normalization='base'
             )
             

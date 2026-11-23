@@ -1,8 +1,8 @@
 """Batch-processing settings shared with the active face pipeline.
 
 This module no longer selects a different detector or embedding model. Batch
-indexing must use the same Facenet512 pipeline as interactive search so vectors
-remain comparable across both paths.
+indexing must use the same configured embedding pipeline as interactive search
+so vectors remain comparable across both paths.
 """
 from config import (
     DATA_DIR,

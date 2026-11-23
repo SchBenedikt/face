@@ -354,8 +354,8 @@ def main() -> int:
         "--model", default=FACE_EMBEDDING_MODEL,
         help=f"DeepFace embedding model to evaluate (default: {FACE_EMBEDDING_MODEL})",
     )
-    parser.add_argument("--thresholds", default="0.3,0.5,0.7,0.8",
-                        help="Comma-separated cosine thresholds (default: 0.3,0.5,0.7,0.8)")
+    parser.add_argument("--thresholds", default="0.3,0.4,0.5,0.6,0.7",
+                        help="Comma-separated cosine thresholds (default: 0.3,0.4,0.5,0.6,0.7)")
     args = parser.parse_args()
     try:
         thresholds = tuple(float(value) for value in args.thresholds.split(","))

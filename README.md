@@ -6,7 +6,7 @@
 ![Streamlit](https://img.shields.io/badge/streamlit-1.49+-red.svg)
 ![Issues](https://img.shields.io/github/issues/SchBenedikt/face.svg)
 
-**Local face search with Facenet512 embeddings, aligned face crops, and a ChromaDB index**
+**Local face search with Buffalo_L embeddings, aligned face crops, and a ChromaDB index**
 
 [📖 Documentation](#-documentation) • [⚡ Quick Start](#-quick-start) • [🎯 Features](#-key-features) • [🧠 Models and Search](#-models-and-search) • [🛠️ Installation](#-installation) • [🤝 Contributing](#-contributing)
 
@@ -66,7 +66,7 @@ update, only already reprocessed images are searched.
 
 The application provides local face search over images you choose to index:
 
-- **🧠 Face Search**: Facenet512 embeddings from DeepFace-detected faces
+- **🧠 Face Search**: Buffalo_L embeddings from DeepFace-detected faces
 - **⚡ Batch Processing**: Index new images or refresh a selected image directory
 - **🎯 Search Filtering**: Adjustable cosine similarity threshold and result filters
 - **🔍 Vector Search**: Similarity search across the locally indexed image collection
@@ -83,10 +83,10 @@ The application provides local face search over images you choose to index:
 - **Real-time Filtering**: Dynamic result filtering by similarity, size, and assigned name
 
 ### 🧠 **AI-Powered Analysis**
-- **Facial Recognition**: Facenet512 embeddings with RetinaFace-first detection and aligned face crops
+- **Facial Recognition**: Buffalo_L embeddings with RetinaFace-first detection and aligned face crops
 - **Attribute Detection**: Age, gender, emotion, ethnicity analysis
 - **Search Scores**: Cosine similarity is shown as a ranking score, not a match probability
-- **Search Threshold**: Defaults to 0.65 cosine similarity; High Precision adds 0.15 and High Recall subtracts 0.10
+- **Search Threshold**: Defaults to 0.40 cosine similarity; High Precision adds 0.15 and High Recall subtracts 0.10
 
 ### ⚡ **High-Performance Processing**
 - **Batch Processing**: Process image directories in configurable batches
@@ -95,7 +95,7 @@ The application provides local face search over images you choose to index:
 - **Local Index**: Keep embeddings and image paths in the configured local data directory
 
 ### 🧩 **Personen & Gruppierung**
-- **Identitätsgruppen**: Unbenannte Gesichter werden per Cosine-Ähnlichkeit gruppiert (Facenet512-Schwelle ~0,68) und erst nach Review zugewiesen
+- **Identitätsgruppen**: Unbenannte Gesichter werden per Cosine-Ähnlichkeit gruppiert (Buffalo_L-Startschwelle 0,40) und erst nach Review zugewiesen
 - **Namensverwaltung**: Eine Namenszuweisung beschriftet nur das ausgewählte Gesicht; ähnliche Gesichter können in der Gruppenansicht geprüft und gemeinsam zugewiesen werden
 - **Kalibrierte Ähnlichkeit**: ChromaDBs quadrierte L2-Distanz wird korrekt in Cosine umgerechnet
 
@@ -111,10 +111,11 @@ The application provides local face search over images you choose to index:
 
 - The optional `face_recognition` package is tried first when installed. DeepFace detection then tries RetinaFace, MTCNN, and OpenCV; Haar cascades are the final fallback.
 - Face crops from DeepFace detectors are aligned and reused for both embedding extraction and the result preview.
-- The active recognition pipeline extracts one 512-dimensional Facenet512 embedding per detected face. Model candidates and ensemble helpers elsewhere in the code are legacy configuration; search does not combine four models.
+- The active recognition pipeline extracts one 512-dimensional Buffalo_L embedding per detected face. Model candidates and ensemble helpers elsewhere in the code are legacy configuration; search does not combine four models.
 - Embeddings are unit-normalized and stored in the local ChromaDB collection. Search converts ChromaDB distances to cosine similarity and ranks indexed images.
-- The default search threshold is 0.65 cosine similarity. In an identity-balanced LFW retrieval sample (300 images, 62 identities, four to five images per identity), 299 images produced embeddings; both exhaustive cosine ranking and the app's ChromaDB/HNSW path ranked the correct identity first for 99.3% of queries and in the top five for all queries. The two top-1 errors were confusingly similar public-figure portraits; one wrong neighbor scored 0.737 versus 0.718 for the best same-person image. This shows that a 0.65 cutoff does not guarantee a correct identity ranking. On this 299-vector index, the ChromaDB build and 299 queries took 2.01 seconds. At threshold 0.50, 92.2% of same-identity pairs passed and 1.15% of different-identity pairs also passed; at 0.60, same-identity recall was 81.6% and different-identity false accepts were 0.14%; at 0.65, recall was 72.4% and false accepts were 0.045%. The 0.65 default trades some recall for fewer false matches. On the same 299 images, ArcFace produced 98.7% Top-1 and 99.0% Top-5 retrieval; at its 0.50 threshold, same-identity pair recall was 59.2% and different-identity false accepts were 0.011%. ArcFace's threshold scale is not interchangeable with FaceNet512's, and this sample does not justify replacing the active model. A Buffalo_L evaluation on the same 300-image retrieval sample also reached 99.3% Top-1 and 100% Top-5, with two errors whose wrong matches scored below 0.30. On 200 same-person and 200 different-person pairs from full 250×250 LFW test images (seed 42), Buffalo_L at 0.30 accepted 187/200 same-person pairs and 0/200 different-person pairs; FaceNet512 at 0.50 accepted 185/200 and 0/200 respectively. This is a promising candidate, but one 400-pair sample is too small to validate false-accept risk or choose the production threshold, so Facenet512 remains active pending representative labeled data and calibrated grouping thresholds. These are pair rates from a diagnostic sample, not match probabilities or general accuracy guarantees. The detector returned multiple boxes for 132/719 full images; visual inspection of six examples found those boxes around distinct visible people, not duplicate boxes. These are not the official cross-validated LFW benchmark. Evaluate on a representative labeled collection.
-- To repeat the retrieval measurements, install optional `scikit-learn` and run `.venv/bin/python evaluate_face_search.py --lfw-people --max-images 300 --seed 42` (FaceNet512) or add `--model ArcFace` / `--model Buffalo_L`. To repeat the pair measurement, run `.venv/bin/python evaluate_lfw_pairs.py --pairs-per-class 200`; optionally select another DeepFace encoder with `--model Buffalo_L` (thresholds must be calibrated separately). LFW downloads are cached outside the repository.
+- On a balanced LFW people sample (299 embedded images, 62 identities, seed 2026), Buffalo_L reached 99.7% Top-1 and 99.7% Top-5 retrieval (one error); FaceNet512 reached 98.3% Top-1 and 99.3% Top-5 (five errors). Across all 576 same-identity and 43,975 different-identity pairs from the same images, Buffalo_L at 0.40 had 87.2% same-person recall and 0/43,975 different-person false accepts. At 0.30 it had 95.5% recall and 10/43,975 false accepts. FaceNet512 at 0.60 had 82.8% recall and 58/43,975 false accepts. This matched sample supports Buffalo_L and the 0.40 starting threshold. Pair observations share images and are correlated; they are not independent probabilities or the official cross-validated LFW protocol, and they do not establish accuracy on other collections.
+- In an earlier LFW center-crop sample (299 images, seed 42), both models reached 99.3% Top-1; Buffalo_L had two errors and FaceNet512 had two errors. A separate 200-pair full-frame sample (seed 42) gave Buffalo_L 187/200 same-person accepts and 0/200 different-person accepts at 0.30, versus FaceNet512 185/200 and 0/200 at 0.50. These samples differ in crop and pair construction; use them as supporting diagnostics, not match-probability guarantees.
+- To repeat the matched retrieval comparison, install optional `scikit-learn` and run `.venv/bin/python evaluate_face_search.py --lfw-people --max-images 300 --seed 2026` (Buffalo_L default) or add `--model Facenet512`. Pair evaluation: `.venv/bin/python evaluate_lfw_pairs.py --pairs-per-class 200`; specify `--model` and `--thresholds` for other encoders. LFW downloads are cached outside the repository.
 - To measure vector-store performance separately from face detection and recognition, run `.venv/bin/python benchmark_vector_search.py`. With 512-dimensional synthetic vectors in a temporary local Chroma index, this environment measured 1,000-vector search at 8.6 ms p50 / 13.1 ms p95 and 10,000-vector search at 25.3 / 33.7 ms; their index builds took 0.43 and 5.25 seconds. A matched 10,000-vector run (same seed and 500-row batches) improved build time from 20.41 to 7.86 seconds after batching stale-row cleanup. A 100,000-vector index built in 81.8 seconds and searched at 166.4 / 189.3 ms p50 / p95 (50 results, 100 queries). These are one-run local measurements; random vectors do not establish identity accuracy and timings depend on hardware and storage.
 - Search covers only images indexed in this application's database; it does not search the public web.
 
@@ -122,9 +123,11 @@ The application provides local face search over images you choose to index:
 
 Changes to face detection, alignment, or embedding preprocessing create a new pipeline version. The app excludes older vectors until their source images are reprocessed. Use **Batch Face Processing → Update All Images** for each image directory. Back up the database before a large reindex.
 
+Changing from FaceNet512 to Buffalo_L invalidates the old embeddings. Reprocess each image directory before searching. A saved, unchanged FaceNet512 default threshold of 0.65 migrates to Buffalo_L's 0.40 starting threshold; other saved thresholds are retained.
+
 When reprocessing a face, existing person labels follow a one-to-one match between old and new boxes in the same image, using at least 0.35 IoU. This preserves names when detector ordering changes; unmatched or ambiguous labels are not transferred, and a reused face ID with a nonmatching box is logged as a warning.
 
-This repository has no measured LFW accuracy, web-scale retrieval benchmark, or PimEyes comparison. Search quality depends on the source images, face size, pose, lighting, and indexed collection.
+These LFW diagnostics do not establish web-scale retrieval performance or a comparison with PimEyes. Search quality depends on the source images, face size, pose, lighting, and indexed collection.
 
 ## 🛠️ Installation
 
@@ -188,7 +191,7 @@ To remove detected image-file duplicates after review, add `--clean`. This clean
 
 ### Settings and data location
 
-`config.py` defines the active detector order, Facenet512 model, default search threshold (0.65), and ChromaDB path. `FACE_DATA_DIR` relocates the images and database together. The CLI batch processor handles `IMAGES_DIR`; use the app's batch page to update additional directories.
+`config.py` defines the active detector order, Buffalo_L model, default search threshold (0.40), and ChromaDB path. `FACE_DATA_DIR` relocates the images and database together. The CLI batch processor handles `IMAGES_DIR`; use the app's batch page to update additional directories.
 
 ## 🎯 Use Cases
 
@@ -225,7 +228,7 @@ To remove detected image-file duplicates after review, add `--clean`. This clean
 
 ```
 Streamlit UI → image loader and face detector → aligned face crop
-            → Facenet512 embedding → ChromaDB cosine-ranked search
+            → Buffalo_L embedding → ChromaDB cosine-ranked search
 ```
 
 Image crawling is a separate optional workflow. Search runs against the local ChromaDB collection and indexed image paths.
@@ -233,7 +236,7 @@ Image crawling is a separate optional workflow. Search runs against the local Ch
 ### Core Components
 
 - **`app.py`** - Main Streamlit web application with modern UI
-- **`face_recognition_engine.py`** - Face detection, aligned crops, and Facenet512 embeddings
+- **`face_recognition_engine.py`** - Face detection, aligned crops, and Buffalo_L embeddings
 - **`vector_store.py`** - ChromaDB database management and similarity search
 - **`image_quality_manager.py`** - Image quality checks used by cleanup workflows
 - **`fast_process.py`** - High-performance batch processing engine
@@ -278,7 +281,7 @@ We welcome contributions! Here's how to get started:
 
 ## 📏 Performance and Evaluation
 
-This repository does not publish a benchmark against LFW, PimEyes, or a 75,000-face collection. The app searches images indexed in the local database. Runtime and retrieval quality depend on the hardware and collection; treat similarity scores as ranking signals and review matches manually.
+This repository has LFW diagnostic measurements but no benchmark against PimEyes or a 75,000-face collection. The app searches images indexed in the local database. Runtime and retrieval quality depend on the hardware and collection; treat similarity scores as ranking signals and review matches manually.
 
 To evaluate a local labeled collection, put images in one subdirectory per identity and run:
 
