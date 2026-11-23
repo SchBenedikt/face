@@ -290,8 +290,13 @@ def duplicate_pair(seeded_data):
         store.invalidate_stats_cache()
 
 
-def test_duplicate_manager_deletes_copy_and_its_database_rows(duplicate_pair):
+def test_duplicate_manager_deletes_copy_and_reconciles_database_rows(duplicate_pair, monkeypatch):
     source, copy, store = duplicate_pair
+    from vector_store import FaceVectorStore
+
+    # Simulate a failed direct deletion; the reconciliation pass must remove
+    # stale vectors for files that were actually deleted from disk.
+    monkeypatch.setattr(FaceVectorStore, "delete_faces_by_image_path", lambda self, image_path: 0)
 
     at = _app()
     at.run()
@@ -311,7 +316,7 @@ def test_duplicate_manager_deletes_copy_and_its_database_rows(duplicate_pair):
     assert source.exists(), "the kept file must survive"
     assert not copy.exists(), "the other file must be deleted from disk"
     remaining = store.collection.get(where={"image_path": str(copy)}, include=[])["ids"]
-    assert remaining == [], "database rows of the deleted file must be removed"
+    assert remaining == [], "reconciliation must remove database rows for deleted files"
     assert any("deleted" in str(message.value) for message in at.success)
 
 

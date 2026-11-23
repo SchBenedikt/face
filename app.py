@@ -3589,6 +3589,10 @@ def _render_duplicate_set(directory: Path, hash_value: str, file_paths: List[Pat
             for deleted_path in result["deleted"]:
                 if store is not None:
                     removed_faces += store.delete_faces_by_image_path(str(deleted_path))
+            if store is not None and result["deleted"]:
+                # Reconcile vectors against the files that still exist. This
+                # also cleans up records when a direct per-path delete failed.
+                removed_faces += store.prune_missing_faces(root_directory=directory)
             duplicate_detector.cleanup_missing_files()
             invalidate_persons_cache()
             invalidate_gallery_cache()

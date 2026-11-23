@@ -211,11 +211,11 @@ def delete_duplicate_files(file_paths, keep_path):
     result = {"deleted": [], "missing": [], "errors": []}
 
     if keep not in paths:
-        result["errors"].append(f"{keep.name} gehört nicht zum Duplikat-Set")
+        result["errors"].append(f"{keep.name} is not part of this duplicate set")
         return result
     if len(paths) < 2:
         result["errors"].append(
-            "Ein Duplikat-Set braucht mindestens zwei Dateien - es wurde nichts gelöscht"
+            "A duplicate set must contain at least two files; nothing was deleted"
         )
         return result
 
