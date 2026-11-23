@@ -72,7 +72,7 @@ The application provides local face search over images you choose to index:
 - **🔍 Vector Search**: Similarity search across the locally indexed image collection
 - **📊 Face Analysis**: Optional age, gender, emotion, and ethnicity estimates
 - **🌐 Image Crawler**: Optional interactive image collection from websites
-- **👥 Person Management**: Intelligent name assignment, reviewed identity groups and automatic propagation
+- **👥 Person Management**: Assign names to selected faces and review identity-group suggestions
 
 ## 🎯 Key Features
 
@@ -96,7 +96,7 @@ The application provides local face search over images you choose to index:
 
 ### 🧩 **Personen & Gruppierung**
 - **Identitätsgruppen**: Unbenannte Gesichter werden per Cosine-Ähnlichkeit gruppiert (Facenet512-Schwelle ~0,68) und erst nach Review zugewiesen
-- **Namensverwaltung**: Manuelle Zuordnung, automatische Verbreitung mit Ambiguitätsschutz
+- **Namensverwaltung**: Eine Namenszuweisung beschriftet nur das ausgewählte Gesicht; ähnliche Gesichter können in der Gruppenansicht geprüft und gemeinsam zugewiesen werden
 - **Kalibrierte Ähnlichkeit**: ChromaDBs quadrierte L2-Distanz wird korrekt in Cosine umgerechnet
 
 ### 🌐 **Data Collection & Management**

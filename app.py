@@ -1391,6 +1391,10 @@ def show_name_assignment_modal():
     
     # Choice between new person or existing person
     st.subheader("🎯 Person auswählen")
+    st.caption(
+        "Der Name wird nur dem ausgewählten Gesicht zugewiesen. Ähnliche Gesichter "
+        "kannst du anschließend unter „Personengruppen“ prüfen."
+    )
     
     assignment_type = st.radio(
         "Wie möchten Sie den Namen zuweisen?",
@@ -1457,15 +1461,12 @@ def show_name_assignment_modal():
                     'notes': selected_person.get('notes', '')
                 }
                 
-                result = st.session_state.vector_store.assign_person_name_with_auto_matching(
+                result = st.session_state.vector_store.assign_person_name(
                     face_id, person_data, selected_person['person_id']
                 )
                 
-                if result['success']:
+                if result:
                     st.success(f"✅ Person erfolgreich zugewiesen!")
-                    
-                    if result['total_assigned'] > 1:
-                        st.success(f"🔄 {result['total_assigned']-1} ähnliche Gesichter (≥{result.get('similarity_threshold', 0.68)*100:.0f}%) automatisch zugewiesen!")
                     
                     # Invalidate cached names and gallery metadata
                     invalidate_persons_cache()
@@ -1548,16 +1549,10 @@ def show_name_assignment_modal():
                     'notes': (notes or '').strip()
                 }
                 
-                # Assign person with auto-matching
-                result = st.session_state.vector_store.assign_person_name_with_auto_matching(
-                    face_id, person_data
-                )
+                result = st.session_state.vector_store.assign_person_name(face_id, person_data)
                 
-                if result['success']:
+                if result:
                     st.success(f"✅ Person erfolgreich erstellt und zugewiesen!")
-                    
-                    if result['total_assigned'] > 1:
-                        st.success(f"🔄 {result['total_assigned']-1} ähnliche Gesichter (≥{result.get('similarity_threshold', 0.68)*100:.0f}%) automatisch zugewiesen!")
                     
                     # Invalidate cached names and gallery metadata
                     invalidate_persons_cache()
@@ -1887,6 +1882,10 @@ def show_name_assignment_tab(face_id, image_path, face_location):
     
     # Choice between new person or existing person
     st.subheader("🎯 Person auswählen")
+    st.caption(
+        "Der Name wird nur dem ausgewählten Gesicht zugewiesen. Ähnliche Gesichter "
+        "kannst du anschließend unter „Personengruppen“ prüfen."
+    )
     
     assignment_type = st.radio(
         "Wie möchten Sie den Namen zuweisen?",
@@ -1928,16 +1927,13 @@ def show_name_assignment_tab(face_id, image_path, face_location):
                     'person_id': selected_person['person_id']
                 }
                 
-                result = st.session_state.vector_store.assign_person_name_with_auto_matching(
+                result = st.session_state.vector_store.assign_person_name(
                     face_id, person_data, selected_person['person_id']
                 )
                 
-                if result['success']:
+                if result:
                     st.success(f"✅ Name '{selected_person['full_name']}' erfolgreich zugewiesen!")
                     
-                    if result['total_assigned'] > 1:
-                        st.success(f"🔄 {result['total_assigned']-1} ähnliche Gesichter automatisch zugewiesen!")
-
                     invalidate_persons_cache()
                     invalidate_gallery_cache()
                     st.balloons()
@@ -1981,16 +1977,13 @@ def show_name_assignment_tab(face_id, image_path, face_location):
                 
                 person_id = str(uuid.uuid4())
                 
-                result = st.session_state.vector_store.assign_person_name_with_auto_matching(
+                result = st.session_state.vector_store.assign_person_name(
                     face_id, person_data, person_id
                 )
                 
-                if result['success']:
+                if result:
                     st.success(f"✅ Person '{full_name}' erfolgreich erstellt und zugewiesen!")
                     
-                    if result['total_assigned'] > 1:
-                        st.success(f"🔄 {result['total_assigned']-1} ähnliche Gesichter automatisch zugewiesen!")
-
                     invalidate_persons_cache()
                     invalidate_gallery_cache()
                     st.balloons()
