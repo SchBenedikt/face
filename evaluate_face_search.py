@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 
 from face_recognition_engine import FaceRecognitionEngine
+from config import FACE_EMBEDDING_MODEL
 from utils import load_and_preprocess_image
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
@@ -72,9 +73,11 @@ def evaluate(
     seed: int = 42,
     thresholds: tuple[float, ...] = (0.3, 0.5, 0.7, 0.8),
     max_error_examples: int = 50,
+    model_name: str = FACE_EMBEDDING_MODEL,
 ) -> dict[str, Any]:
     identities = _select_images(_labeled_images(root), max_images, seed)
     engine = FaceRecognitionEngine()
+    engine.primary_model = model_name
     labels: list[str] = []
     vector_paths: list[str] = []
     vectors: list[np.ndarray] = []
@@ -225,6 +228,7 @@ def evaluate(
 
     return {
         **counts,
+        "model": engine.primary_model,
         "queries": queries,
         "top1": top1_hits / queries if queries else None,
         "top5": top5_hits / queries if queries else None,
@@ -250,6 +254,7 @@ def evaluate_lfw_people(
     data_home: Path | None = None,
     min_faces_per_person: int = 20,
     thresholds: tuple[float, ...] = (0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7),
+    model_name: str = FACE_EMBEDDING_MODEL,
 ) -> dict[str, Any]:
     """Run closed-set retrieval on a reproducible LFW people subset."""
     try:
@@ -309,7 +314,10 @@ def evaluate_lfw_people(
                 )
                 sampled_count += 1
 
-        result = evaluate(root, max_images=0, seed=seed, thresholds=thresholds)
+        result = evaluate(
+            root, max_images=0, seed=seed, thresholds=thresholds,
+            model_name=model_name,
+        )
 
     for field in ("top1_errors", "chroma_top1_errors"):
         for error in result.get(field, []):
@@ -342,6 +350,10 @@ def main() -> int:
     parser.add_argument("--max-images", type=int, default=2000,
                         help="Balanced image cap for retrieval and pair metrics (0 means no cap; default: 2000)")
     parser.add_argument("--seed", type=int, default=42, help="Subset selection seed")
+    parser.add_argument(
+        "--model", default=FACE_EMBEDDING_MODEL,
+        help=f"DeepFace embedding model to evaluate (default: {FACE_EMBEDDING_MODEL})",
+    )
     parser.add_argument("--thresholds", default="0.3,0.5,0.7,0.8",
                         help="Comma-separated cosine thresholds (default: 0.3,0.5,0.7,0.8)")
     args = parser.parse_args()
@@ -356,12 +368,15 @@ def main() -> int:
                 raise ValueError("--min-faces-per-person must be at least 1")
             result = evaluate_lfw_people(
                 args.max_images, args.seed, args.data_home,
-                args.min_faces_per_person, thresholds,
+                args.min_faces_per_person, thresholds, args.model,
             )
         else:
             if args.dataset is None:
                 raise ValueError("Provide a labeled dataset directory or use --lfw-people")
-            result = evaluate(args.dataset, args.max_images, args.seed, thresholds)
+            result = evaluate(
+                args.dataset, args.max_images, args.seed, thresholds,
+                model_name=args.model,
+            )
     except (RuntimeError, ValueError, OSError) as exc:
         parser.error(str(exc))
     print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False))
