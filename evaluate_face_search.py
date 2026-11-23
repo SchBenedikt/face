@@ -18,10 +18,67 @@ from typing import Any
 import numpy as np
 
 from face_recognition_engine import FaceRecognitionEngine
-from config import FACE_EMBEDDING_MODEL
+from config import FACE_EMBEDDING_MODEL, FACE_GROUPING_MARGIN, FACE_GROUPING_THRESHOLD
 from utils import load_and_preprocess_image
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+
+
+def _evaluate_grouping(
+    labels: list[str],
+    vectors: list[np.ndarray],
+    face_ids: list[str],
+    thresholds: tuple[float, ...],
+    margin: float,
+) -> list[dict[str, Any]]:
+    """Measure pairwise precision and recall for the app's identity grouper."""
+    from math import comb
+
+    from face_grouping import group_embeddings
+
+    identity_counts: dict[str, int] = defaultdict(int)
+    for identity in labels:
+        identity_counts[identity] += 1
+    total_pairs = comb(len(labels), 2)
+    same_identity_pairs = sum(comb(count, 2) for count in identity_counts.values())
+    different_identity_pairs = total_pairs - same_identity_pairs
+    label_by_face_id = dict(zip(face_ids, labels))
+
+    metrics = []
+    for threshold in thresholds:
+        groups = group_embeddings(face_ids, vectors, threshold=threshold, margin=margin)
+        predicted_same_pairs = 0
+        true_positive_pairs = 0
+        for group in groups:
+            members = group["face_ids"]
+            predicted_same_pairs += comb(len(members), 2)
+            grouped_identity_counts: dict[str, int] = defaultdict(int)
+            for face_id in members:
+                grouped_identity_counts[label_by_face_id[face_id]] += 1
+            true_positive_pairs += sum(
+                comb(count, 2) for count in grouped_identity_counts.values()
+            )
+
+        false_accept_pairs = predicted_same_pairs - true_positive_pairs
+        metrics.append({
+            "cosine_threshold": threshold,
+            "margin": margin,
+            "clusters": len(groups),
+            "predicted_same_identity_pairs": predicted_same_pairs,
+            "correct_same_identity_pairs": true_positive_pairs,
+            "different_identity_false_accept_pairs": false_accept_pairs,
+            "pairwise_precision": (
+                true_positive_pairs / predicted_same_pairs if predicted_same_pairs else None
+            ),
+            "same_identity_pair_recall": (
+                true_positive_pairs / same_identity_pairs if same_identity_pairs else None
+            ),
+            "different_identity_false_accept_rate": (
+                false_accept_pairs / different_identity_pairs
+                if different_identity_pairs else None
+            ),
+        })
+    return metrics
 
 
 def _labeled_images(root: Path) -> dict[str, list[Path]]:
@@ -74,6 +131,8 @@ def evaluate(
     thresholds: tuple[float, ...] = (0.3, 0.5, 0.7, 0.8),
     max_error_examples: int = 50,
     model_name: str = FACE_EMBEDDING_MODEL,
+    grouping_thresholds: tuple[float, ...] = (0.3, 0.35, 0.4, 0.45, 0.5),
+    grouping_margin: float = FACE_GROUPING_MARGIN,
 ) -> dict[str, Any]:
     identities = _select_images(_labeled_images(root), max_images, seed)
     engine = FaceRecognitionEngine()
@@ -133,6 +192,13 @@ def evaluate(
     pair_scores = np.clip(scores[upper_rows, upper_cols], 0.0, 1.0)
     same_scores = pair_scores[same]
     different_scores = pair_scores[~same]
+    grouping_metrics = _evaluate_grouping(
+        labels,
+        vectors,
+        vector_paths,
+        grouping_thresholds,
+        grouping_margin,
+    )
 
     queries = 0
     top1_hits = 0
@@ -245,6 +311,7 @@ def evaluate(
         "same_identity_median_cosine": float(np.median(same_scores)) if len(same_scores) else None,
         "different_identity_median_cosine": float(np.median(different_scores)) if len(different_scores) else None,
         "pair_metrics": pair_metrics,
+        "grouping_metrics": grouping_metrics,
     }
 
 
@@ -255,6 +322,8 @@ def evaluate_lfw_people(
     min_faces_per_person: int = 20,
     thresholds: tuple[float, ...] = (0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7),
     model_name: str = FACE_EMBEDDING_MODEL,
+    grouping_thresholds: tuple[float, ...] = (0.3, 0.35, 0.4, 0.45, 0.5),
+    grouping_margin: float = FACE_GROUPING_MARGIN,
 ) -> dict[str, Any]:
     """Run closed-set retrieval on a reproducible LFW people subset."""
     try:
@@ -316,7 +385,8 @@ def evaluate_lfw_people(
 
         result = evaluate(
             root, max_images=0, seed=seed, thresholds=thresholds,
-            model_name=model_name,
+            model_name=model_name, grouping_thresholds=grouping_thresholds,
+            grouping_margin=grouping_margin,
         )
 
     for field in ("top1_errors", "chroma_top1_errors"):
@@ -356,11 +426,26 @@ def main() -> int:
     )
     parser.add_argument("--thresholds", default="0.3,0.4,0.5,0.6,0.7",
                         help="Comma-separated cosine thresholds (default: 0.3,0.4,0.5,0.6,0.7)")
+    parser.add_argument(
+        "--grouping-thresholds", default="0.3,0.35,0.4,0.45,0.5",
+        help="Comma-separated thresholds for the app's identity-grouping evaluation",
+    )
+    parser.add_argument(
+        "--grouping-margin", type=float, default=FACE_GROUPING_MARGIN,
+        help=f"Ambiguity margin for grouping (default: {FACE_GROUPING_MARGIN})",
+    )
     args = parser.parse_args()
     try:
         thresholds = tuple(float(value) for value in args.thresholds.split(","))
+        grouping_thresholds = tuple(
+            float(value) for value in args.grouping_thresholds.split(",")
+        )
         if any(not 0.0 <= value <= 1.0 for value in thresholds):
             raise ValueError("thresholds must be between 0 and 1")
+        if any(not 0.0 <= value <= 1.0 for value in grouping_thresholds):
+            raise ValueError("grouping thresholds must be between 0 and 1")
+        if not 0.0 <= args.grouping_margin <= 1.0:
+            raise ValueError("grouping margin must be between 0 and 1")
         if args.lfw_people:
             if args.dataset is not None:
                 raise ValueError("Do not pass a dataset directory together with --lfw-people")
@@ -369,13 +454,15 @@ def main() -> int:
             result = evaluate_lfw_people(
                 args.max_images, args.seed, args.data_home,
                 args.min_faces_per_person, thresholds, args.model,
+                grouping_thresholds, args.grouping_margin,
             )
         else:
             if args.dataset is None:
                 raise ValueError("Provide a labeled dataset directory or use --lfw-people")
             result = evaluate(
                 args.dataset, args.max_images, args.seed, thresholds,
-                model_name=args.model,
+                model_name=args.model, grouping_thresholds=grouping_thresholds,
+                grouping_margin=args.grouping_margin,
             )
     except (RuntimeError, ValueError, OSError) as exc:
         parser.error(str(exc))

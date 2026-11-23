@@ -30,7 +30,7 @@
 
 ### 🧩 **Personengruppen** - NEU!
 - Gruppiert unbenannte Gesichter anhand ihrer Embeddings (Cosine-Ähnlichkeit)
-- Standard-Schwelle 0,40 Cosine-Ähnlichkeit (Buffalo_L); im UI einstellbar
+- Gruppen-Standard 0,35 Cosine-Ähnlichkeit (Buffalo_L); im UI einstellbar
 - Zeigt Gruppen mit Vorschaubildern, Gruppengröße und durchschnittlicher Ähnlichkeit
 - Schlägt eine passende bestehende Person vor, ändert aber nichts ohne Bestätigung
 - Weist eine bestätigte Gruppe gesammelt einer neuen oder bestehenden Person zu
@@ -93,7 +93,7 @@ Die Ergebnisse sind Schätzungen und sollten nicht für Identifikation, Diskrimi
 
 ### Ähnlichkeitsberechnung
 - Die aktive Suche vergleicht unit-normalisierte Buffalo_L-Vektoren mit Cosine-Ähnlichkeit
-- Suchstandard: 0,40 Cosine; Identitätsgruppen schlagen Gesichter vor, Namen werden erst nach Review zugewiesen
+- Suchstandard: 0,40 Cosine; Gruppen-Startwert: 0,35 mit Margin 0,04. Identitätsgruppen schlagen Gesichter vor, Namen werden erst nach Review zugewiesen
 - Ähnlichkeitswerte sind Ranking-Scores, keine Wahrscheinlichkeiten oder bestätigten Identitäten
 
 Gesichts- und Attributerkennung kann falsche Ergebnisse liefern. Für Benchmark-Angaben siehe nur reproduzierbare Messungen mit einem geeigneten, beschrifteten Datensatz.

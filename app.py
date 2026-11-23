@@ -4917,7 +4917,7 @@ def person_groups_page():
         value=FACE_GROUPING_THRESHOLD,
         step=0.01,
         help=(
-            "Cosine-Ähnlichkeit. 0,40 ist ein LFW-Startwert für Buffalo_L; "
+            "Cosine-Ähnlichkeit. 0,35 ist ein LFW-Startwert für Buffalo_L-Gruppen; "
             "höher = strengere, kleinere Gruppen. Vorschläge müssen geprüft werden."
         ),
         key="person_groups_threshold",

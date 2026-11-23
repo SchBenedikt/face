@@ -46,7 +46,7 @@ SIMILARITY_THRESHOLD = 0.40  # Buffalo_L threshold from the identity-balanced LF
 
 # Reviewed identity groups use Buffalo_L scores; keep the threshold aligned
 # with the measured LFW operating point and require user confirmation.
-FACE_GROUPING_THRESHOLD = float(os.environ.get("FACE_GROUPING_THRESHOLD", "0.40"))
+FACE_GROUPING_THRESHOLD = float(os.environ.get("FACE_GROUPING_THRESHOLD", "0.35"))
 FACE_GROUPING_MARGIN = float(os.environ.get("FACE_GROUPING_MARGIN", "0.04"))
 # Legacy auto-assignment API stays conservative; the UI requires review.
 FACE_AUTO_ASSIGN_THRESHOLD = float(os.environ.get("FACE_AUTO_ASSIGN_THRESHOLD", "0.68"))
