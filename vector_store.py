@@ -111,11 +111,75 @@ def _preserve_face_metadata(
         for field in _PERSON_METADATA_FIELDS:
             preserved.pop(field, None)
         logger.warning(
-            "Dropped a saved person label while refreshing a face whose box "
-            "overlap was too low (IoU %.3f)",
+            "Discarded stale person metadata for a reused face ID because its "
+            "new box did not match the old box (IoU %.3f)",
             overlap,
         )
     return preserved
+
+
+def _inherit_matched_person_metadata(
+    incoming_metadatas: List[Dict[str, Any]],
+    existing_metadatas: List[Dict[str, Any]],
+    minimum_iou: float = 0.35,
+) -> List[Dict[str, Any]]:
+    """Carry names across detector reordering using one-to-one box matches."""
+    updated = [dict(metadata or {}) for metadata in incoming_metadatas]
+    incoming_by_image: Dict[str, List[int]] = {}
+    existing_by_image: Dict[str, List[int]] = {}
+    for index, metadata in enumerate(updated):
+        image_path = str(metadata.get("image_path") or "")
+        if image_path:
+            incoming_by_image.setdefault(image_path, []).append(index)
+    for index, metadata in enumerate(existing_metadatas):
+        image_path = str(metadata.get("image_path") or "")
+        if image_path and any(metadata.get(field) for field in _PERSON_METADATA_FIELDS):
+            existing_by_image.setdefault(image_path, []).append(index)
+
+    for image_path, incoming_indices in incoming_by_image.items():
+        existing_indices = existing_by_image.get(image_path, [])
+        pairs = []
+        for old_index in existing_indices:
+            old_box = _face_box(existing_metadatas[old_index].get("location"))
+            for new_index in incoming_indices:
+                if any(updated[new_index].get(field) for field in _PERSON_METADATA_FIELDS):
+                    continue
+                new_box = _face_box(updated[new_index].get("location"))
+                overlap = _face_box_iou(old_box, new_box)
+                if overlap >= minimum_iou:
+                    pairs.append((overlap, old_index, new_index))
+
+        old_scores: Dict[int, List[float]] = {}
+        new_scores: Dict[int, List[float]] = {}
+        for overlap, old_index, new_index in pairs:
+            old_scores.setdefault(old_index, []).append(overlap)
+            new_scores.setdefault(new_index, []).append(overlap)
+
+        def is_ambiguous(scores: List[float]) -> bool:
+            ranked = sorted(scores, reverse=True)
+            return len(ranked) > 1 and ranked[0] - ranked[1] < 0.10
+
+        ambiguous_old = {
+            index for index, scores in old_scores.items() if is_ambiguous(scores)
+        }
+        ambiguous_new = {
+            index for index, scores in new_scores.items() if is_ambiguous(scores)
+        }
+        used_old = set()
+        used_new = set()
+        for _overlap, old_index, new_index in sorted(pairs, reverse=True):
+            if old_index in ambiguous_old or new_index in ambiguous_new:
+                continue
+            if old_index in used_old or new_index in used_new:
+                continue
+            old_metadata = existing_metadatas[old_index]
+            for field in _PERSON_METADATA_FIELDS:
+                if old_metadata.get(field) and not updated[new_index].get(field):
+                    updated[new_index][field] = old_metadata[field]
+            used_old.add(old_index)
+            used_new.add(new_index)
+
+    return updated
 
 class FaceVectorStore:
     """
@@ -258,6 +322,20 @@ class FaceVectorStore:
         except Exception as exc:  # noqa: BLE001 - a metadata read must not block indexing
             logger.warning("Could not preserve metadata for refreshed faces: %s", exc)
             return {}
+
+    def _metadata_for_images(self, image_paths: List[str]) -> List[Dict[str, Any]]:
+        """Read old face metadata for images being refreshed, for box matching."""
+        paths = sorted({str(path) for path in image_paths if path})
+        if not paths:
+            return []
+        try:
+            rows = self.collection.get(
+                where={"image_path": {"$in": paths}}, include=["metadatas"]
+            )
+            return [dict(metadata or {}) for metadata in rows.get("metadatas") or []]
+        except Exception as exc:  # noqa: BLE001 - old labels are optional
+            logger.warning("Could not load old face boxes for label matching: %s", exc)
+            return []
     
     def add_face_embedding(
         self, 
@@ -341,9 +419,18 @@ class FaceVectorStore:
                 raise ValueError("All embeddings in a batch must have the same dimension")
             embedding_lists = [vector.tolist() for vector in vectors]
             
+            image_paths = {
+                str(metadata.get("image_path"))
+                for metadata in metadatas
+                if metadata.get("image_path")
+            }
             existing_metadata = self._metadata_for_existing_ids(face_ids)
+            existing_image_metadata = self._metadata_for_images(list(image_paths))
+            refreshed_metadatas = _inherit_matched_person_metadata(
+                metadatas, existing_image_metadata
+            )
             full_metadatas = []
-            for face_id, metadata, vector in zip(face_ids, metadatas, vectors):
+            for face_id, metadata, vector in zip(face_ids, refreshed_metadatas, vectors):
                 preserved_metadata = _preserve_face_metadata(
                     existing_metadata.get(str(face_id), {}), metadata
                 )
@@ -365,11 +452,6 @@ class FaceVectorStore:
             )
             self._mark_pipeline_write()
 
-            image_paths = {
-                str(metadata.get("image_path"))
-                for metadata in metadatas
-                if metadata.get("image_path")
-            }
             self._delete_stale_faces_for_images(image_paths, set(face_ids))
             self.invalidate_stats_cache()
             
