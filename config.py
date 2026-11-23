@@ -59,7 +59,7 @@ FACE_EMBEDDING_MODEL = "Buffalo_L"  # Better LFW retrieval and pair trade-off th
 FACE_EMBEDDING_MODELS = ["Buffalo_L", "Facenet512", "ArcFace", "VGG-Face", "Facenet"]
 # Bump this whenever the detector, crop or embedding preprocessing changes.
 # Similarity comparisons across pipeline versions are not meaningful.
-EMBEDDING_PIPELINE_VERSION = "buffalo-l-retinaface-aligned-rgb-base-exif-v6"
+EMBEDDING_PIPELINE_VERSION = "buffalo-l-retinaface-aligned-rgb-base-exif-v7"
 FACE_DETECTION_BACKENDS = ["retinaface", "mtcnn", "opencv"]  # Accuracy-first fallback order
 # Deprecated compatibility flags; the active pipeline uses DeepFace-aligned
 # crops, base preprocessing, and cosine search regardless of these values.

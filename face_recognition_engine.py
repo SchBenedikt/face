@@ -93,7 +93,37 @@ class FaceRecognitionEngine:
             List of face bounding boxes (top, right, bottom, left)
         """
         try:
-            # Method 1: Primary - face_recognition library (good balance of speed and accuracy)
+            # DeepFace's landmark detector is the canonical path for this
+            # pipeline: its aligned RGB crop is part of the embedding input.
+            # Prefer it consistently even when the optional dlib package is
+            # installed; otherwise identical app versions silently produce
+            # different embeddings depending on the machine's dependencies.
+            deepface_faces = self._detect_faces_with_deepface(image)
+            if deepface_faces:
+                candidate_locations = [location for location, _ in deepface_faces]
+                valid_locations = self._filter_valid_faces(
+                    candidate_locations, image.shape[:2], allow_full_frame=True
+                )
+                if valid_locations:
+                    valid_set = set(valid_locations)
+                    crops = {}
+                    for location, crop in deepface_faces:
+                        if crop is None:
+                            continue
+                        normalized = self._filter_valid_faces(
+                            [location], image.shape[:2], allow_full_frame=True
+                        )
+                        if normalized and normalized[0] in valid_set:
+                            crops[normalized[0]] = crop
+                    if crops:
+                        self._remember_aligned_face_crops(image, crops)
+                    return valid_locations
+                logger.debug("DeepFace detections were all filtered; trying fallback detectors")
+
+            # Optional dlib and Haar detectors are fallbacks only. Returning
+            # their unaligned crops as primary detections made indexing vary
+            # with optional package availability and bypassed the configured
+            # RetinaFace alignment path.
             try:
                 if face_recognition is None:
                     raise RuntimeError(
@@ -116,39 +146,6 @@ class FaceRecognitionEngine:
                     logger.debug("face_recognition detections were all filtered; trying next detector")
             except Exception as e:
                 logger.debug(f"face_recognition detection failed: {e}")
-
-            # DeepFace ships detector adapters independently of dlib. Prefer
-            # modern landmark-aware detectors before the Haar cascade when the
-            # optional face_recognition package is missing or returns nothing.
-            deepface_faces = self._detect_faces_with_deepface(image)
-            if deepface_faces:
-                candidate_locations = [location for location, _ in deepface_faces]
-                # Trusted landmark detectors can correctly return a box that
-                # fills a tightly cropped portrait. The generic full-frame
-                # guard is still applied to dlib/Haar, where such boxes are
-                # more often failed detections.
-                valid_locations = self._filter_valid_faces(
-                    candidate_locations, image.shape[:2], allow_full_frame=True
-                )
-                if valid_locations:
-                    valid_set = set(valid_locations)
-                    crops = {}
-                    for location, crop in deepface_faces:
-                        if crop is None:
-                            continue
-                        # Filtering clamps boxes that cross an image edge.
-                        # Associate the aligned crop with that same clamped
-                        # location, or embeddings silently fall back to a raw
-                        # (unaligned) slice for edge faces.
-                        normalized = self._filter_valid_faces(
-                            [location], image.shape[:2], allow_full_frame=True
-                        )
-                        if normalized and normalized[0] in valid_set:
-                            crops[normalized[0]] = crop
-                    if crops:
-                        self._remember_aligned_face_crops(image, crops)
-                    return valid_locations
-                logger.debug("DeepFace detections were all filtered; trying Haar fallback")
 
             # Final fallback - OpenCV Haar cascades (fastest, least robust)
             try:

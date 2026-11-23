@@ -120,10 +120,9 @@ def load_settings() -> Dict[str, Any]:
 def active_embedding_pipeline_version() -> str:
     """Return the pipeline id for the detector this installation will use.
 
-    The optional ``face_recognition`` package changes the active detector to
-    dlib and its HOG/CNN setting changes face boxes and crops. Those vectors
-    must not share an index version with DeepFace-aligned embeddings or with
-    the other dlib model.
+    DeepFace alignment is the primary detector path. If its detectors cannot
+    find a face, optional dlib HOG/CNN or Haar fallbacks may be used; their
+    availability and setting therefore remain part of the index version.
     """
     try:
         import face_recognition  # noqa: F401 - availability selects the path

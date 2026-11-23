@@ -109,7 +109,7 @@ The application provides local face search over images you choose to index:
 
 ### Face detection and embeddings
 
-- The optional `face_recognition` package is tried first when installed. DeepFace detection then tries RetinaFace, MTCNN, and OpenCV; Haar cascades are the final fallback.
+- DeepFace detection tries RetinaFace, MTCNN, and OpenCV first, retaining aligned crops for embeddings. Optional dlib and Haar detectors are fallbacks. This keeps the primary embedding path consistent when optional packages differ across machines.
 - Face crops from DeepFace detectors are aligned and reused for both embedding extraction and the result preview.
 - The active recognition pipeline extracts one 512-dimensional Buffalo_L embedding per detected face. Model candidates and ensemble helpers elsewhere in the code are legacy configuration; search does not combine four models.
 - Embeddings are unit-normalized and stored in the local ChromaDB collection. Search converts ChromaDB distances to cosine similarity and ranks indexed images.
@@ -128,6 +128,8 @@ Changing from FaceNet512 to Buffalo_L invalidates the old embeddings. Reprocess 
 When reprocessing a face, existing person labels follow a one-to-one match between old and new boxes in the same image, using at least 0.35 IoU. This preserves names when detector ordering changes; unmatched or ambiguous labels are not transferred, and a reused face ID with a nonmatching box is logged as a warning.
 
 These LFW diagnostics do not establish web-scale retrieval performance or a comparison with PimEyes. Search quality depends on the source images, face size, pose, lighting, and indexed collection.
+
+A balanced diagnostic sample from the official CFP frontal-profile protocol (10 same and 10 different pairs sampled from each of its 10 folds; 200 pairs total) scored AUC 0.852 with no detection or embedding failures. At the current 0.40 search threshold it accepted 1/100 genuine pairs and 0/100 different-person pairs. This small sample is not a full CFP benchmark, but it shows that frontal-to-profile recall remains weak and that lowering the threshold alone would trade heavily toward false matches. Cross-pose performance needs additional model or pose-aware retrieval work.
 
 ## 🛠️ Installation
 
