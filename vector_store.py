@@ -1408,6 +1408,27 @@ class FaceVectorStore:
                 "birth_place": birth_place,
                 "notes": notes,
             }
+            # Prevent accidentally creating a second person record when the
+            # same identifying name and birth details are entered again. A
+            # shared name by itself is not sufficient: different people may
+            # legitimately have the same name.
+            if not self.get_faces_by_person_id(str(person_id)):
+                duplicate_rows = self.collection.get(
+                    where={"full_name": full_name},
+                    include=["metadatas"],
+                )
+                has_identifying_details = bool(birth_date or birth_place)
+                for duplicate_metadata in duplicate_rows.get("metadatas") or []:
+                    duplicate_metadata = duplicate_metadata or {}
+                    if (
+                        has_identifying_details
+                        and str(duplicate_metadata.get("birth_date", "") or "") == birth_date
+                        and str(duplicate_metadata.get("birth_place", "") or "") == birth_place
+                    ):
+                        logger.warning(
+                            "Refused duplicate person identity for face %s", face_id
+                        )
+                        return None
             # A person ID is a shared identity key. Reject edits that would
             # silently split one person's name or details across face rows.
             for person_face in self.get_faces_by_person_id(str(person_id)):

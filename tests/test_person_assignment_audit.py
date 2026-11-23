@@ -163,3 +163,30 @@ def test_one_person_id_cannot_silently_split_person_details(seeded_data):
         "face_3_1", person_data, person_id="consistent-person"
     ) == "consistent-person"
     assert store.get_face_by_id("face_3_1")["metadata"]["full_name"] == "Alex Example"
+
+
+def test_duplicate_name_and_birth_details_require_existing_person_selection(seeded_data):
+    from vector_store import FaceVectorStore
+
+    store = FaceVectorStore()
+    _clear_person_assignment(store, "face_3_0")
+    _clear_person_assignment(store, "face_3_1")
+    person_data = {
+        "first_name": "Jordan",
+        "last_name": "Example",
+        "birth_date": "1990-04-05",
+        "birth_place": "Berlin",
+    }
+    assert store.assign_person_name(
+        "face_3_0", person_data, person_id="jordan-existing"
+    ) == "jordan-existing"
+
+    assert store.assign_person_name(
+        "face_3_1", person_data, person_id="jordan-duplicate"
+    ) is None
+    assert not store.get_face_by_id("face_3_1")["metadata"].get("person_id")
+
+    different_person = {**person_data, "birth_date": "1994-04-05"}
+    assert store.assign_person_name(
+        "face_3_1", different_person, person_id="jordan-different"
+    ) == "jordan-different"

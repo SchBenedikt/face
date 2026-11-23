@@ -1695,7 +1695,10 @@ def show_name_assignment_modal():
                     _clear_name_assignment_session()
                     st.rerun()
                 else:
-                    st.error("❌ Could not create the person.")
+                    st.error(
+                        "Could not create the person. A record with the same name "
+                        "and birth details may already exist; select that person instead."
+                    )
             else:
                 st.warning("⚠️ Enter at least a first or last name.")
 
@@ -2142,7 +2145,10 @@ def show_name_assignment_tab(face_id, image_path, face_location):
                     invalidate_gallery_cache()
                     st.balloons()
                 else:
-                    st.error("❌ Could not save the person.")
+                    st.error(
+                        "Could not create the person. A record with the same name "
+                        "and birth details may already exist; select that person instead."
+                    )
             else:
                     st.error("❌ Enter at least a first or last name.")
 

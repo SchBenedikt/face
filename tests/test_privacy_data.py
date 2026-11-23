@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import numpy as np
+import subprocess
+import sys
+from pathlib import Path
 
 from privacy_data import delete_local_biometric_data
 from duplicate_detector import SimpleDuplicateDetector
 from vector_store import FaceVectorStore
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+STUBS_DIR = PROJECT_ROOT / "tests" / "stubs"
+APP_FILE = PROJECT_ROOT / "app.py"
 
 
 def _store(tmp_path, image_path):
@@ -97,3 +104,72 @@ def test_index_only_privacy_delete_keeps_original_source_images(tmp_path):
     assert store.collection.count() == 0
     assert source.read_bytes() == b"private image"
     assert not (backup / "index.zip").exists()
+
+
+def test_settings_privacy_control_deletes_local_data_end_to_end(tmp_path):
+    data_dir = tmp_path / "app-data"
+    source = data_dir / "images" / "portrait.jpg"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"private image")
+    script = f"""
+import os, sys
+from pathlib import Path
+sys.path.insert(0, {str(PROJECT_ROOT)!r})
+sys.path.insert(0, {str(STUBS_DIR)!r})
+os.environ["FACE_DATA_DIR"] = {str(data_dir)!r}
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+
+import numpy as np
+from config import DATA_DIR, IMAGES_DIR
+from vector_store import FaceVectorStore
+store = FaceVectorStore()
+embedding = np.zeros(512, dtype=np.float32)
+embedding[0] = 1.0
+assert store.add_face_embedding("private-ui-face", embedding, {{
+    "face_id": "private-ui-face", "image_path": {str(source)!r},
+    "person_id": "private-ui-person", "full_name": "Private Person",
+}})
+backup = DATA_DIR / "pipeline_backups" / "recovery.zip"
+backup.parent.mkdir(parents=True, exist_ok=True)
+backup.write_bytes(b"biometric backup")
+derived = DATA_DIR / "embeddings" / "derived.npy"
+derived.parent.mkdir(parents=True, exist_ok=True)
+derived.write_bytes(b"derived data")
+
+from duplicate_detector import duplicate_detector
+duplicate_detector.add_file_hash(Path({str(source)!r}))
+from streamlit.testing.v1 import AppTest
+at = AppTest.from_file({str(APP_FILE)!r}, default_timeout=180)
+at.run()
+assert not at.exception, [str(element.value) for element in at.exception]
+at.sidebar.selectbox[0].set_value("settings").run()
+assert not at.exception, [str(element.value) for element in at.exception]
+next(element for element in at.checkbox if element.key == "delete_biometric_source_images").set_value(True).run()
+at.text_input[0].set_value("DELETE").run()
+next(button for button in at.button if button.label == "Permanently delete local biometric data").click().run()
+assert not at.exception, [str(element.value) for element in at.exception]
+assert FaceVectorStore().collection.count() == 0
+assert not Path({str(source)!r}).exists()
+assert not backup.exists()
+assert not derived.exists()
+assert duplicate_detector.get_stats()["total_files"] == 0
+print("PRIVACY_UI_DELETE_OK")
+"""
+    env = {
+        "FACE_DATA_DIR": str(data_dir),
+        "PATH": "/usr/bin:/bin",
+        "HOME": str(tmp_path),
+        "ANONYMIZED_TELEMETRY": "False",
+        "PYTHONPATH": f"{STUBS_DIR}:{PROJECT_ROOT}",
+    }
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == 0, output[-5000:]
+    assert "PRIVACY_UI_DELETE_OK" in output, output[-5000:]
