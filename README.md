@@ -10,6 +10,8 @@
 
 [📖 Documentation](#-documentation) • [⚡ Quick Start](#-quick-start) • [🎯 Features](#-key-features) • [🧠 Models and Search](#-models-and-search) • [🛠️ Installation](#-installation) • [🤝 Contributing](#-contributing)
 
+[Feature status and limitations](FEATURES.md) • [Testing and CI](TESTING_GUIDE.md)
+
 </div>
 
 ## 📚 Table of Contents
@@ -45,6 +47,13 @@ streamlit run app.py
 ```
 
 **🎉 That's it!** Open your browser to `http://localhost:8501` and start exploring.
+
+By default, Streamlit binds to `127.0.0.1`, so the interface is available only
+from the machine running it. Do not change `server.address` to a network-facing
+address or expose the port through a proxy unless that deployment adds
+authentication and authorization for viewing, exporting, editing, and deleting
+biometric data. Streamlit itself does not provide application-level access
+control here.
 
 ### Performance and hardware
 
@@ -140,9 +149,9 @@ To repeat or expand that comparison, extract the CFP dataset and run `.venv/bin/
 ## 🛠️ Installation
 
 ### Prerequisites
-- **Python 3.11+** (recommended for best performance)
-- **8GB+ RAM** (for large datasets)
-- **GPU support** (optional, but recommended for faster processing)
+- **Python 3.11 or 3.12**. CI covers Ubuntu x86_64 on both versions; other operating systems and architectures are not currently release-tested.
+- **8 GB RAM recommended** for small collections. Larger collections and model loading need more memory.
+- **CPU is supported**. A compatible GPU runtime is optional and requires separately installed model backends.
 
 ### Quick Install
 ```bash
@@ -169,12 +178,15 @@ python setup_env.py
 
 ### Development tools
 ```bash
-# Install test and formatting tools
-pip install pytest black flake8
+# Install the runtime and test dependencies
+pip install -r requirements.txt pytest
 
-# Run tests
-python -m pytest tests/
+# Run the regression suite and repository artifact guard
+python -m pytest -q tests
+python .github/scripts/check_repository_artifacts.py
 ```
+
+The same checks run on pushes and pull requests through GitHub Actions.
 
 ## 📥 Data Processing Workflow
 
@@ -272,8 +284,10 @@ We welcome contributions! Here's how to get started:
 
 ## ⚠️ Privacy and limitations
 
-- Images and face embeddings are stored under the configured local data directory. The optional image crawler makes requests to external websites.
+- Images, face embeddings, names, and source metadata are stored under the configured local data directory. The default server bind is local-only. The optional image crawler makes requests to external websites.
 - The app has no built-in consent tracking, legal-compliance checks, or demographic-bias evaluation. You are responsible for deciding which images you may process and for following applicable rules.
+- The app does not send indexed images or embeddings to a project-operated cloud service. Model packages may download model files during setup, and web import contacts the URLs you enter. Review third-party model and website terms before use.
+- Removing a face record does not by itself erase the original image file or every derived copy. Manage the configured data directory and backups as sensitive data.
 - Face search can return false matches and miss correct matches. Cosine similarity is a ranking score, not a probability or identity confirmation. Do not rely on it for high-stakes decisions.
 - The app searches only its indexed local collection; it is not a public-web face search service.
 - No formal accuracy or fairness benchmark is currently published for this project.
@@ -301,7 +315,6 @@ The report includes face-detection coverage, Top-1/Top-5 retrieval, and same-ide
 
 ## 🏆 Community & Stats
 
-- **⭐ Open Source**: Join our community of developers and researchers
 - **🍴 Active Development**: Contributing to open-source innovation
 - **🐛 Issue Tracking**: Responsive maintenance and bug fixes
 - **👥 Contributors**: Welcome developers of all skill levels

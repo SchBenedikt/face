@@ -76,17 +76,17 @@ for index, (face_id, embedding) in enumerate(embeddings.items()):
 at = AppTest.from_file({str(APP_FILE)!r}, default_timeout=180)
 at.run()
 assert not at.exception, [str(element.value) for element in at.exception]
-at.sidebar.selectbox[0].set_value("🧩 Personengruppen").run()
+at.sidebar.selectbox[0].set_value("person_groups").run()
 assert not at.exception, [str(element.value) for element in at.exception]
 
 metrics = {{metric.label: str(metric.value) for metric in at.metric}}
-assert metrics.get("Unbenannte Gesichter") == "8", metrics
-assert metrics.get("Gruppen") == "2", metrics
-assert metrics.get("In Gruppen") == "8", metrics
+assert metrics.get("Unassigned faces") == "8", metrics
+assert metrics.get("Groups") == "2", metrics
+assert metrics.get("Faces in groups") == "8", metrics
 
 expanders = [getattr(element, "label", "") for element in at.expander]
 assert len(expanders) == 2, expanders
-assert all("4 Gesichter" in label for label in expanders), expanders
+assert all("4 faces" in label for label in expanders), expanders
 
 cache = at.session_state["person_groups_cache"]
 grouped = [set(group["face_ids"]) for group in cache["groups"]]
@@ -94,16 +94,16 @@ assert FACES_A in grouped, grouped
 assert FACES_B in grouped, grouped
 print("GROUPS:", [(group["size"], sorted(group["face_ids"])) for group in cache["groups"]])
 
-first_name = next(element for element in at.text_input if element.label == "Vorname")
+first_name = next(element for element in at.text_input if element.label == "First name")
 first_name.set_value("Anna").run()
-last_name = next(element for element in at.text_input if element.label == "Nachname")
+last_name = next(element for element in at.text_input if element.label == "Last name")
 last_name.set_value("Test").run()
-assign_buttons = [button for button in at.button if "Gruppe zuweisen" in button.label]
+assign_buttons = [button for button in at.button if "Assign group" in button.label]
 assert len(assign_buttons) == 2, [button.label for button in at.button]
 assign_buttons[0].click().run()
 assert not at.exception, [str(element.value) for element in at.exception]
 assert any(
-    "4 Gesichter wurden der Person Anna Test zugewiesen" in str(message.value)
+    "Assigned 4 faces to Anna Test" in str(message.value)
     for message in at.success
 ), [str(message.value) for message in at.success]
 
@@ -124,11 +124,11 @@ assert len(unnamed) == 4, [face["face_id"] for face in unnamed]
 print("NAMED_IDS:", sorted(named_ids))
 print("UNNAMED_COUNT:", len(unnamed))
 
-at.sidebar.selectbox[0].set_value("🏷️ Name Gallery").run()
+at.sidebar.selectbox[0].set_value("people").run()
 assert not at.exception, [str(element.value) for element in at.exception]
 text = " ".join(str(element.value) for element in at.markdown)
 assert "Anna" in text and "Test" in text, text[:500]
-assert "1 Personen gefunden" in text, text[:500]
+assert "1 people found" in text, text[:500]
 print("NAME_GALLERY_OK")
 print("PERSON_GROUPS_E2E_OK")
 """

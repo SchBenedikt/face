@@ -20,7 +20,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from face_recognition_engine import FaceRecognitionEngine, build_face_id
 from vector_store import FaceVectorStore
-from config import EMBEDDING_PIPELINE_VERSION
+from settings_store import active_embedding_pipeline_version
+
+EMBEDDING_PIPELINE_VERSION = active_embedding_pipeline_version()
 
 
 def _embedding(seed: int) -> np.ndarray:

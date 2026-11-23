@@ -77,31 +77,39 @@ from config import (
 
 IMAGE_SUFFIXES = tuple(sorted(IMAGE_EXTENSIONS))
 
-PAGES = [
-    "🔍 Face Search",
-    "📥 Image Upload & Processing",
-    "🧠 Batch Face Processing",
-    "🌐 Web Scraping",
-    "👥 Face Gallery",
-    "🏷️ Name Gallery",
-    "🧩 Person Groups",
-    "🔧 Duplicate Manager",
-    "📊 Database Statistics",
-    "⚙️ Settings",
-]
-
 PAGE_LABELS = {
-    "🔍 Face Search": "Face search",
-    "📥 Image Upload & Processing": "Import images",
-    "🧠 Batch Face Processing": "Batch processing",
-    "🌐 Web Scraping": "Web import",
-    "👥 Face Gallery": "Face library",
-    "🏷️ Name Gallery": "People",
-    "🧩 Person Groups": "Review groups",
-    "🔧 Duplicate Manager": "Duplicates",
-    "📊 Database Statistics": "Database statistics",
-    "⚙️ Settings": "Settings",
+    "face_search": "Face search",
+    "image_import": "Import images",
+    "batch_processing": "Batch processing",
+    "web_import": "Web import",
+    "face_gallery": "Face library",
+    "people": "People",
+    "person_groups": "Review groups",
+    "duplicates": "Duplicates",
+    "database_statistics": "Database statistics",
+    "settings": "Settings",
 }
+PAGES = tuple(PAGE_LABELS)
+
+LEGACY_PAGE_IDS = {
+    "🔍 Face Search": "face_search",
+    "📥 Image Upload & Processing": "image_import",
+    "🧠 Batch Face Processing": "batch_processing",
+    "🌐 Web Scraping": "web_import",
+    "👥 Face Gallery": "face_gallery",
+    "🏷️ Name Gallery": "people",
+    "🧩 Person Groups": "person_groups",
+    "🔧 Duplicate Manager": "duplicates",
+    "📊 Database Statistics": "database_statistics",
+    "⚙️ Settings": "settings",
+}
+
+
+def _stable_page_id(value: str) -> str:
+    """Migrate older display-label navigation state to stable route IDs."""
+    if value in PAGE_LABELS:
+        return value
+    return LEGACY_PAGE_IDS.get(value, "face_search")
 
 SEARCH_MODE_LABELS = {
     "Balanced": "Balanced",
@@ -119,9 +127,9 @@ SORT_LABELS = {
 # before their upload/process action would still be visible afterwards and
 # contradict the success summary until the next rerun.
 DATA_ENTRY_PAGES = (
-    "📥 Image Upload & Processing",
-    "🧠 Batch Face Processing",
-    "🌐 Web Scraping",
+    "image_import",
+    "batch_processing",
+    "web_import",
 )
 
 
@@ -277,62 +285,8 @@ def invalidate_persons_cache():
 
 
 def invalidate_gallery_cache():
-    """Drop the cached gallery rows after a write or delete."""
-    st.session_state.gallery_faces_cache = None
-
-
-def _get_gallery_faces(force_refresh: bool = False):
-    """Load all face rows once per session; filtering/sorting happens in memory."""
-    cached = st.session_state.get("gallery_faces_cache")
-    if force_refresh or cached is None:
-        with st.spinner("Loading faces from the database..."):
-            cached = st.session_state.vector_store.get_all_faces_metadata()
-        st.session_state.gallery_faces_cache = cached
-    return cached
-
-
-def _gallery_face_size(metadata):
-    """Return the smaller side of the stored face box, or None."""
-    box = parse_face_location((metadata or {}).get("location"))
-    if box is None:
-        return None
-    top, right, bottom, left = box
-    return min(right - left, bottom - top)
-
-
-def _filter_gallery_faces(faces, search_term: str, min_face_size: int):
-    """Filter by file name, full path, face id and minimum face size."""
-    term = (search_term or "").strip().lower()
-    filtered = []
-    for face in faces:
-        metadata = face.get("metadata") or {}
-        image_path = str(metadata.get("image_path") or "")
-        face_id = str(face.get("face_id") or metadata.get("face_id") or "")
-        if term and not (
-            term in face_id.lower()
-            or term in image_path.lower()
-            or term in Path(image_path).name.lower()
-        ):
-            continue
-        size = _gallery_face_size(metadata)
-        if min_face_size and (size is None or size < min_face_size):
-            continue
-        filtered.append(face)
-    return filtered
-
-
-def _sort_gallery_faces(faces, sort_by: str):
-    if sort_by == "Image name":
-        return sorted(
-            faces, key=lambda face: Path(face.get("metadata", {}).get("image_path", "")).name.lower()
-        )
-    if sort_by == "Face ID":
-        return sorted(faces, key=lambda face: face.get("face_id", ""))
-    return sorted(
-        faces,
-        key=lambda face: str(face.get("metadata", {}).get("added_at") or ""),
-        reverse=True,
-    )
+    """Compatibility hook; gallery rows are fetched fresh from the database."""
+    return None
 
 
 def faces_to_csv(faces) -> str:
@@ -378,9 +332,13 @@ def main():
     # Buttons deep in a page queue a navigation target; applying it before the
     # selectbox is instantiated is the supported way to move the sidebar.
     if "pending_page" in st.session_state:
-        st.session_state.nav_page = st.session_state.pop("pending_page")
+        st.session_state.nav_page = _stable_page_id(
+            st.session_state.pop("pending_page")
+        )
     if "nav_page" not in st.session_state:
-        st.session_state.nav_page = PAGES[0]
+        st.session_state.nav_page = "face_search"
+    else:
+        st.session_state.nav_page = _stable_page_id(st.session_state.nav_page)
 
 
     # Sidebar
@@ -401,6 +359,8 @@ def main():
                 st.warning("Database unavailable")
 
     # Handle page changes and clear modal states when switching pages
+    if 'active_page' in st.session_state:
+        st.session_state.active_page = _stable_page_id(st.session_state.active_page)
     if 'active_page' not in st.session_state:
         st.session_state.active_page = page
     elif st.session_state.active_page != page:
@@ -453,25 +413,25 @@ def main():
         # Don't return - let main page continue to render
 
     # Main content area - always render, modals will overlay
-    if page == "🔍 Face Search":
+    if page == "face_search":
         face_search_page()
-    elif page == "📥 Image Upload & Processing":
+    elif page == "image_import":
         upload_processing_page()
-    elif page == "🧠 Batch Face Processing":
+    elif page == "batch_processing":
         batch_face_processing_page()
-    elif page == "🌐 Web Scraping":
+    elif page == "web_import":
         web_scraping_page()
-    elif page == "👥 Face Gallery":
+    elif page == "face_gallery":
         face_gallery_page()
-    elif page == "🏷️ Name Gallery":
+    elif page == "people":
         name_gallery_page()
-    elif page == "🧩 Person Groups":
+    elif page == "person_groups":
         person_groups_page()
-    elif page == "🔧 Duplicate Manager":
+    elif page == "duplicates":
         duplicate_manager_page()
-    elif page == "📊 Database Statistics":
+    elif page == "database_statistics":
         database_stats_page()
-    elif page == "⚙️ Settings":
+    elif page == "settings":
         settings_page()
 
     # A successful upload changes the sidebar stats, which were rendered before
@@ -2712,12 +2672,12 @@ def process_with_fast_engine(directory_path, update_existing=False):
 
                 with col1:
                     if st.button("🔍 View Face Gallery", width='stretch'):
-                        st.session_state.pending_page = "👥 Face Gallery"
+                        st.session_state.pending_page = "face_gallery"
                         st.rerun()
 
                 with col2:
                     if st.button("📊 Analyze Results", width='stretch'):
-                        st.session_state.pending_page = "🔍 Face Search"
+                        st.session_state.pending_page = "face_search"
                         st.rerun()
 
                 # The sidebar was rendered before this batch ran. Queue a
@@ -3432,28 +3392,18 @@ def web_scraping_page():
             help="Enter URLs of websites to scrape images from"
         )
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
 
         with col1:
-            unlimited = st.checkbox(
-                "📥 Unlimited Download",
-                value=True,
-                help="Download all available images (recommended)"
+            max_images = st.slider(
+                "Maximum images per site",
+                min_value=1,
+                max_value=500,
+                value=100,
+                help="Web import has a finite limit to avoid unexpectedly large downloads.",
             )
 
         with col2:
-            if not unlimited:
-                max_images = st.slider(
-                    "Max images per site",
-                    min_value=10,
-                    max_value=1000,
-                    value=100
-                )
-            else:
-                max_images = 0  # 0 = unlimited
-                st.info("🚀 Downloading all images")
-
-        with col3:
             auto_process = st.checkbox(
                 "Auto-process scraped images",
                 value=True,
@@ -3595,40 +3545,66 @@ def _render_duplicate_set(directory: Path, hash_value: str, file_paths: List[Pat
             except Exception as exc:  # noqa: BLE001 - one broken file must not stop the page
                 st.error(f"Error: {exc}")
 
-    if st.button("Delete other copies", key=f"delete_{hash_value}"):
-        result = delete_duplicate_files(file_paths, keep)
-
-        store = st.session_state.get("vector_store")
-        removed_faces = 0
-        for deleted_path in result["deleted"]:
-            if store is not None:
-                removed_faces += store.delete_faces_by_image_path(str(deleted_path))
-        duplicate_detector.cleanup_missing_files()
-        invalidate_persons_cache()
-        invalidate_gallery_cache()
-
-        # Re-scan so the remaining sets and the counters reflect the disk state.
-        st.session_state.duplicate_results[str(directory)] = (
-            duplicate_detector.find_duplicates_in_directory(directory)
-        )
-
-        messages = []
-        if result["deleted"]:
-            names = ", ".join(path.name for path in result["deleted"])
-            messages.append(
-                f"✅ {len(result['deleted'])} file(s) deleted ({names}), "
-                f"{removed_faces} database entries removed."
-            )
-        if result["missing"]:
-            names = ", ".join(path.name for path in result["missing"])
-            messages.append(f"Already missing: {names}")
-        if result["errors"]:
-            messages.append("⚠️ " + "; ".join(result["errors"]))
-        if not messages:
-            messages.append("Nothing was deleted.")
-
-        st.session_state.duplicate_flash = messages
+    pending_key = "pending_duplicate_delete"
+    if st.button("Review deletion", key=f"delete_{hash_value}"):
+        st.session_state[pending_key] = hash_value
         st.rerun()
+
+    if st.session_state.get(pending_key) == hash_value:
+        st.warning(
+            f"This will permanently delete {len(file_paths) - 1} files. "
+            "The selected file will be kept. Review the filenames above before continuing."
+        )
+        confirm_col, cancel_col = st.columns(2)
+        with confirm_col:
+            confirm = st.button("Confirm deletion", key=f"confirm_delete_{hash_value}", type="primary")
+        with cancel_col:
+            cancel = st.button("Cancel", key=f"cancel_delete_{hash_value}")
+        if cancel:
+            st.session_state.pop(pending_key, None)
+            st.rerun()
+        if confirm:
+            st.session_state.pop(pending_key, None)
+            # Recheck the candidate set immediately before deleting: a rescan
+            # or another session may have changed the files since preview.
+            existing_paths = [Path(path) for path in file_paths if Path(path).is_file()]
+            if Path(keep) not in existing_paths or len(existing_paths) < 2:
+                st.error("The duplicate set changed since review. Scan the folder again.")
+                st.rerun()
+            file_paths = existing_paths
+            result = delete_duplicate_files(file_paths, keep)
+
+            store = st.session_state.get("vector_store")
+            removed_faces = 0
+            for deleted_path in result["deleted"]:
+                if store is not None:
+                    removed_faces += store.delete_faces_by_image_path(str(deleted_path))
+            duplicate_detector.cleanup_missing_files()
+            invalidate_persons_cache()
+            invalidate_gallery_cache()
+
+            # Re-scan so the remaining sets and the counters reflect the disk state.
+            st.session_state.duplicate_results[str(directory)] = (
+                duplicate_detector.find_duplicates_in_directory(directory)
+            )
+
+            messages = []
+            if result["deleted"]:
+                names = ", ".join(path.name for path in result["deleted"])
+                messages.append(
+                    f"✅ {len(result['deleted'])} file(s) deleted ({names}), "
+                    f"{removed_faces} database entries removed."
+                )
+            if result["missing"]:
+                names = ", ".join(path.name for path in result["missing"])
+                messages.append(f"Already missing: {names}")
+            if result["errors"]:
+                messages.append("⚠️ " + "; ".join(result["errors"]))
+            if not messages:
+                messages.append("Nothing was deleted.")
+
+            st.session_state.duplicate_flash = messages
+            st.rerun()
 
 
 def duplicate_manager_page():
@@ -4019,15 +3995,13 @@ def face_gallery_page():
     st.header("Face library", icon=":material/gallery_thumbnail:")
     st.caption("Browse, review, and manage faces in your local database.")
 
-    # One cached read makes search, size filtering and sorting consistent.
     try:
-        all_faces = _get_gallery_faces()
-        total_faces = len(all_faces)
-        unique_images = len({
-            face.get("metadata", {}).get("image_path")
-            for face in all_faces
-            if face.get("metadata", {}).get("image_path")
-        })
+        stats = st.session_state.vector_store.get_collection_stats()
+        if "error" in stats:
+            st.error(f"Could not load gallery statistics: {stats['error']}")
+            return
+        total_faces = int(stats.get("total_faces", 0))
+        unique_images = int(stats.get("unique_images", 0))
 
         if total_faces == 0:
             st.info("No faces in the database yet. Upload images or import them from websites to get started.")
@@ -4071,24 +4045,35 @@ def face_gallery_page():
 
         with col1:
             search_term = st.text_input(
-                "Search by file name or face ID",
-                placeholder="For example, 'image_001' or 'abc123'",
+                "Search by file name, face ID, or person",
+                placeholder="For example, 'image_001', 'abc123', or a person's name",
             )
 
         with col2:
             st.markdown("**Filters**")
             min_face_size = st.slider("Minimum face size (px)", 30, 200, 50)
 
-        # Apply search, size filter and sorting to the cached rows.
-        filter_signature = (search_term, min_face_size, sort_by)
+        # Stream database metadata in bounded chunks and keep the sorted page
+        # in a short-lived SQLite file instead of caching every face in session.
+        filter_signature = (search_term, min_face_size, sort_by, faces_per_page)
         if st.session_state.get("gallery_filter_signature") != filter_signature:
             st.session_state.gallery_filter_signature = filter_signature
             st.session_state.gallery_page = 0
+            st.session_state.pop("page_jump", None)
 
-        filtered_faces = _sort_gallery_faces(
-            _filter_gallery_faces(all_faces, search_term, min_face_size), sort_by
+        if "gallery_page" not in st.session_state:
+            st.session_state.gallery_page = 0
+        page_result = st.session_state.vector_store.get_face_gallery_page(
+            search_term=search_term,
+            min_face_size=min_face_size,
+            sort_by=sort_by,
+            page=int(st.session_state.gallery_page) + 1,
+            page_size=faces_per_page,
         )
-        filtered_total = len(filtered_faces)
+        if page_result.get("error"):
+            st.error(f"Could not load gallery results: {page_result['error']}")
+            return
+        filtered_total = int(page_result["total"])
 
         if filtered_total == 0:
             if search_term.strip():
@@ -4100,11 +4085,8 @@ def face_gallery_page():
         # Pagination controls
         st.markdown("---")
 
-        if 'gallery_page' not in st.session_state:
-            st.session_state.gallery_page = 0
-
-        total_pages = max(1, (filtered_total - 1) // faces_per_page + 1)
-        current_page = min(max(0, st.session_state.gallery_page), total_pages - 1)
+        total_pages = int(page_result["total_pages"])
+        current_page = int(page_result["page"]) - 1
         st.session_state.gallery_page = current_page
 
         # Page info and navigation in one row
@@ -4147,7 +4129,6 @@ def face_gallery_page():
 
         st.markdown("---")
 
-        # Calculate offset for pagination
         offset = current_page * faces_per_page
         remaining_faces = filtered_total - offset
         limit = min(faces_per_page, remaining_faces)
@@ -4159,7 +4140,7 @@ def face_gallery_page():
         with st.spinner(f"Loading {limit} faces..."):
             # Get face data from database with improved robust pagination
             try:
-                page_faces = filtered_faces[offset:offset + limit]
+                page_faces = page_result["faces"]
                 results = {"metadatas": [face["metadata"] for face in page_faces]}
 
                 if results['metadatas'] and len(results['metadatas']) > 0:
@@ -4191,7 +4172,9 @@ def face_gallery_page():
                     with col1:
                         st.download_button(
                             "Export faces as CSV",
-                            data=faces_to_csv(all_faces),
+                            data=lambda: faces_to_csv(
+                                st.session_state.vector_store.get_all_faces_metadata()
+                            ),
                             file_name="faces.csv",
                             mime="text/csv",
                             key="download_faces_csv",
@@ -4456,7 +4439,7 @@ def display_face_from_metadata(metadata, show_metadata=True, compact=False):
             pass
 
     except Exception as e:
-        st.error(f"❌ Anzeigefehler: {str(e)[:50]}...")
+        st.error(f"❌ Display error: {str(e)[:50]}...")
         st.caption(f"🆔 {metadata.get('face_id', 'unknown')}")
 
 def improved_web_scraping_page():
@@ -4479,10 +4462,11 @@ def improved_web_scraping_page():
     with col2:
         st.write("**Scraping Options**")
         max_images = st.number_input(
-            "Max images per site (0 = unlimited):",
-            min_value=0,
-            value=0,
-            help="0 means unlimited images"
+            "Maximum images per site:",
+            min_value=1,
+            max_value=500,
+            value=100,
+            help="Web import has a finite limit to avoid unexpectedly large downloads."
         )
 
         auto_process = st.checkbox(

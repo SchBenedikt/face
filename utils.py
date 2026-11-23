@@ -107,13 +107,22 @@ def load_and_preprocess_image(image_path: Union[str, Path]) -> Optional[np.ndarr
 
 
 def load_uploaded_image(uploaded_file) -> Optional[Image.Image]:
-    """Decode an uploaded image as RGB and apply its EXIF orientation."""
+    """Decode a bounded uploaded image as RGB and apply its EXIF orientation."""
     try:
+        raw_size = getattr(uploaded_file, "size", None)
+        if raw_size is None and hasattr(uploaded_file, "getbuffer"):
+            raw_size = len(uploaded_file.getbuffer())
+        if raw_size is not None and int(raw_size) > 25 * 1024 * 1024:
+            raise ValueError("Uploaded image exceeds the 25 MiB limit")
         try:
             uploaded_file.seek(0)
         except (AttributeError, OSError):
             pass
         with Image.open(uploaded_file) as image:
+            if image.format not in {"JPEG", "PNG", "WEBP", "BMP"}:
+                raise ValueError(f"Unsupported image format: {image.format}")
+            if image.width * image.height > 40_000_000:
+                raise ValueError("Uploaded image exceeds the 40 megapixel limit")
             image.load()
             return ImageOps.exif_transpose(image).convert("RGB")
     except Exception as exc:  # noqa: BLE001 - invalid uploads are a normal UI case

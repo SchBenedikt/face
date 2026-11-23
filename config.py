@@ -83,7 +83,7 @@ BATCH_PROCESSING_ENABLED = True
 PARALLEL_MODEL_EXTRACTION = False  # Set to False to avoid memory issues
 
 # Scraping settings
-MAX_IMAGES_PER_SITE = 0  # 0 = Unbegrenzt, alle verfügbaren Bilder herunterladen
+MAX_IMAGES_PER_SITE = 100  # Conservative finite cap for web imports.
 SUPPORTED_IMAGE_FORMATS = ['.jpg', '.jpeg', '.png', '.bmp', '.webp']
 DEFAULT_SCRAPING_SITES = [
     'https://example.com',  # Add safe example sites

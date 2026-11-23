@@ -56,4 +56,4 @@ def test_broken_data_directory_shows_message_not_traceback(tmp_path):
 
     assert completed.returncode == 0, output[-2000:]
     assert "EXCEPTIONS: []" in output, output[-2000:]
-    assert "Vektor-Datenbank konnte nicht geöffnet werden" in output, output[-2000:]
+    assert "The vector database could not be opened." in output, output[-2000:]

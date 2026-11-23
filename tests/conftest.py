@@ -48,16 +48,17 @@ def seeded_data():
 
     from config import (
         COLLECTION_NAME,
-        EMBEDDING_PIPELINE_VERSION,
         IMAGES_DIR,
         SCRAPED_DIR,
         VECTOR_DB_PATH,
     )
+    from settings_store import active_embedding_pipeline_version
 
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     SCRAPED_DIR.mkdir(parents=True, exist_ok=True)
 
     rng = np.random.default_rng(2024)
+    pipeline_version = active_embedding_pipeline_version()
     ids = []
     embeddings = []
     metadatas = []
@@ -75,7 +76,7 @@ def seeded_data():
                 "image_path": str(image_path),
                 "location": f"{top},{top + 120},{top + 120},40",
                 "embedding_dimension": 512,
-                "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
+                "embedding_pipeline_version": pipeline_version,
                 "added_at": "2026-01-01T00:00:00",
             }
             # Two of the four images belong to a known person.
@@ -112,7 +113,7 @@ def seeded_data():
         COLLECTION_NAME,
         metadata={
             "description": "Headless UI test fixtures",
-            "embedding_pipeline_version": EMBEDDING_PIPELINE_VERSION,
+            "embedding_pipeline_version": pipeline_version,
             "embedding_pipeline_complete": True,
         },
     )

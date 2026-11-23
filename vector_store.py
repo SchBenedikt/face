@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 import logging
 import json
+import sqlite3
+import tempfile
 from datetime import datetime
 import uuid
 
@@ -1118,6 +1120,118 @@ class FaceVectorStore:
             logger.error(f"Error loading all face metadata: {e}")
             return faces
 
+    def get_face_gallery_page(
+        self,
+        search_term: str = "",
+        min_face_size: int = 0,
+        sort_by: str = "Newest",
+        page: int = 1,
+        page_size: int = 50,
+        chunk_size: int = 1000,
+    ) -> Dict[str, Any]:
+        """Stream face metadata to a temporary SQLite index and return one page.
+
+        The gallery needs substring search and global sorting, which Chroma's
+        metadata filters do not provide. Scanning metadata in chunks and
+        sorting it in a temporary disk database keeps the full collection out
+        of Streamlit session memory. No embeddings or image bytes are copied.
+        """
+        page_size = max(1, min(int(page_size), 500))
+        chunk_size = max(1, min(int(chunk_size), 5000))
+        requested_page = max(1, int(page))
+        search = str(search_term or "").casefold().strip()
+        sort_key = sort_by if sort_by in {"Newest", "Image name", "Face ID"} else "Newest"
+        sort_direction = "DESC" if sort_key == "Newest" else "ASC"
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="face-gallery-") as temp_dir:
+                database_path = Path(temp_dir) / "gallery.sqlite3"
+                with sqlite3.connect(database_path) as connection:
+                    connection.execute(
+                        "CREATE TABLE matches ("
+                        "face_id TEXT NOT NULL, sort_value TEXT NOT NULL, metadata TEXT NOT NULL)"
+                    )
+                    total = int(self.collection.count())
+                    offset = 0
+                    while offset < total:
+                        chunk = self.collection.get(
+                            limit=min(chunk_size, total - offset),
+                            offset=offset,
+                            include=["metadatas"],
+                        )
+                        ids = chunk.get("ids") or []
+                        metadatas = chunk.get("metadatas") or []
+                        rows = []
+                        for index, raw_metadata in enumerate(metadatas):
+                            metadata = dict(raw_metadata or {})
+                            face_id = str(
+                                metadata.get("face_id")
+                                or (ids[index] if index < len(ids) else "")
+                            )
+                            if not face_id:
+                                continue
+
+                            image_path = str(metadata.get("image_path") or "")
+                            if search and search not in " ".join((
+                                face_id,
+                                image_path,
+                                Path(image_path).name,
+                                str(metadata.get("full_name") or ""),
+                            )).casefold():
+                                continue
+
+                            if min_face_size:
+                                box = _face_box(metadata.get("location"))
+                                if box is None:
+                                    continue
+                                top, right, bottom, left = box
+                                if min(right - left, bottom - top) < min_face_size:
+                                    continue
+
+                            if sort_key == "Newest":
+                                sort_value = str(metadata.get("added_at") or "")
+                            elif sort_key == "Image name":
+                                sort_value = Path(image_path).name.casefold()
+                            else:
+                                sort_value = face_id.casefold()
+                            rows.append((face_id, sort_value, json.dumps(metadata)))
+
+                        if rows:
+                            connection.executemany(
+                                "INSERT INTO matches(face_id, sort_value, metadata) VALUES (?, ?, ?)",
+                                rows,
+                            )
+                        offset += max(1, len(ids))
+
+                    connection.execute(
+                        "CREATE INDEX matches_sort_idx ON matches(sort_value, face_id)"
+                    )
+                    filtered_total = int(
+                        connection.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
+                    )
+                    total_pages = max(1, (filtered_total + page_size - 1) // page_size)
+                    current_page = min(requested_page, total_pages)
+                    page_offset = (current_page - 1) * page_size
+                    result_rows = connection.execute(
+                        "SELECT face_id, metadata FROM matches "
+                        f"ORDER BY sort_value {sort_direction}, face_id ASC LIMIT ? OFFSET ?",
+                        (page_size, page_offset),
+                    ).fetchall()
+
+                return {
+                    "faces": [
+                        {"face_id": face_id, "metadata": json.loads(metadata)}
+                        for face_id, metadata in result_rows
+                    ],
+                    "total": filtered_total,
+                    "total_faces": total,
+                    "total_pages": total_pages,
+                    "page": current_page,
+                }
+        except Exception as exc:  # noqa: BLE001 - keep the gallery usable on read failures
+            logger.exception("Could not load a face gallery page")
+            return {"faces": [], "total": 0, "total_faces": 0, "total_pages": 1, "page": 1, "error": str(exc)}
+
     def get_faces_paginated(self, offset: int = 0, limit: int = 50) -> Dict[str, Any]:
         """
         Robust paginated retrieval of faces with error handling
@@ -1250,144 +1364,99 @@ class FaceVectorStore:
             logger.error(f"Error assigning person data to {face_id}: {e}")
             return None
 
-    def assign_person_name_with_auto_matching(self, face_id: str, person_data: Dict[str, str], person_id: Optional[str] = None, similarity_threshold: float = FACE_AUTO_ASSIGN_THRESHOLD, ambiguity_margin: float = FACE_AUTO_ASSIGN_AMBIGUITY_MARGIN) -> Dict[str, Any]:
-        """
-        Assign person name and automatically find and assign similar faces
-        
-        Args:
-            face_id: Face identifier for the initial face
-            person_data: Dictionary with person information
-            person_id: Unique person ID (if None, creates new one)
-            similarity_threshold: Minimum cosine similarity for auto-assignment
-            ambiguity_margin: Skip a candidate when another named person is
-                nearly as close; avoids spreading a name across look-alikes
-            
-        Returns:
-            Dictionary with results:
-            - success: bool
-            - person_id: str
-            - total_assigned: int (number of faces assigned)
-            - similar_faces: list of assigned face IDs
+    def assign_person_name_with_auto_matching(
+        self,
+        face_id: str,
+        person_data: Dict[str, str],
+        person_id: Optional[str] = None,
+        similarity_threshold: float = FACE_AUTO_ASSIGN_THRESHOLD,
+        ambiguity_margin: float = FACE_AUTO_ASSIGN_AMBIGUITY_MARGIN,
+    ) -> Dict[str, Any]:
+        """Assign one reviewed face and return similar faces as suggestions.
+
+        The legacy method name is retained for callers, but similarity alone
+        never propagates a person's name. Every other face must be reviewed and
+        assigned separately by an explicit user action.
         """
         try:
-            # First assign the name to the original face
             assigned_person_id = self.assign_person_name(face_id, person_data, person_id)
-            
             if not assigned_person_id:
                 return {
-                    'success': False,
-                    'error': 'Failed to assign name to original face',
-                    'total_assigned': 0,
-                    'similar_faces': []
+                    "success": False,
+                    "error": "Failed to assign name to the selected face",
+                    "total_assigned": 0,
+                    "similar_faces": [],
+                    "skipped_ambiguous": 0,
                 }
-            
-            # Get the embedding of the original face to find similar ones
-            original_face = self.get_face_by_id(face_id)
-            if not original_face or 'embedding' not in original_face:
-                logger.warning(f"Could not get embedding for face {face_id}, skipping auto-matching")
+
+            original = self.get_face_by_id(face_id)
+            if not original or original.get("embedding") is None:
                 return {
-                    'success': True,
-                    'person_id': assigned_person_id,
-                    'total_assigned': 1,
-                    'similar_faces': [],
-                    'skipped_ambiguous': 0,
-                    'warning': 'Auto-matching skipped - no embedding available'
+                    "success": True,
+                    "person_id": assigned_person_id,
+                    "total_assigned": 1,
+                    "similar_faces": [],
+                    "skipped_ambiguous": 0,
+                    "warning": "No embedding was available to suggest similar faces.",
                 }
-            
-            # Search for similar faces with high similarity
-            similar_faces = self.search_similar_faces(
-                original_face['embedding'],
-                n_results=100,  # Get more results to filter
-                min_similarity=similarity_threshold
-            )
-            
-            # Candidates that already carry another name are never overwritten.
-            candidates = []
-            for similar_face in similar_faces:
-                similar_face_id = similar_face.get('id', similar_face.get('face_id'))
-                if similar_face_id == face_id:
-                    continue
-                existing_metadata = similar_face.get('metadata', {})
-                if existing_metadata.get('person_id') and existing_metadata.get('full_name'):
-                    continue
-                candidates.append(similar_face)
 
-            # Fetch candidate embeddings once, so the ambiguity check does not
-            # need one database round-trip per face.
-            candidate_embeddings = {}
-            if candidates:
-                candidate_ids = [
-                    str(face.get('id', face.get('face_id'))) for face in candidates
-                ]
-                try:
-                    rows = self.collection.get(ids=candidate_ids, include=['embeddings'])
-                    candidate_rows = rows.get('embeddings')
-                    if candidate_rows is None:
-                        candidate_rows = []
-                    for candidate_id, embedding in zip(
-                        rows.get('ids') or [], candidate_rows
-                    ):
-                        candidate_embeddings[str(candidate_id)] = normalise_embedding(embedding)
-                except Exception as exc:  # noqa: BLE001 - matching can continue without it
-                    logger.warning(f"Could not load candidate embeddings: {exc}")
-
-            # A candidate is only assigned when it is closer to this person
-            # than to any other named person. Without this margin, a face that
-            # looks similar to two people was assigned to whichever name was
-            # processed first.
-            other_person_centroids = self._person_centroids(
-                exclude_person_id=assigned_person_id
+            matches = self.search_similar_faces(
+                original["embedding"], n_results=100, min_similarity=similarity_threshold
             )
-            assigned_similar = []
+            other_person_centroids = self._person_centroids(exclude_person_id=assigned_person_id)
+            suggestions = []
             skipped_ambiguous = 0
-
-            for similar_face in candidates:
-                similar_face_id = str(similar_face.get('id', similar_face.get('face_id')))
-                anchor_similarity = float(similar_face['similarity'])
-                candidate_vector = candidate_embeddings.get(similar_face_id)
-
-                if candidate_vector is not None and other_person_centroids:
+            for match in matches:
+                candidate_id = str(match.get("id", match.get("face_id", "")))
+                if not candidate_id or candidate_id == face_id:
+                    continue
+                metadata = match.get("metadata") or {}
+                if metadata.get("person_id") and metadata.get("full_name"):
+                    continue
+                candidate_embedding = None
+                try:
+                    row = self.collection.get(ids=[candidate_id], include=["embeddings"])
+                    vectors = row.get("embeddings") or []
+                    if vectors:
+                        candidate_embedding = normalise_embedding(vectors[0])
+                except Exception as exc:  # noqa: BLE001 - suggestions remain available
+                    logger.debug("Could not inspect suggestion %s: %s", candidate_id, exc)
+                ambiguous = False
+                if candidate_embedding is not None and other_person_centroids:
                     other_best = max(
-                        float(np.dot(candidate_vector, centroid))
+                        float(np.dot(candidate_embedding, centroid))
                         for centroid in other_person_centroids.values()
                     )
-                    if other_best >= anchor_similarity - ambiguity_margin:
-                        skipped_ambiguous += 1
-                        logger.info(
-                            f"Skipped ambiguous auto-assignment for {similar_face_id} "
-                            f"(this person: {anchor_similarity:.1%}, "
-                            f"other person: {other_best:.1%})"
-                        )
-                        continue
-                
-                # Assign the same person data to this similar face
-                if self.assign_person_name(similar_face_id, person_data, assigned_person_id):
-                    assigned_similar.append(similar_face_id)
-                    logger.info(f"Auto-assigned name to similar face {similar_face_id} (similarity: {anchor_similarity:.1%})")
-            
-            total_assigned = 1 + len(assigned_similar)  # Original + similar faces
-            
-            logger.info(f"Successfully assigned person '{person_data.get('first_name', '')} {person_data.get('last_name', '')}' to {total_assigned} faces")
-            
+                    ambiguous = other_best >= float(match.get("similarity", 0)) - ambiguity_margin
+                if ambiguous:
+                    skipped_ambiguous += 1
+                suggestions.append({
+                    "face_id": candidate_id,
+                    "similarity": float(match.get("similarity", 0)),
+                    "ambiguous": ambiguous,
+                    "metadata": metadata,
+                })
+
             return {
-                'success': True,
-                'person_id': assigned_person_id,
-                'total_assigned': total_assigned,
-                'similar_faces': assigned_similar,
-                'skipped_ambiguous': skipped_ambiguous,
-                'similarity_threshold': similarity_threshold
+                "success": True,
+                "person_id": assigned_person_id,
+                "total_assigned": 1,
+                "similar_faces": suggestions,
+                "suggested_faces": len(suggestions),
+                "skipped_ambiguous": skipped_ambiguous,
+                "similarity_threshold": similarity_threshold,
+                "requires_review": bool(suggestions),
             }
-            
-        except Exception as e:
-            logger.error(f"Error in assign_person_name_with_auto_matching: {e}")
+        except Exception as exc:  # noqa: BLE001 - keep storage API errors structured
+            logger.exception("Error generating person assignment suggestions")
             return {
-                'success': False,
-                'error': str(e),
-                'total_assigned': 0,
-                'similar_faces': [],
-                'skipped_ambiguous': 0
+                "success": False,
+                "error": str(exc),
+                "total_assigned": 0,
+                "similar_faces": [],
+                "skipped_ambiguous": 0,
             }
-    
+
     def remove_person_name(self, face_id: str) -> bool:
         """
         Remove person name assignment from a face

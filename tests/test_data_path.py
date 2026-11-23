@@ -40,10 +40,10 @@ from vector_store import FaceVectorStore
 APP = {str(APP_FILE)!r}
 SOURCE = Path({str(source_image)!r})
 REPLACEMENT = Path({str(replacement_image)!r})
-UPLOAD = "📥 Image Upload & Processing"
-GALLERY = "👥 Face Gallery"
-NAMES = "🏷️ Name Gallery"
-SEARCH = "🔍 Face Search"
+UPLOAD = "image_import"
+GALLERY = "face_gallery"
+NAMES = "people"
+SEARCH = "face_search"
 
 
 def _iter(node):
@@ -92,7 +92,7 @@ assert any("Successfully processed" in value for value in success), success
 infos = texts(at, "info")
 assert not any("Noch keine Gesichter in der Datenbank" in value for value in infos), infos
 assert any(
-    metric.label == "Total Faces" and str(metric.value) == "4"
+    metric.label in {"Total Faces", "Faces"} and str(metric.value) == "4"
     for metric in at.metric
 ), [(metric.label, metric.value) for metric in at.metric]
 print("PROCESS_SUCCESS:", success)
@@ -120,7 +120,7 @@ print("PERSON_ID:", person_id)
 # Gallery and name gallery render the newly written rows.
 at.sidebar.selectbox[0].set_value(GALLERY).run()
 assert not exceptions(at), exceptions(at)
-assert any(metric.label == "👥 Total Faces" and str(metric.value) == "4" for metric in at.metric)
+assert any(metric.label == "Faces" and str(metric.value) == "4" for metric in at.metric)
 gallery_images = images(at)
 assert len(gallery_images) >= 4, len(gallery_images)
 print("GALLERY_IMAGES:", len(gallery_images))
@@ -137,14 +137,14 @@ print("NAME_GALLERY:", expander_labels)
 at.sidebar.selectbox[0].set_value(SEARCH).run()
 at.file_uploader[0].set_value((SOURCE.name, SOURCE.read_bytes(), "image/jpeg")).run()
 assert not exceptions(at), exceptions(at)
-next(button for button in at.button if "Analyze Image for Faces" in button.label).click().run()
+next(button for button in at.button if "Detect faces" in button.label).click().run()
 assert not exceptions(at), exceptions(at)
 assert at.session_state["detected_faces"], "query image yielded no faces"
 # Search controls remain live after face detection; changing the cap before
 # selecting a face must affect that search rather than the earlier analysis.
-next(slider for slider in at.slider if "Maximum Results" in slider.label).set_value(1).run()
+next(slider for slider in at.slider if "Maximum results" in slider.label).set_value(1).run()
 assert not exceptions(at), exceptions(at)
-next(button for button in at.button if "Nach Gesicht 1 suchen" in button.label).click().run()
+next(button for button in at.button if "Search face 1" in button.label).click().run()
 assert not exceptions(at), exceptions(at)
 
 results = at.session_state["search_results"]
@@ -152,9 +152,9 @@ assert results, "similarity search returned no results"
 assert len(results) <= 1, f"updated result cap was ignored: {{len(results)}}"
 # The threshold is also read at search time, after face detection. Re-search
 # with a stricter threshold and prove every returned score honors it.
-next(slider for slider in at.slider if "Maximum Results" in slider.label).set_value(200).run()
-next(slider for slider in at.slider if "Similarity Threshold" in slider.label).set_value(0.99).run()
-next(button for button in at.button if "Nach Gesicht 1 suchen" in button.label).click().run()
+next(slider for slider in at.slider if "Maximum results" in slider.label).set_value(200).run()
+next(slider for slider in at.slider if "Minimum cosine similarity" in slider.label).set_value(0.99).run()
+next(button for button in at.button if "Search face 1" in button.label).click().run()
 assert not exceptions(at), exceptions(at)
 results = at.session_state["search_results"]
 assert results, "updated similarity threshold removed the identical image"

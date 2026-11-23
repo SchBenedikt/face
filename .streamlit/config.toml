@@ -1,3 +1,8 @@
+[server]
+# Biometric data is local to this machine by default. Shared deployments need
+# an authenticated reverse proxy and explicit authorization controls.
+address = "127.0.0.1"
+
 [theme]
 base = "light"
 primaryColor = "#2563EB"

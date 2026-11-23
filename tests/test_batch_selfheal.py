@@ -41,11 +41,11 @@ APP = {str(APP_FILE)!r}
 SOURCE_A = Path({str(sources[0])!r})
 SOURCE_B = Path({str(sources[1])!r})
 SOURCE_C = Path({str(sources[2])!r})
-BATCH = "🧠 Batch Face Processing"
+BATCH = "batch_processing"
 UPDATE = "🔄 Update All Images (Replace Existing)"
-GALLERY = "👥 Face Gallery"
-NAMES = "🏷️ Name Gallery"
-SEARCH = "🔍 Face Search"
+GALLERY = "face_gallery"
+NAMES = "people"
+SEARCH = "face_search"
 
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 for source in (SOURCE_A, SOURCE_B, SOURCE_C):
@@ -107,7 +107,7 @@ next(button for button in at2.button if "Update Images" in button.label).click()
 assert not exceptions(at2), exceptions(at2)
 
 infos = texts(at2, "info")
-assert any("Veraltete Einträge entfernt: 8" in value for value in infos), infos
+assert any("Stale entries removed: 8" in value for value in infos), infos
 assert any("selfheal-1.jpg" in value for value in infos), infos
 assert any("Batch Summary:" in value for value in infos), infos
 assert any(
@@ -130,27 +130,27 @@ print("STALE_REMOVED: 8")
 at2.sidebar.selectbox[0].set_value(GALLERY).run()
 assert not exceptions(at2), exceptions(at2)
 assert any(
-    metric.label == "👥 Total Faces" and str(metric.value) == "4"
+    metric.label == "Faces" and str(metric.value) == "4"
     for metric in at2.metric
 ), [(metric.label, metric.value) for metric in at2.metric]
 assert len(images(at2)) == 4, len(images(at2))
 assert not any(
-    "Bild nicht gefunden" in value or "Bild konnte nicht geladen werden" in value
+    "Image not found" in value or "Could not load image" in value
     for value in texts(at2, "error", "warning")
 ), texts(at2, "error", "warning")
 print("GALLERY_IMAGES:", len(images(at2)))
 
 at2.sidebar.selectbox[0].set_value(NAMES).run()
 assert not exceptions(at2), exceptions(at2)
-assert any("Noch keine Namen vergeben" in value for value in texts(at2, "info")), texts(at2, "info")
+assert any("No names assigned yet" in value for value in texts(at2, "info")), texts(at2, "info")
 print("NAME_GALLERY_EMPTY:", True)
 
 at2.sidebar.selectbox[0].set_value(SEARCH).run()
 at2.file_uploader[0].set_value((SOURCE_A.name, SOURCE_A.read_bytes(), "image/jpeg")).run()
 assert not exceptions(at2), exceptions(at2)
-next(button for button in at2.button if "Analyze Image for Faces" in button.label).click().run()
+next(button for button in at2.button if "Detect faces" in button.label).click().run()
 assert not exceptions(at2), exceptions(at2)
-next(button for button in at2.button if "Nach Gesicht 1 suchen" in button.label).click().run()
+next(button for button in at2.button if "Search face 1" in button.label).click().run()
 assert not exceptions(at2), exceptions(at2)
 
 results = at2.session_state["search_results"]

@@ -1,99 +1,32 @@
-# Face Recognition System - Features & Documentation
+# Feature status
 
-## ✅ Currently Implemented Features
+This matrix describes behavior present in the current `main` branch. A feature
+marked experimental is available, but should not be treated as reliable for
+high-stakes decisions or unrestricted use.
 
-### 🔍 **Face Search**
-- Upload reference image with face detection
-- Buffalo_L embedding search with adjustable cosine-similarity threshold (default: 0.40)
-- Trefferwerte zeigen Cosine-Ähnlichkeit, keine Match-Wahrscheinlichkeit
-- Multi-face detection with selection interface
-- Full-screen view with highlighted face
-- Detailed facial analysis (age, gender, emotions, ethnicity)
-- **New: Assign person names** to found faces
+| Area | Status | Current behavior and limits |
+| --- | --- | --- |
+| Local face search | Implemented | Searches indexed local images using the configured embedding model and cosine ranking. Scores are not identity probabilities. |
+| Image processing | Implemented | Imports user-selected local image folders, detects faces, and stores embeddings and source paths in the local ChromaDB index. |
+| Face library | Implemented | Searches by filename or face ID, filters by face size, sorts, paginates, and supports manual deletion. CSV metadata export is available; portable backup and restore are not. |
+| Person labels | Implemented | A user can assign a label to a selected face. Unlabeled identity groups are suggestions and require review before assignment. |
+| Duplicate management | Implemented | Detects duplicate image files, previews candidate copies, and updates indexed face records when selected copies are removed. |
+| Attribute analysis | Experimental | Optional model estimates for age, gender, emotion, and ethnicity can be wrong and are not verified personal attributes. |
+| Web image import | Experimental | An optional crawler is available. Only collect images from sites and for purposes you are authorized to use. See the privacy and crawler restrictions in the README. |
+| Shared or internet-facing deployment | Unsupported | The app has no built-in user authentication or per-user authorization. Run it locally; a shared deployment needs an authenticated access layer in front of it. |
+| Portable archive export and restore | Planned | CSV metadata export exists. A versioned archive containing optional images, embeddings, provenance, and a validated restore workflow is not implemented. |
+| Live camera and mobile clients | Planned | No supported live-camera workflow or mobile application is included. |
 
-### 👥 **Face Gallery**
-- Overview of all faces in the database
-- Pagination with customizable view (20-500 faces per page)
-- Metadata display with file info and position
-- Delete functions for incorrectly detected faces:
-  - Individual deletion with confirmation
-  - Batch deletion of entire pages
-  - Intelligent quality control (automatically detect low quality)
-- **New: Assign person names** in the gallery
+## Score semantics
 
-### 🏷️ **Name Gallery (Namen-Galerie)** - NEU!
-- Übersicht aller vergebenen Personen-Namen
-- Anzeige aller Gesichter pro Person
-- Namen-Suche und Sortierung
-- Namen von einzelnen Gesichtern oder ganzen Personen entfernen
-- Statistiken über benannte Gesichter
+Search scores are clipped cosine-similarity ranking values in the range 0–1.
+They are not calibrated probabilities and do not establish identity. The
+legacy `basic`, `enhanced`, and `premium` names in `FaceSimilarityCalculator`
+are compatibility arguments; all use the same cosine score. The active app
+search uses `FaceVectorStore` and does not blend unvalidated distance metrics.
 
-### 🧩 **Personengruppen** - NEU!
-- Gruppiert unbenannte Gesichter anhand ihrer Embeddings (Cosine-Ähnlichkeit)
-- Gruppen-Standard 0,35 Cosine-Ähnlichkeit (Buffalo_L); im UI einstellbar
-- Zeigt Gruppen mit Vorschaubildern, Gruppengröße und durchschnittlicher Ähnlichkeit
-- Schlägt eine passende bestehende Person vor, ändert aber nichts ohne Bestätigung
-- Weist eine bestätigte Gruppe gesammelt einer neuen oder bestehenden Person zu
+## Evaluation
 
-### 🧬 **Facial Attribute Analysis (Gesichtsanalyse)**
-- **Alter**: Modellschätzung in Jahren; keine garantierte Genauigkeit
-- **Geschlecht**: Modellschätzung mit den vom Analysemodell unterstützten Klassen
-- **Emotionen**: Modellschätzungen für mehrere Emotionsklassen
-- **Ethnizität**: Modellschätzung aus den vom Analysemodell unterstützten Kategorien
-- Modal-Popup für übersichtliche Darstellung aller Analysedaten
-
-### 🏷️ **Person Namen System** - NEU!
-- **Eindeutige Person IDs**: Jede Person wird intern über eine UUID identifiziert
-- **Vor- und Nachname**: Separate Eingabefelder für strukturierte Namensvergabe
-- **Namenszuweisung**: Ein Name wird nur dem ausgewählten Gesicht zugewiesen; ähnliche Gesichter werden in „Personengruppen“ vorgeschlagen und erst nach Review übernommen
-- **Namen-Verwaltung**: Namen können jederzeit entfernt oder geändert werden
-- **Such-Integration**: Namen werden in Face Search und Gallery angezeigt
-
-### 🔧 **Löschfunktionen**
-- **Einzellöschung**: Mit doppelter Bestätigung
-- **Batch-Löschung**: Ganze Seiten oder nach Qualitätskriterien
-- **Qualitätskontrolle**: Automatische Erkennung problematischer Gesichter:
-  - Zu kleine Gesichter (< 30x30 Pixel)
-  - Ungewöhnliche Proportionen
-  - Sehr kleine Flächen (< 900 Pixel²)
-
-## 🎯 Verwendung des Namen-Systems
-
-### Namen zuweisen:
-1. Gehen Sie zu **Face Search** oder **Face Gallery**
-2. Klicken Sie bei einem Gesicht auf **"🏷️ Namen zuweisen"**
-3. Geben Sie Vor- und Nachname in separate Felder ein
-4. Klicken Sie **"💾 Namen speichern"**
-5. Ähnliche Gesichter werden unter „Personengruppen“ geprüft und können dort gemeinsam zugewiesen werden
-
-### Namen verwalten:
-1. Gehen Sie zur **🏷️ Name Gallery**
-2. Sehen Sie alle Personen und deren Gesichter
-3. Entfernen Sie Namen bei Fehlzuweisungen
-4. Durchsuchen Sie alle Gesichter einer Person
-
-## ⚠️ Wichtige Hinweise
-
-### Gesichtsanalyse
-Die KI-basierte Gesichtsanalyse dient ausschließlich zu **Demonstrations- und Forschungszwecken**. 
-Die Ergebnisse sind Schätzungen und sollten nicht für Identifikation, Diskriminierung oder Entscheidungsfindung verwendet werden.
-
-### Datenschutz und Rechtsrahmen
-- Gesichtsvektoren werden im konfigurierten Datenverzeichnis gespeichert.
-- Die Anwendung prüft weder Einwilligungen noch rechtliche Voraussetzungen.
-- Kläre vor der Verarbeitung fremder Bilder, welche Regeln für deinen Einsatz gelten.
-
-## 🚀 Technische Details
-
-### Datenbank-Schema
-- **Face IDs**: Eindeutige Identifikation jedes erkannten Gesichts
-- **Person IDs**: UUID-basierte Personenidentifikation (unabhängig vom Namen)
-- **Metadaten**: Speicherung von Namen, Bildpfad, Position, Zeitstempel
-- **Embeddings**: 512-dimensionale Buffalo_L-Vektoren für die aktive Ähnlichkeitssuche
-
-### Ähnlichkeitsberechnung
-- Die aktive Suche vergleicht unit-normalisierte Buffalo_L-Vektoren mit Cosine-Ähnlichkeit
-- Suchstandard: 0,40 Cosine; Gruppen-Startwert: 0,35 mit Margin 0,04. Identitätsgruppen schlagen Gesichter vor, Namen werden erst nach Review zugewiesen
-- Ähnlichkeitswerte sind Ranking-Scores, keine Wahrscheinlichkeiten oder bestätigten Identitäten
-
-Gesichts- und Attributerkennung kann falsche Ergebnisse liefern. Für Benchmark-Angaben siehe nur reproduzierbare Messungen mit einem geeigneten, beschrifteten Datensatz.
+The README records reproducible diagnostic samples for LFW and CFP. Those
+measurements are limited to their datasets and sampling procedures; they do not
+establish performance on a user's collection or justify high-stakes use.

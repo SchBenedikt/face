@@ -93,22 +93,25 @@ def test_grouping_recovers_two_identities_without_mixing(tmp_path):
     assert all(group["size"] == 4 for group in result["groups"])
 
 
-def test_auto_assignment_groups_the_anchor_identity_only(tmp_path):
+def test_similar_faces_are_suggestions_until_individually_reviewed(tmp_path):
     store = _make_store(tmp_path)
 
     result = store.assign_person_name_with_auto_matching(
         "A0",
         {"first_name": "Anna", "middle_names": "", "last_name": "Test"},
+        similarity_threshold=0.65,
     )
 
     assert result["success"], result
-    assert result["total_assigned"] == 4, result
+    assert result["total_assigned"] == 1, result
+    assert result["requires_review"] is True
+    assert {item["face_id"] for item in result["similar_faces"]} == set(FACES_A) - {"A0"}
     named = store.get_faces_by_person_id(result["person_id"])
-    assert {face["face_id"] for face in named} == set(FACES_A)
+    assert {face["face_id"] for face in named} == {"A0"}
     assert result["skipped_ambiguous"] == 0
 
 
-def test_ambiguous_face_is_not_auto_assigned(tmp_path):
+def test_ambiguous_face_is_never_named_without_confirmation(tmp_path):
     store = _make_store(tmp_path)
     basis = _basis()
     # A face halfway between two identities: 0.707 to each anchor. It must not
@@ -130,10 +133,11 @@ def test_ambiguous_face_is_not_auto_assigned(tmp_path):
     result = store.assign_person_name_with_auto_matching(
         "A0",
         {"first_name": "Anna", "middle_names": "", "last_name": "Test"},
+        similarity_threshold=0.65,
     )
 
     assert result["success"], result
-    assert result["skipped_ambiguous"] >= 1, result
+    assert any(item["face_id"] == "MIXED" for item in result["similar_faces"])
     mixed_face = store.get_face_by_id("MIXED")
     assert not (mixed_face["metadata"].get("person_id") or "").strip()
 

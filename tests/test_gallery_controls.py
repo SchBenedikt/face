@@ -7,7 +7,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 APP_FILE = Path(__file__).resolve().parents[1] / "app.py"
-GALLERY = "👥 Face Gallery"
+GALLERY = "face_gallery"
 
 
 def _app() -> AppTest:
@@ -34,7 +34,7 @@ def _all_text(at: AppTest) -> str:
 
 def _search_box(at: AppTest):
     for widget in at.text_input:
-        if "Suche nach Dateiname" in widget.label:
+        if "Search by file name" in widget.label:
             return widget
     raise AssertionError("gallery search box not found")
 
@@ -55,7 +55,7 @@ def test_gallery_search_filters_by_file_name(seeded_data):
     text = _all_text(at)
     assert "person_1.jpg" in text, text[:1200]
     assert "person_0.jpg" not in text, text[:1200]
-    assert "Zeige 2 von 2 Gesichtern" in text, text[:1200]
+    assert "Showing 2 of 2 faces" in text, text[:1200]
 
 
 def test_gallery_search_filters_by_face_id(seeded_data):
@@ -69,7 +69,7 @@ def test_gallery_search_filters_by_face_id(seeded_data):
     _assert_no_exception(at)
     text = _all_text(at)
     assert "face_1_0" in text, text[:1200]
-    assert "Zeige 1 von 1 Gesichtern" in text, text[:1200]
+    assert "Showing 1 of 1 faces" in text, text[:1200]
 
 
 def test_gallery_minimum_size_filters_out_small_faces(seeded_data):
@@ -84,7 +84,7 @@ def test_gallery_minimum_size_filters_out_small_faces(seeded_data):
 
     _assert_no_exception(at)
     text = _all_text(at)
-    assert "Keine Gesichter entsprechen der eingestellten Mindestgröße" in text, text[:1200]
+    assert "No faces match the selected minimum size" in text, text[:1200]
 
 
 def test_gallery_metadata_scan_returns_every_seeded_row(seeded_data):
@@ -96,3 +96,33 @@ def test_gallery_metadata_scan_returns_every_seeded_row(seeded_data):
     assert len(faces) == len(seeded_data["ids"])
     assert {face["face_id"] for face in faces} == set(seeded_data["ids"])
     assert all(face["metadata"].get("image_path") for face in faces)
+
+
+def test_gallery_page_searches_people_and_returns_only_requested_page(seeded_data):
+    from vector_store import FaceVectorStore
+
+    store = FaceVectorStore()
+    first = store.get_face_gallery_page(
+        search_term="erika mustermann", min_face_size=50, page=1, page_size=1
+    )
+    second = store.get_face_gallery_page(
+        search_term="erika mustermann", min_face_size=50, page=2, page_size=1
+    )
+
+    assert first["total"] == 4
+    assert first["total_pages"] == 4
+    assert len(first["faces"]) == len(second["faces"]) == 1
+    assert first["faces"][0]["face_id"] != second["faces"][0]["face_id"]
+    assert all("Erika" in face["metadata"]["full_name"] for face in first["faces"] + second["faces"])
+
+
+def test_gallery_page_clamps_out_of_range_page_and_sorts_by_image_name(seeded_data):
+    from vector_store import FaceVectorStore
+
+    result = FaceVectorStore().get_face_gallery_page(
+        sort_by="Image name", page=999, page_size=3
+    )
+
+    assert result["total"] == len(seeded_data["ids"])
+    assert result["page"] == result["total_pages"]
+    assert len(result["faces"]) == result["total"] - 3 * (result["total_pages"] - 1)

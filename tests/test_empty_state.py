@@ -53,8 +53,8 @@ print("DB_EXISTS:", (Path({str(data_dir)!r}) / "face_vectors.db").exists())
 
     assert completed.returncode == 0, output[-3000:]
     assert "EXCEPTIONS: []" in output, output[-3000:]
-    assert "Noch keine Gesichter in der Datenbank" in output, output[-3000:]
-    assert "Image Upload & Processing" in output, output[-3000:]
-    assert "Web Scraping" in output, output[-3000:]
+    assert "Your database is empty" in output, output[-3000:]
+    assert "Import images" in output, output[-3000:]
+    assert "Web import" in output, output[-3000:]
     assert "DATA_EXISTS: True" in output, output[-3000:]
     assert "DB_EXISTS: True" in output, output[-3000:]

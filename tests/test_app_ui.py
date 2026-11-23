@@ -21,7 +21,19 @@ def _app(default_timeout: int = 180) -> AppTest:
 
 
 def _goto(at: AppTest, page: str) -> AppTest:
-    at.sidebar.selectbox[0].set_value(page).run()
+    page_ids = {
+        "🔍 Face Search": "face_search",
+        "📥 Image Upload & Processing": "image_import",
+        "🧠 Batch Face Processing": "batch_processing",
+        "🌐 Web Scraping": "web_import",
+        "👥 Face Gallery": "face_gallery",
+        "🏷️ Name Gallery": "people",
+        "🧩 Person Groups": "person_groups",
+        "🔧 Duplicate Manager": "duplicates",
+        "📊 Database Statistics": "database_statistics",
+        "⚙️ Settings": "settings",
+    }
+    at.sidebar.selectbox[0].set_value(page_ids.get(page, page)).run()
     return at
 
 
@@ -71,13 +83,13 @@ def test_app_boots(seeded_data):
     at = _app()
     at.run()
     _assert_no_exception(at)
-    assert any("Face Recognition Search" in title.value for title in at.title)
+    assert any("Face Search" in title.value for title in at.title)
 
 
 @pytest.mark.parametrize(
     "page, needle",
     [
-        ("👥 Face Gallery", "Zeige"),
+        ("👥 Face Gallery", "Showing"),
         ("🏷️ Name Gallery", "Erika"),
         ("🔧 Duplicate Manager", "Duplicate"),
         ("🌐 Web Scraping", "Scraped"),
@@ -101,7 +113,7 @@ def test_settings_report_the_effective_face_detector(seeded_data):
     _assert_no_exception(at)
 
     joined = _all_text(at)
-    assert "Aktive Erkennung" in joined
+    assert "Active detection" in joined
     assert "RetinaFace" in joined
     assert "MTCNN" in joined
 
@@ -183,7 +195,7 @@ def test_scraping_rejects_invalid_urls(seeded_data):
     _assert_no_exception(at)
 
     errors = [str(element.value) for element in at.error]
-    assert any("Ungültige URL" in value for value in errors), errors
+    assert any("Invalid URL" in value for value in errors), errors
 
 
 def test_run_coroutine_cancels_pending_tasks():
@@ -219,7 +231,7 @@ def test_search_rejects_unreadable_upload(seeded_data):
     _assert_no_exception(at)
 
     errors = [str(element.value) for element in at.error]
-    assert any("kein lesbares Bild" in value for value in errors), errors
+    assert any("not a readable image" in value for value in errors), errors
 
 
 @pytest.fixture
@@ -264,17 +276,20 @@ def test_duplicate_manager_deletes_copy_and_its_database_rows(duplicate_pair):
     next(button for button in at.button if "Find Duplicates in images" in button.label).click().run()
     _assert_no_exception(at)
 
-    radios = [element for element in at.radio if "Datei behalten" in getattr(element, "label", "")]
+    radios = [element for element in at.radio if "Keep file" in getattr(element, "label", "")]
     assert radios, "no keep-selection was rendered for the duplicate set"
     radios[0].set_value(str(source))
-    next(button for button in at.button if "Andere löschen" in button.label).click().run()
+    next(button for button in at.button if "Review deletion" in button.label).click().run()
+    _assert_no_exception(at)
+    assert any("permanently delete" in str(item.value) for item in at.warning)
+    next(button for button in at.button if "Confirm deletion" in button.label).click().run()
     _assert_no_exception(at)
 
     assert source.exists(), "the kept file must survive"
     assert not copy.exists(), "the other file must be deleted from disk"
     remaining = store.collection.get(where={"image_path": str(copy)}, include=[])["ids"]
     assert remaining == [], "database rows of the deleted file must be removed"
-    assert any("gelöscht" in str(message.value) for message in at.success)
+    assert any("deleted" in str(message.value) for message in at.success)
 
 
 @pytest.fixture
@@ -299,10 +314,10 @@ def test_settings_save_persists_and_is_used_by_the_search(seeded_data, isolated_
     at.slider[0].set_value(0.9)
     at.number_input[0].set_value(7)
     at.number_input[1].set_value(16)
-    next(button for button in at.button if "Einstellungen speichern" in button.label).click().run()
+    next(button for button in at.button if "Save settings" in button.label).click().run()
     _assert_no_exception(at)
 
-    assert any("gespeichert" in str(message.value) for message in at.success)
+    assert any("Settings saved" in str(message.value) for message in at.success)
     from settings_store import load_settings
 
     assert load_settings() == {
@@ -322,14 +337,13 @@ def test_settings_save_persists_and_is_used_by_the_search(seeded_data, isolated_
     restarted.run()
     _assert_no_exception(restarted)
 
-    max_results_slider = next(slider for slider in restarted.slider if "Maximum Results" in slider.label)
-    threshold_slider = next(slider for slider in restarted.slider if "Similarity Threshold" in slider.label)
-    min_face_size_slider = next(slider for slider in restarted.slider if "Minimum Face Size" in slider.label)
-    similarity_filter = next(selectbox for selectbox in restarted.selectbox if "Similarity Filter" in selectbox.label)
+    max_results_slider = next(slider for slider in restarted.slider if "Maximum results" in slider.label)
+    threshold_slider = next(slider for slider in restarted.slider if "Minimum cosine similarity" in slider.label)
+    min_face_size_slider = next(slider for slider in restarted.slider if "Minimum face size" in slider.label)
     assert max_results_slider.value == 7
     assert threshold_slider.value == pytest.approx(0.9)
     assert min_face_size_slider.value == 30
-    assert similarity_filter.value == "All Matches"
+    assert not any("Additional similarity filter" in item.label for item in restarted.selectbox)
 
 
 def test_pending_navigation_switches_the_sidebar_page(seeded_data):
@@ -340,9 +354,23 @@ def test_pending_navigation_switches_the_sidebar_page(seeded_data):
     at.run()
 
     _assert_no_exception(at)
-    assert any("Face Gallery" in header.value for header in at.header), [
+    assert at.session_state["nav_page"] == "face_gallery"
+    assert any("Face library" in header.value for header in at.header), [
         header.value for header in at.header
     ]
+
+
+def test_stable_navigation_switches_between_sections(seeded_data):
+    at = _app()
+    at.run()
+    _goto(at, "duplicates")
+    assert at.session_state["nav_page"] == "duplicates"
+    assert any("Duplicate manager" in header.value for header in at.header)
+
+    _goto(at, "face_gallery")
+    assert at.session_state["nav_page"] == "face_gallery"
+    assert any("Face library" in header.value for header in at.header)
+    _assert_no_exception(at)
 
 
 def test_settings_can_change_the_detection_model(seeded_data, isolated_settings_file):
@@ -351,13 +379,13 @@ def test_settings_can_change_the_detection_model(seeded_data, isolated_settings_
     _goto(at, "⚙️ Settings")
 
     model_select = next(
-        element for element in at.selectbox if "Face Detection Model" in element.label
+        element for element in at.selectbox if "Fallback face detector" in element.label
     )
     model_select.set_value("hog")
-    next(button for button in at.button if "Einstellungen speichern" in button.label).click().run()
+    next(button for button in at.button if "Save settings" in button.label).click().run()
     _assert_no_exception(at)
 
     from settings_store import load_settings
 
-    assert any("gespeichert" in str(message.value) for message in at.success)
+    assert any("Settings saved" in str(message.value) for message in at.success)
     assert load_settings()["detection_model"] == "hog"

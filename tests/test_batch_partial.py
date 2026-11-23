@@ -39,10 +39,10 @@ from vector_store import FaceVectorStore
 APP = {str(APP_FILE)!r}
 FIRST = Path({str(first_image)!r})
 SECOND = Path({str(second_image)!r})
-BATCH = "🧠 Batch Face Processing"
-GALLERY = "👥 Face Gallery"
-NAMES = "🏷️ Name Gallery"
-SEARCH = "🔍 Face Search"
+BATCH = "batch_processing"
+GALLERY = "face_gallery"
+NAMES = "people"
+SEARCH = "face_search"
 UPDATE_MODE = "🔄 Update All Images (Replace Existing)"
 
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
@@ -133,7 +133,7 @@ print("DB_STATS_UPDATE:", store.get_collection_stats(force_refresh=True))
 at.sidebar.selectbox[0].set_value(GALLERY).run()
 assert not exceptions(at), exceptions(at)
 assert any(
-    metric.label == "👥 Total Faces" and str(metric.value) == "8"
+    metric.label == "Faces" and str(metric.value) == "8"
     for metric in at.metric
 ), [(metric.label, metric.value) for metric in at.metric]
 assert len(images(at)) >= 8, len(images(at))
@@ -159,9 +159,9 @@ print("NAME_GALLERY:", expander_labels)
 at.sidebar.selectbox[0].set_value(SEARCH).run()
 at.file_uploader[0].set_value((FIRST.name, FIRST.read_bytes(), "image/jpeg")).run()
 assert not exceptions(at), exceptions(at)
-next(button for button in at.button if "Analyze Image for Faces" in button.label).click().run()
+next(button for button in at.button if "Detect faces" in button.label).click().run()
 assert not exceptions(at), exceptions(at)
-next(button for button in at.button if "Nach Gesicht 1 suchen" in button.label).click().run()
+next(button for button in at.button if "Search face 1" in button.label).click().run()
 assert not exceptions(at), exceptions(at)
 
 results = at.session_state["search_results"]
