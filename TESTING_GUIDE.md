@@ -25,8 +25,9 @@ GitHub Actions runs these checks on pushes to `main` and pull requests targeting
 
 The suite covers local upload and search flows, embedding pipeline compatibility,
 search ranking and thresholds, stable navigation, gallery filtering and
-pagination, person-group suggestions, duplicate deletion, and batch updates.
+pagination, person-group suggestions, duplicate deletion and reconciliation,
+portable archive integrity/restore, and batch updates.
 
-Web collection, external deployment authentication, large-scale face accuracy,
-and a portable export/restore round trip are not currently validated by the
-suite. Similarity scores are ranking signals, not identity probabilities.
+Web collection, external deployment authentication, and large-scale face
+accuracy are not currently validated by the suite. Similarity scores are
+ranking signals, not identity probabilities.

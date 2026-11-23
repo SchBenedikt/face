@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -139,6 +140,13 @@ def active_embedding_pipeline_version(model_name: str | None = None) -> str:
     base_version = str(config.EMBEDDING_PIPELINE_VERSION)
     if model != str(config.FACE_EMBEDDING_MODEL).lower():
         base_version = f"{base_version}-{model}"
+    try:
+        deepface_version = package_version("deepface")
+    except PackageNotFoundError:
+        deepface_version = "unavailable"
+    # The index identity records the installed encoder implementation and the
+    # vector contract, in addition to the model and image preprocessing ID.
+    base_version = f"{base_version}-deepface-{deepface_version}-dim512-l2norm-v1"
     try:
         import face_recognition  # noqa: F401 - availability selects the path
     except Exception:  # noqa: BLE001 - optional dlib stack may be unavailable

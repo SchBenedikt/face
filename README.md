@@ -69,7 +69,11 @@ When the face detector or embedding preprocessing changes, the app marks old
 vectors as incompatible and excludes them from similarity results. In **Batch
 Face Processing**, run **Update All Images** for **Images and subfolders** and
 for **Scraped Images** to rebuild the complete searchable index. During that
-update, only already reprocessed images are searched.
+update, only already reprocessed images are searched. Index identity includes
+the selected model, DeepFace package version, detector settings, preprocessing
+version, and the 512-dimensional L2-normalized vector contract. Export a
+portable ZIP with embeddings before upgrading the recognition runtime or
+rebuilding an index if you need a recoverable snapshot.
 
 ## 🌟 What Makes This Special?
 
@@ -82,6 +86,7 @@ The application provides local face search over images you choose to index:
 - **📊 Face Analysis**: Optional age, gender, emotion, and ethnicity estimates
 - **🌐 Image Crawler**: Optional interactive image collection from websites
 - **👥 Person Management**: Assign names to selected faces and review identity-group suggestions
+- **📦 Portable backups**: Export the current gallery page or whole index as a versioned ZIP. Original images and biometric embeddings are separate opt-in choices. Embeddings are required to restore a searchable index; restore accepts only a matching pipeline and refuses existing face IDs. ZIP downloads are capped at 128 MiB.
 
 ## 🎯 Key Features
 

@@ -56,6 +56,7 @@ except Exception as exc:  # noqa: BLE001
     )
 
 from duplicate_detector import delete_duplicate_files, duplicate_detector
+from portable_export import create_face_export, restore_face_export
 from utils import (
     IMAGE_EXTENSIONS, load_and_preprocess_image, load_uploaded_image,
     create_thumbnail, get_image_files, parse_face_location
@@ -4192,6 +4193,71 @@ def face_gallery_page():
                             file_name="faces.csv",
                             mime="text/csv",
                             key="download_faces_csv",
+                            width="stretch",
+                        )
+                        with st.expander("Restore a portable ZIP"):
+                            restore_file = st.file_uploader(
+                                "Choose a face-library ZIP",
+                                type=["zip"],
+                                key="restore_face_archive_upload",
+                            )
+                            st.caption("Restore requires the same embedding pipeline version and skips archives with face IDs already in this index.")
+                            if restore_file is not None and st.button(
+                                "Restore faces and optional images",
+                                key="restore_face_archive_button",
+                                type="primary",
+                            ):
+                                outcome = restore_face_export(
+                                    restore_file.getvalue(),
+                                    st.session_state.vector_store,
+                                    IMAGES_DIR,
+                                )
+                                if outcome["success"]:
+                                    invalidate_persons_cache()
+                                    invalidate_gallery_cache()
+                                    st.success(
+                                        f"Restored {outcome['restored_faces']} faces and "
+                                        f"{outcome['restored_images']} images."
+                                    )
+                                    st.rerun()
+                                else:
+                                    st.error(f"Restore failed: {outcome['error']}")
+                        st.markdown("**Portable backup**")
+                        st.caption("Archives are staged on disk and limited to 128 MiB. Embedding-free exports are metadata copies and cannot restore a searchable index.")
+                        export_scope = st.selectbox(
+                            "Faces to export",
+                            ["Current page", "All indexed faces"],
+                            key="portable_export_scope",
+                        )
+                        include_embeddings = st.checkbox(
+                            "Include biometric embeddings",
+                            value=False,
+                            key="portable_export_embeddings",
+                            help="Embeddings are sensitive biometric data. Enable this only when required for a searchable backup.",
+                        )
+                        include_images = st.checkbox(
+                            "Include original images",
+                            value=False,
+                            key="portable_export_images",
+                            help="Original images may contain sensitive or identifying information.",
+                        )
+                        selected_face_ids = (
+                            [str(metadata.get("face_id")) for metadata in results["metadatas"] if metadata.get("face_id")]
+                            if export_scope == "Current page"
+                            else None
+                        )
+                        st.download_button(
+                            "Download portable ZIP",
+                            data=lambda: create_face_export(
+                                st.session_state.vector_store.collection,
+                                st.session_state.vector_store._embedding_pipeline_version,
+                                face_ids=selected_face_ids,
+                                include_embeddings=include_embeddings,
+                                include_images=include_images,
+                            ),
+                            file_name="face-library-backup.zip",
+                            mime="application/zip",
+                            key="download_portable_faces",
                             width="stretch",
                         )
 

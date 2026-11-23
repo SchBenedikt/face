@@ -127,6 +127,8 @@ def test_face_gallery_renders_cached_thumbnails(seeded_data):
     images = _images(at)
     assert len(images) >= len(seeded_data["metadatas"][:50]), len(images)
     assert not at.error, [str(element.value) for element in at.error]
+    assert any("Include biometric embeddings" in checkbox.label for checkbox in at.checkbox)
+    assert any("Include original images" in checkbox.label for checkbox in at.checkbox)
 
 
 def test_search_results_render(seeded_data):
