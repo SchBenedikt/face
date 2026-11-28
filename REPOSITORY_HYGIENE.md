@@ -12,10 +12,13 @@ python .github/scripts/check_repository_artifacts.py
 git ls-files
 ```
 
-The current `main` tree passes that guard. The local Git object pack is still
-about 933 MiB, so files removed in earlier commits may remain in history. A
-history rewrite is a separate coordinated operation; a passing tree check does
-not shrink existing clones or the hosted object store.
+The current `main` tree passes that guard. The local Git object pack is
+933.47 MiB. A metadata-only scan of reachable refs confirms large historical
+image and generated URL-list objects remain. Their contents were not inspected,
+so this does not establish consent, privacy, or license compatibility. Keep
+exact affected paths private and review them before a rewrite. A history rewrite
+is a separate coordinated operation; a passing tree check does not shrink
+existing clones or the hosted object store.
 
 ## Start with an empty local index
 

@@ -186,6 +186,10 @@ def test_search_results_render(seeded_data):
     _goto(at, "🔍 Face Search")
     _assert_no_exception(at)
     assert len(_images(at)) > 0, "search results rendered no images"
+    assert any(
+        metric.label == "Gap between top two ranking scores"
+        for metric in at.metric
+    )
     assert "%" in _all_text(at)
     # Low-similarity hits are intentionally rendered as st.error badges, so only
     # look for real rendering failures here.

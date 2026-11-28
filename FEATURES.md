@@ -6,7 +6,7 @@ high-stakes decisions or unrestricted use.
 
 | Area | Status | Current behavior and limits |
 | --- | --- | --- |
-| Local face search | Implemented | Searches indexed local images using the configured embedding model and cosine ranking. Collection and face metadata record model family/name/package version, detector settings, preprocessing version, embedding dimension, L2 normalization, and index schema version. Scores are not identity probabilities. |
+| Local face search | Implemented | Searches indexed local images using the configured embedding model and cosine ranking. The result view also shows the score gap between the two highest-ranked candidates to help spot close rankings; this is relative ranking context, not calibrated uncertainty. Collection and face metadata record model family/name/package version, detector settings, preprocessing version, embedding dimension, L2 normalization, and index schema version. Scores are not identity probabilities. |
 | Image processing | Implemented | Imports user-selected local image folders, detects faces, and stores embeddings and source paths in the local ChromaDB index. |
 | First-run setup | Implemented with limits | The empty state links to local import; the app reports the completed image/face counts and links to search. Settings checks dependencies, writable storage, ChromaDB and pipeline readiness; model weights load only after an explicit check. There is no bundled consented sample wizard. |
 | Face library | Implemented | Searches by filename, face ID, or person name; filters by face size; sorts, paginates, and supports manual deletion. CSV and versioned ZIP exports are available. ZIP restore requires included embeddings and a matching embedding pipeline. |

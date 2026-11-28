@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from config import RESULTS_PER_PAGE, THUMBNAIL_SIZE
+from search_scoring import top_score_gap
 from ui_cache import face_thumbnail
 from utils import create_thumbnail, load_and_preprocess_image, parse_face_location
 
@@ -110,6 +111,21 @@ def display_search_results(results: List[Dict[str, Any]]):
     if not results:
         st.info("No results to display")
         return
+
+    score_gap = top_score_gap(results)
+    if score_gap is not None:
+        st.metric(
+            "Gap between top two ranking scores",
+            f"{score_gap:.3f} / 1.000",
+            help=(
+                "This compares the two highest cosine-similarity scores in the returned list. "
+                "It is not a calibrated measure of uncertainty or identity probability."
+            ),
+        )
+        st.caption(
+            "A smaller gap means the leading candidates rank more closely. Review the images; "
+            "this relative score gap does not establish identity."
+        )
 
     # Real-time filtering options
     with st.expander("🔧 Filter and sort results", expanded=False):
